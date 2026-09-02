@@ -362,6 +362,10 @@ def _run(
 def _source_weight(confidence: SourceConfidence) -> float:
     return {
         SourceConfidence.VERIFIED: 1.0,
+        # Synthetic development data is weighted like an unverified upload so
+        # the graph and the pattern detectors exercise the same code paths as
+        # for a real upload; unlike a tip it is not staged.
+        SourceConfidence.SYNTHETIC: 0.75,
         SourceConfidence.UNVERIFIED: 0.75,
         SourceConfidence.ANONYMOUS_TIP: 0.4,
     }[confidence]

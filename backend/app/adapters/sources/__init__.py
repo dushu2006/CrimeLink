@@ -22,3 +22,4 @@ from .registry import (  # noqa: F401
 # Import concrete adapters so they self-register.
 from . import synthetic as _synthetic  # noqa: E402,F401
 from . import file_import as _file_import  # noqa: E402,F401
+from . import synthetic_external as _synthetic_external  # noqa: E402,F401

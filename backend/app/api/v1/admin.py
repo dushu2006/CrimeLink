@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.service import audit_service
+from app.config import get_settings
 from app.db.models import CaseDocument
 from app.db.session import get_db_session
 from app.domain.enums import AuditAction, Role
@@ -215,6 +216,132 @@ async def create_user(
         "role": user.role.value,
         "jurisdiction_id": user.jurisdiction_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Synthetic development data (generate / external corpus)
+# ---------------------------------------------------------------------------
+
+
+class SyntheticIngestIn(BaseModel):
+    """Trigger body for a synthetic-data ingestion run.
+
+    ``adapter`` selects the mode (``generate`` | ``external``); when omitted,
+    ``CRIMELINK_SYNTHETIC_DATA_MODE`` decides.  ``root`` overrides
+    ``CRIMELINK_SYNTHETIC_DATA_ROOT`` for the external corpus only.
+    """
+
+    adapter: str | None = Field(default=None, pattern="^(generate|external)$")
+    root: str | None = None
+    seed: int | None = None
+    persons: int | None = Field(default=None, ge=1, le=10000)
+    cases: int | None = Field(default=None, ge=1, le=1000)
+    yes_i_am_sure: bool = False
+
+
+@router.get("/synthetic/adapters")
+async def synthetic_adapters(
+    principal: Principal = Depends(require_roles("ADMIN")),
+) -> dict:
+    """List registered source adapters and the configured synthetic mode."""
+    from app.adapters.sources import available_adapters, get_source_adapter
+
+    items = []
+    for name in available_adapters():
+        try:
+            items.append(get_source_adapter(name).describe())
+        except Exception as exc:  # noqa: BLE001 - one bad adapter must not hide the rest
+            items.append({"name": name, "error": str(exc)})
+    return {
+        "synthetic_data_mode": get_settings().synthetic_data_mode,
+        "synthetic_data_root": str(get_settings().resolved_synthetic_data_root),
+        "items": items,
+    }
+
+
+@router.get("/synthetic/external/preview")
+async def synthetic_external_preview(
+    root: str | None = None,
+    principal: Principal = Depends(require_roles("ADMIN")),
+) -> dict:
+    """Dry-run: discover/validate/classify the external corpus, writing nothing."""
+    from app.adapters.sources import get_source_adapter
+
+    adapter = get_source_adapter("synthetic_external", root=root)
+    scan = adapter.scan()
+    payload = scan.summary()
+    files = scan.files
+    payload["truncated"] = len(files) > 500
+    payload["files"] = [
+        {
+            "relative_path": f.relative_path,
+            "status": f.status,
+            "document_type": f.document_type.value if f.document_type else None,
+            "case_key": f.case_key,
+            "size_bytes": f.size_bytes,
+            "reason": f.reason,
+        }
+        for f in files[:500]
+    ]
+    return payload
+
+
+@router.post("/synthetic/ingest")
+@audited(
+    "CONFIG_CHANGE",
+    target=lambda result, **kw: f"synthetic:{result.get('mode', result.get('adapter', 'generate'))}",
+    details=lambda result, **kw: {
+        "adapter": result.get("mode", "generate"),
+        "records_ingested": result.get("records_ingested", result.get("ingested_documents")),
+        "records_skipped_duplicates": result.get("records_skipped_duplicates"),
+    },
+)
+async def synthetic_ingest(
+    payload: SyntheticIngestIn,
+    principal: Principal = Depends(require_roles("ADMIN")),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Explicitly ingest synthetic data through the standard pipeline.
+
+    This is the API counterpart of ``python -m app.cli ingest-synthetic``; it
+    never runs at startup.  With the embedded broker the six-stage pipeline
+    processes documents in the background after the call returns.
+    """
+    settings = get_settings()
+    mode = payload.adapter or settings.synthetic_data_mode
+    if mode == "external":
+        from app.adapters.sources.synthetic_external import ExternalCorpusError
+        from app.synthetic_corpus.external import ingest_external_corpus
+
+        try:
+            report = await ingest_external_corpus(
+                root=payload.root,
+                safety_confirmed=payload.yes_i_am_sure,
+                container=_container(),
+            )
+        except (ExternalCorpusError, RuntimeError) as exc:
+            raise ValidationFailedError(str(exc)) from exc
+        return report.to_dict()
+    if mode == "generate":
+        from app.synthetic_corpus.generate import CorpusOptions, generate_corpus
+
+        opts = CorpusOptions.from_settings(settings)
+        if payload.seed is not None:
+            opts.seed = payload.seed
+        if payload.persons is not None:
+            opts.person_count = payload.persons
+        if payload.cases is not None:
+            opts.case_count = payload.cases
+        try:
+            result = await generate_corpus(opts, safety_confirmed=payload.yes_i_am_sure)
+        except RuntimeError as exc:
+            raise ValidationFailedError(str(exc)) from exc
+        result = dict(result)
+        result.setdefault("mode", "generate")
+        return result
+    raise ValidationFailedError(
+        f"Unknown synthetic adapter '{mode}'. Valid values: generate, external."
+    )
 
 
 # ---------------------------------------------------------------------------

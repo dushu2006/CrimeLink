@@ -183,6 +183,23 @@ class Settings(BaseSettings):
     synthetic_name_variation_rate: float = 0.15
     synthetic_source_environment: str = "synthetic"  # provenance tag
 
+    # ---------------------------------------------- external synthetic corpus
+    # Where synthetic development data comes from:
+    #   "generate" -> the deterministic in-process generator (default);
+    #   "external" -> a corpus directory read from the filesystem (e.g.
+    #                 ../CrimeLink_Synthetic_Corpus_v1 as a sibling checkout).
+    # Nothing is ingested at startup either way; ingestion is always an
+    # explicit operator action (CLI or POST /api/v1/admin/synthetic/ingest).
+    synthetic_data_mode: Literal["generate", "external"] = "generate"
+    # Root of the external corpus. Absolute paths are honoured verbatim;
+    # relative paths resolve against the CrimeLink repository root, so the
+    # documented sibling layout works with `../CrimeLink_Synthetic_Corpus_v1`.
+    # Only `operational/` and `documents/` under this root are ingestion
+    # sources; `ground_truth/` and `metadata/` are never operational input.
+    synthetic_data_root: Path = Field(
+        default=REPO_ROOT.parent / "CrimeLink_Synthetic_Corpus_v1"
+    )
+
     # ------------------------------------------------------ entity resolution
     er_fuzzy_threshold: float = 0.85
     er_max_pairs_per_document: int = 200
@@ -275,6 +292,22 @@ class Settings(BaseSettings):
     @property
     def sqlite_url_sync(self) -> str:
         return f"sqlite:///{self.sqlite_path}"
+
+    @property
+    def resolved_synthetic_data_root(self) -> Path:
+        """Absolute path of the external synthetic corpus root.
+
+        Absolute ``synthetic_data_root`` values are honoured verbatim;
+        relative values resolve against the repository root so that
+        ``../CrimeLink_Synthetic_Corpus_v1`` means "the sibling directory
+        of the CrimeLink checkout" regardless of the operator's cwd.  The
+        directory is *not* required to exist — the external-corpus adapter
+        reports a clear error when it is missing.
+        """
+        root = Path(self.synthetic_data_root).expanduser()
+        if not root.is_absolute():
+            root = REPO_ROOT / root
+        return root.resolve()
 
     # ---- AI role resolution (provider "default" falls back to global) ------
     def role_config(self, role: str) -> dict[str, Any]:
