@@ -217,7 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# CrimeLink — local runtime state (seeded demo database, object store)
+# CrimeLink — local runtime state (database, object store)
 .run/
 var/
 

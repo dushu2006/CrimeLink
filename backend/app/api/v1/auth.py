@@ -15,19 +15,19 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.service import audit_service
 from app.config import get_settings
-from app.db.base import utcnow
+from app.db.base import new_uuid, utcnow
 from app.db.models import User
 from app.db.session import get_db_session
 from app.domain.enums import AuditAction, Role
-from app.errors import AccountLockedError, AuthenticationError
+from app.errors import AccountLockedError, AuthenticationError, ConflictError, ValidationFailedError
 from app.logging import get_trace_id
 from app.security.deps import AuditRecorder, Principal, get_audit_recorder, get_principal
-from app.security.passwords import verify_password
+from app.security.passwords import hash_password, validate_password_strength, verify_password
 from app.security.rate_limit import enforce_rate_limit
 from app.security.tokens import (
     create_access_token,
@@ -37,6 +37,18 @@ from app.security.tokens import (
 )
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+class SetupStatus(BaseModel):
+    setup_required: bool
+
+
+class SetupRequest(BaseModel):
+    badge_number: str = Field(min_length=2, max_length=64)
+    full_name: str = Field(min_length=2, max_length=200)
+    password: str = Field(min_length=8, max_length=256)
+    station_id: str = Field(min_length=1, max_length=64)
+    jurisdiction_id: str = Field(min_length=1, max_length=64)
 
 
 class LoginRequest(BaseModel):
@@ -65,6 +77,79 @@ def _client_ip(request: Request) -> str | None:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
+
+
+async def _user_count(session: AsyncSession) -> int:
+    return int((await session.execute(select(func.count(User.id)))).scalar() or 0)
+
+
+def _token_response(user: User, access: str, refresh: str, settings) -> TokenResponse:
+    return TokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        expires_in=settings.access_token_ttl_minutes * 60,
+        role=user.role.value if isinstance(user.role, Role) else str(user.role),
+        badge_number=user.badge_number,
+        full_name=user.full_name,
+        jurisdiction_id=user.jurisdiction_id,
+        station_id=user.station_id,
+    )
+
+
+@router.get("/setup", response_model=SetupStatus)
+async def setup_status(session: AsyncSession = Depends(get_db_session)) -> SetupStatus:
+    """Public: true until the first administrator account exists."""
+    return SetupStatus(setup_required=await _user_count(session) == 0)
+
+
+@router.post("/setup", response_model=TokenResponse, status_code=201)
+async def complete_setup(
+    payload: SetupRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> TokenResponse:
+    """Create the first ADMIN. Refused once any user exists."""
+    settings = get_settings()
+    enforce_rate_limit(request, identity="setup", auth=True)
+    if await _user_count(session) > 0:
+        raise ConflictError("Initial setup has already been completed. Sign in instead.")
+
+    problems = validate_password_strength(payload.password)
+    if problems:
+        raise ValidationFailedError(" ".join(problems))
+
+    user = User(
+        id=new_uuid(),
+        badge_number=payload.badge_number.strip(),
+        full_name=payload.full_name.strip(),
+        hashed_password=hash_password(payload.password),
+        role=Role.ADMIN,
+        station_id=payload.station_id.strip(),
+        jurisdiction_id=payload.jurisdiction_id.strip(),
+        is_active=True,
+    )
+    session.add(user)
+    await session.flush()
+
+    raw_refresh, record = await issue_refresh_token_async(
+        session, user, ip_address=_client_ip(request), settings=settings
+    )
+    await audit_service.append_async(
+        session,
+        action_type=AuditAction.CONFIG_CHANGE,
+        user_id=user.id,
+        badge_number=user.badge_number,
+        jurisdiction_id=user.jurisdiction_id,
+        ip_address=_client_ip(request),
+        trace_id=get_trace_id(),
+        details={"event": "initial_admin_created", "session_family": record.family_id},
+    )
+    return _token_response(
+        user,
+        create_access_token(user, settings),
+        raw_refresh,
+        settings,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -138,16 +223,7 @@ async def login(
         trace_id=get_trace_id(),
         details={"session_family": record.family_id},
     )
-    return TokenResponse(
-        access_token=create_access_token(user, settings),
-        refresh_token=raw_refresh,
-        expires_in=settings.access_token_ttl_minutes * 60,
-        role=user.role.value if isinstance(user.role, Role) else str(user.role),
-        badge_number=user.badge_number,
-        full_name=user.full_name,
-        jurisdiction_id=user.jurisdiction_id,
-        station_id=user.station_id,
-    )
+    return _token_response(user, create_access_token(user, settings), raw_refresh, settings)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -177,16 +253,7 @@ async def refresh(
         # would keep working.
         await session.commit()
         raise
-    return TokenResponse(
-        access_token=create_access_token(user, settings),
-        refresh_token=new_raw,
-        expires_in=settings.access_token_ttl_minutes * 60,
-        role=user.role.value if isinstance(user.role, Role) else str(user.role),
-        badge_number=user.badge_number,
-        full_name=user.full_name,
-        jurisdiction_id=user.jurisdiction_id,
-        station_id=user.station_id,
-    )
+    return _token_response(user, create_access_token(user, settings), new_raw, settings)
 
 
 class LogoutRequest(BaseModel):

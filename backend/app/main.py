@@ -125,7 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api/v1")
 
     # Serve the built investigator console when it exists (production image and
-    # the single-process demo profile both do this).
+    # the single-process embedded profile both do this).
     if FRONTEND_DIST.exists():
         assets = FRONTEND_DIST / "assets"
         if assets.exists():

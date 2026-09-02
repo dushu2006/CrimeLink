@@ -33,7 +33,7 @@ in the codebase changes.
 | broker | in-process thread pool | Celery + Redis |
 | relational | SQLite | PostgreSQL 15 |
 
-The embedded profile is not a toy: it is what the tests and the demo run on, and
+The embedded profile is not a toy: it is what the tests and local development run on, and
 it is the only thing a district can use while waiting for infrastructure. It
 means a broken port contract shows up in CI rather than at a deployment.
 

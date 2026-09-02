@@ -100,40 +100,41 @@ description and the document ids behind it.
 
 ## Quick start (no containers required)
 
+Python 3.11+ and Node.js 18+ are required.
+
 ```bash
 git clone <repo> && cd CrimeLink
+python run.py
+```
+
+The first time this installs backend and frontend dependencies, starts the API
+on `:8000` and the console on `:5173`, and opens a browser. The database starts
+empty. Create the first **administrator** in the console (badge number, name,
+station, jurisdiction, password). Then:
+
+1. **Administration → Users** — add investigators and viewers.
+2. **Cases → Register case** — open a real FIR/case file.
+3. Upload documents (FIR, CDR, bank statement, surveillance, social export,
+   criminal history, intel). Processing is automatic.
+4. Open the network graph and the review queue.
+
+Or start the two processes yourself:
+
+```bash
 python3.11 -m venv .venv && .venv/bin/pip install ./backend
-```
-
-Seed a complete synthetic case (7 documents, Hindi and English):
-
-```bash
-export PYTHONPATH=backend
-export CRIMELINK_PROFILE=embedded
-export CRIMELINK_DATA_DIR=$PWD/var/data
-export CRIMELINK_OBJECT_STORE_DIR=$PWD/var/objects
-
-.venv/bin/python backend/scripts/seed_demo.py
-```
-
-Run the API and the console:
-
-```bash
 .venv/bin/python -m uvicorn app.main:create_app --factory \
-    --app-dir backend --host 0.0.0.0 --port 8000          # API on :8000
-cd frontend && npm install && npm run dev                 # console on :5173
+    --app-dir backend --host 0.0.0.0 --port 8000
+cd frontend && npm install && npm run dev
 ```
-
-Sign in with **`INV-0001` / `CrimeLink@Inv1`** (also `ADM-0001`, `VIW-0001`,
-`INV-0002` — see `backend/scripts/seed_demo.py`).
 
 Or bring the whole production topology up:
 
 ```bash
 cp .env.example .env        # set CRIMELINK_SECRET_KEY (and NVIDIA_API_KEY if you have one)
 docker compose up -d --build
-docker compose run --rm api python scripts/seed_demo.py
 ```
+
+Then open the console and create the first administrator.
 
 ---
 
@@ -158,13 +159,12 @@ from gazetteers rather than a model. Model output is always clamped to
 
 ## API surface
 
-53 paths, three methods only: 39 `GET`, 17 `POST`, 1 `PATCH`. There is no
-`DELETE` and no `PUT` anywhere — by design. Interactive docs at `/api/docs` when
-the API is running.
+Interactive docs at `/api/docs` when the API is running. There is no `DELETE`
+and no `PUT` anywhere — by design.
 
 | Area | Endpoints |
 |---|---|
-| Auth | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` |
+| Auth | `GET/POST /auth/setup` (first admin only), `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` |
 | Cases | `GET/POST /cases`, `GET/PATCH /cases/{id}`, `/cases/{id}/timeline`, `/cases/{id}/export` |
 | Documents | `POST /cases/{id}/documents`, `GET /cases/{id}/documents`, `GET /evidence/{doc_id}`, `GET /evidence/{doc_id}/verify` |
 | Jobs | `GET /jobs/{id}`, `GET /cases/{id}/jobs`, `WS /jobs/ws/{case_id}` |
@@ -222,11 +222,10 @@ backend/
     security/            JWT rotation, RBAC, jurisdiction, rate limiting, @audited
     services/            the application layer the routes call
   alembic/               schema migrations
-  scripts/               seed_demo.py, generate_bulk_samples.py
   tests/
 frontend/                React 18 + Cytoscape + Zustand console
-samples/                 the synthetic case corpus (7 documents)
 infra/                   TLS mount point for nginx
+run.py                   local installer + launcher
 ```
 
 ## Licence and handling

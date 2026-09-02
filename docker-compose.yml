@@ -17,7 +17,7 @@
 # Quick start:
 #   cp .env.example .env      # then set CRIMELINK_SECRET_KEY and NVIDIA_API_KEY
 #   docker compose up -d --build
-#   docker compose run --rm api python scripts/seed_demo.py
+#   Open the console and create the first administrator account.
 
 name: crimelink
 

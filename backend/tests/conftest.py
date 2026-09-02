@@ -186,7 +186,7 @@ def _make_user(badge: str, name: str, role: str, jurisdiction: str) -> Any:
 
 @pytest.fixture(scope="session")
 def users() -> dict[str, Any]:
-    """The four demo roles, created once per session with the sync session."""
+    """The four test roles, created once per session with the sync session."""
     return {
         "ADM-0001": _make_user("ADM-0001", "Admin Rao", "ADMIN", "RJ-JAIPUR"),
         "INV-0001": _make_user("INV-0001", "Inspector Sharma", "INVESTIGATOR", "RJ-JAIPUR"),

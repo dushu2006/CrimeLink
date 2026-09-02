@@ -1,7 +1,7 @@
 """API v1 router aggregation.
 
 Every route here is authenticated by default except the explicitly public ones
-(login, refresh, health, version).  No route in this surface uses the ``DELETE``
+(login, refresh, setup, health, version).  No route in this surface uses the ``DELETE``
 method — not disabled, absent — and a test asserts that.
 """
 

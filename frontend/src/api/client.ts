@@ -168,6 +168,39 @@ export function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export async function setupStatus(): Promise<{ setup_required: boolean }> {
+  const response = await raw("/auth/setup", { method: "GET" }, null);
+  const payload = await parse(response);
+  if (!response.ok) {
+    const { code, message, fields } = messageFrom(payload, response.status);
+    throw new ApiError(response.status, code, message, fields);
+  }
+  return payload as { setup_required: boolean };
+}
+
+export interface SetupPayload {
+  badge_number: string;
+  full_name: string;
+  password: string;
+  station_id: string;
+  jurisdiction_id: string;
+}
+
+export async function completeSetup(body: SetupPayload): Promise<Session> {
+  const response = await raw("/auth/setup", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }, null);
+  const payload = await parse(response);
+  if (!response.ok) {
+    const { code, message, fields } = messageFrom(payload, response.status);
+    throw new ApiError(response.status, code, message, fields);
+  }
+  const session = payload as Session;
+  tokenStore.save(session);
+  return session;
+}
+
 export async function login(badgeNumber: string, password: string): Promise<Session> {
   const response = await raw("/auth/login", {
     method: "POST",
