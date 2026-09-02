@@ -1,13 +1,15 @@
 """FIR / surveillance / intelligence report adapter (PRD 7).
 
-Handles PDF (native text and scanned), DOCX and plain text.  Page and line
+Handles PDF (with a native text layer), DOCX and plain text.  Page and line
 offsets are preserved so ``text_span`` evidence pointers resolve to the exact
 sentence in the original document.
 
-Scanned handling: if a PDF yields almost no native text, OCR is attempted via
-``tesseract`` (``hi+eng`` traineddata).  If OCR is unavailable, the document is
-**failed with an explicit reason** and quarantined — a scanned FIR silently
-producing an empty graph would be a hole in the investigation.
+**OCR is not bundled.**  A PDF that carries no extractable text (a scan or a
+photograph of an FIR) fails with an explicit reason — "OCR is required" — and is
+quarantined, rather than silently yielding an empty graph.  Adding OCR means
+installing the ``tesseract`` binary plus ``hi+eng`` traineddata on the worker
+image and calling it from :meth:`TextDocumentAdapter._parse_pdf`; the failure
+path and the quarantine UI are already in place to receive it.
 """
 
 from __future__ import annotations

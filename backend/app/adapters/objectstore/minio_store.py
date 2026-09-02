@@ -2,9 +2,20 @@
 
 Buckets are created at boot with the required posture:
 
-* ``documents``         — original uploads, write-once (S3 object lock).
-* ``documents-derived`` — extracted text and OCR output, linked to the parent hash.
+* ``documents``         — original uploads, never overwritten.
+* ``documents-derived`` — extracted text, linked to the parent hash.
 * ``audit-anchor``      — nightly audit head hashes, separate write credential.
+
+**How write-once is enforced.** The application refuses to write an object whose
+content differs from an existing one (``ConflictError`` raised from
+:meth:`put`), and every document row stores the SHA-256 it was admitted under.
+That is a real guarantee, and it is the one the tests exercise.
+
+It is *not* yet backed by S3 object lock or a bucket retention policy: this
+client does not call ``put_object_lock_configuration``, and no default retention
+period is set on the bucket.  Object lock is the stronger control (it survives a
+compromised application credential) and belongs in the deployment runbook — see
+``docs/DEPLOYMENT.md`` for the MinIO ``mc`` commands to turn it on.
 
 Investigator-facing links are 15-minute presigned URLs; the raw object store is
 never reachable from the browser (PRD 6.3).

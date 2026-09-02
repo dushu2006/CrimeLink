@@ -146,6 +146,11 @@ class Settings(BaseSettings):
     temporal_path_max_depth: int = 4
     export_watermark: str = "CrimeLink — CONFIDENTIAL / LAW ENFORCEMENT USE ONLY"
     audit_anchor_enabled: bool = True
+    # Reserved: the lifecycle countdown that applies once a case is closed.
+    # Closing a case already makes it read-only.  Automatic deletion after this
+    # many days is deliberately *not* scheduled — purging evidence is the one
+    # irreversible action in the system, so it stays an explicit, audited
+    # administrator procedure until a district defines one.
     retention_days_after_closure: int = 90
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
