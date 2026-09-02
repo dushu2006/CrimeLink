@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# CrimeLink — local runtime state (seeded demo database, object store)
+.run/
+var/
+
+# Frontend build output and installed packages
+frontend/dist/
+frontend/node_modules/
+*.tsbuildinfo
