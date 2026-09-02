@@ -32,6 +32,7 @@ tries to compile NumPy from source, upgrade pip first::
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import signal
@@ -120,10 +121,11 @@ def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
     os.environ["CRIMELINK_OBJECT_STORE_DIR"] = str(OBJECT_DIR)
     os.environ["PYTHONPATH"] = str(BACKEND)
     os.environ["CRIMELINK_API"] = api_url
-    os.environ.setdefault(
-        "CRIMELINK_CORS_ORIGINS",
-        f"http://127.0.0.1:{web_port},http://localhost:{web_port},{api_url}",
-    )
+    os.environ["CRIMELINK_CORS_ORIGINS"] = json.dumps([
+        f"http://127.0.0.1:{web_port}",
+        f"http://localhost:{web_port}",
+        api_url,
+    ])
     # Security: never auto-generate demo data on startup.
     os.environ["CRIMELINK_SYNTHETIC_CORPUS_ENABLED"] = "false"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -132,21 +134,36 @@ def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
     return os.environ.copy()
 
 
-def require_python() -> None:
+def require_python() -> str:
     if sys.version_info < MIN_PYTHON:
         die(
             f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ is required (found "
             f"{sys.version.split()[0]}). Install Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer "
             "from https://www.python.org/ (on Windows, tick 'Add Python to PATH')."
         )
-    if sys.version_info >= (MAX_PYTHON_TESTED[0], MAX_PYTHON_TESTED[1] + 1):
-        warn(
-            f"Python {sys.version_info.major}.{sys.version_info.minor} is newer than the versions "
-            f"we test against ({MIN_PYTHON[0]}.{MIN_PYTHON[1]}–{MAX_PYTHON_TESTED[0]}.{MAX_PYTHON_TESTED[1]}). "
-            "Some pinned native dependencies (e.g. asyncpg) have no prebuilt wheel for it yet, so"
-            " pip would fall back to compiling from source and fail without a C compiler. Install"
-            " Python 3.13 from https://www.python.org/ instead."
-        )
+    if sys.version_info <= MAX_PYTHON_TESTED:
+        return sys.executable
+
+    if os.name == "nt":
+        compatible = shutil.which("py")
+        if compatible:
+            probe = subprocess.run(
+                [compatible, "-3.13", "-c", "import sys; print(sys.executable)"],
+                capture_output=True,
+                text=True,
+            )
+            if probe.returncode == 0 and probe.stdout.strip():
+                selected = probe.stdout.strip()
+                info(f"Python {sys.version_info.major}.{sys.version_info.minor} detected; using Python 3.13 at {selected}.")
+                return selected
+
+    die(
+        f"Python {sys.version_info.major}.{sys.version_info.minor} is newer than the versions "
+        f"we test against ({MIN_PYTHON[0]}.{MIN_PYTHON[1]}–{MAX_PYTHON_TESTED[0]}.{MAX_PYTHON_TESTED[1]}), "
+        "and no compatible Python 3.13 interpreter was found. Install Python 3.13 from "
+        "https://www.python.org/ (on Windows, the Python launcher must be enabled)."
+    )
+    return sys.executable
 
 
 def require_node() -> str:
@@ -203,14 +220,14 @@ def run(cmd: list[str], **kwargs) -> None:
         die(f"Command failed ({result.returncode}): {' '.join(cmd)}")
 
 
-def ensure_venv(env: dict[str, str], reinstall: bool) -> Path:
+def ensure_venv(interpreter: str, env: dict[str, str], reinstall: bool) -> Path:
     py = venv_python()
     if reinstall and VENV.exists():
         info("Removing existing virtualenv (--reinstall).")
         shutil.rmtree(VENV)
     if not py.is_file():
         info(f"Creating virtualenv at {VENV} …")
-        run([sys.executable, "-m", "venv", str(VENV)])
+        run([interpreter, "-m", "venv", str(VENV)])
         py = venv_python()
         if not py.is_file():
             die(f"Virtualenv was created but {py} is missing.")
@@ -343,7 +360,7 @@ def main() -> int:
     api_url = f"http://127.0.0.1:{api_port}"
     health_url = f"{api_url}/api/v1/health/live"
 
-    require_python()
+    interpreter = require_python()
     npm = require_node()
 
     if not BACKEND.is_dir() or not FRONTEND.is_dir():
@@ -351,7 +368,7 @@ def main() -> int:
 
     env = apply_embedded_env(api_url=api_url, web_port=web_port)
     _check_env(env)
-    py = ensure_venv(env, reinstall=args.reinstall)
+    py = ensure_venv(interpreter, env, reinstall=args.reinstall)
     ensure_frontend(npm, env, reinstall=args.reinstall)
 
     for port, name in ((api_port, "API"), (web_port, "console")):
