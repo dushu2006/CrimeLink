@@ -35,6 +35,26 @@ def test_unauthenticated_requests_are_rejected(client):
     assert client.get("/api/v1/cases").status_code in (401, 403)
 
 
+def test_setup_status_is_public(client, users):
+    response = client.get("/api/v1/auth/setup")
+    assert response.status_code == 200
+    assert response.json()["setup_required"] is False
+
+
+def test_setup_is_refused_once_users_exist(client, users):
+    response = client.post(
+        "/api/v1/auth/setup",
+        json={
+            "badge_number": "ADM-NEW",
+            "full_name": "Should Fail",
+            "password": "CrimeLink@Setup1",
+            "station_id": "PS-TEST",
+            "jurisdiction_id": "RJ-TEST",
+        },
+    )
+    assert response.status_code == 409
+
+
 # --------------------------------------------------------------------------- #
 # Authentication
 # --------------------------------------------------------------------------- #

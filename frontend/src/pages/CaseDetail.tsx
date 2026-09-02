@@ -56,7 +56,7 @@ const DOC_TYPES = [
   "CRIMINAL_HISTORY",
   "INTEL",
 ];
-const CONFIDENCE = ["OFFICIAL", "SEMI_OFFICIAL", "UNVERIFIED"];
+const CONFIDENCE = ["VERIFIED", "UNVERIFIED", "ANONYMOUS_TIP"];
 
 export default function CaseDetail() {
   const { caseId = "" } = useParams();

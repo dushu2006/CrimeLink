@@ -7,7 +7,6 @@ item is checkable with a command — no item is satisfied by inspection alone.
 python3.11 -m venv .venv && .venv/bin/pip install ./backend
 export PYTHONPATH=backend CRIMELINK_PROFILE=embedded
 export CRIMELINK_DATA_DIR=$PWD/var/data CRIMELINK_OBJECT_STORE_DIR=$PWD/var/objects
-.venv/bin/python backend/scripts/seed_demo.py
 ```
 
 ---
@@ -36,7 +35,7 @@ What the tests assert:
 * `app/adapters/graph/injector.py` is the only module that issues Cypher writes;
   its validation rejects an unevidenced edge before a transaction opens.
 
-Runtime check on the seeded case:
+Runtime check on an ingested case:
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -58,16 +57,17 @@ nothing is deleted.*
 
 | Behaviour | Where | Verified by |
 |---|---|---|
-| Fuzzy match (≥ 0.85) creates a queue item, never a merge | `app/pipeline/entity_resolution.py::_propose_aliases` | `test_pipeline.py`, plus the seeded case: 16 `PENDING` items, zero auto-merges |
+| Fuzzy match (≥ 0.85) creates a queue item, never a merge | `app/pipeline/entity_resolution.py::_propose_aliases` | `test_pipeline.py` |
 | Merge requires INVESTIGATOR+ **and** a written note | `app/api/v1/resolution.py` | `test_guarantees.py::test_a_merge_requires_a_written_rationale`, `::test_a_viewer_cannot_merge` |
 | A rejected pair is tombstoned and never re-proposed | `tombstone_reject` + `has_tombstone` | `test_guarantees.py::test_a_rejected_pair_never_comes_back` |
 | Patterns are created `NEW` and stay `NEW` | `app/analytics/patterns.py` | `test_guarantees.py::test_patterns_are_never_confirmed_automatically` |
 | No `DELETE` / `PUT` anywhere in the API | — | `curl -s localhost:8000/api/openapi.json \| grep -c '"delete"'` → `0` |
 | Merges are reversible | `POST /resolution/{id}/unmerge` | `test_guarantees.py::test_a_merge_is_audited_and_reversible` |
 
-Runtime: after seeding, `GET /api/v1/resolution?case_id=…` returns 16 `PENDING`
-items and `GET /api/v1/patterns?case_id=…` returns two `NEW` findings. Nothing
-in the system changes those states on its own.
+Runtime: after documents are ingested, `GET /api/v1/resolution?case_id=…`
+returns only `PENDING` identity matches the pipeline proposed, and
+`GET /api/v1/patterns?case_id=…` returns findings in `NEW`. Nothing in the
+system confirms or merges those states on its own.
 
 ### G3 — Everything is auditable and tamper-evident
 
@@ -98,7 +98,7 @@ file is idempotent; re-uploading a *modified* file is a new document.
 |---|---|---|
 | Full test suite | `pytest tests/ -q` | 80 passed (27 domain, 11 pipeline, 19 API, 14 guarantees, 9 analytics) |
 | Seven source adapters | `pytest tests/test_pipeline.py -q` | 11 passed |
-| Cross-script entity resolution | seed, then `GET /resolution?case_id=…` | `सुरेश मेहता` ↔ `Suresh Mehta` at 1.00 |
+| Cross-script entity resolution | ingest Hindi + English FIRs naming the same person, then `GET /resolution?case_id=…` | Devanagari and Roman forms of the same name score 1.00 |
 | Deterministic extraction confidence | any FIR node | 0.95 for regex matches |
 | NLP confidence cap | `CRIMELINK_NLP_MAX_CONFIDENCE` | every model-produced node ≤ 0.80 |
 | Call aggregation | `GET /graph/cases/{id}` | `CALLED` edges carry `call_count`, `first_ts`, `last_ts` — one edge per pair, not per call |
@@ -120,9 +120,9 @@ cd frontend && npm install && npm run smoke   # builds, then renders the bundle
 ```
 
 The smoke test runs the **production bundle** in jsdom against the **live API**
-and asserts that the case list, case detail (documents, processing column,
-timeline), review queue and graph route all mount and render real data. It exits
-non-zero on any unexpected console error.
+and asserts that the case list mounts. It exits non-zero on any unexpected
+console error. Provide `CRIMELINK_BADGE` / `CRIMELINK_PASSWORD` for a real
+account if you want authenticated screens checked.
 
 ---
 
@@ -132,7 +132,6 @@ non-zero on any unexpected console error.
 cp .env.example .env                  # set CRIMELINK_SECRET_KEY
 docker compose up -d --build          # 8 containers
 docker compose ps                     # all healthy
-docker compose run --rm api python scripts/seed_demo.py
 curl -s localhost/api/v1/health/ready | python3 -m json.tool
 #   database, graph, object_store, broker all "ok"
 docker compose logs worker | grep pipeline   # six stages per document

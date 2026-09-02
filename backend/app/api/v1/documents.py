@@ -38,6 +38,8 @@ _ALLOWED_MIME = {
     "application/xml",
     "text/xml",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
     "application/octet-stream",
 }
 

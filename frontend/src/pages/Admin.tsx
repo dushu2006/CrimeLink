@@ -66,6 +66,13 @@ export default function Admin() {
   );
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [newBadge, setNewBadge] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState("INVESTIGATOR");
+  const [newStation, setNewStation] = useState("");
+  const [newJurisdiction, setNewJurisdiction] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -214,6 +221,76 @@ export default function Admin() {
 
       {tab === "users" && (
         <section className="panel">
+          <form
+            className="form-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setCreating(true);
+              api("/admin/users", {
+                method: "POST",
+                body: JSON.stringify({
+                  badge_number: newBadge.trim(),
+                  full_name: newName.trim(),
+                  password: newPassword,
+                  role: newRole,
+                  station_id: newStation.trim(),
+                  jurisdiction_id: newJurisdiction.trim(),
+                }),
+              })
+                .then(() => {
+                  setMessage(`${newBadge.trim()} created.`);
+                  setNewBadge("");
+                  setNewName("");
+                  setNewPassword("");
+                  setNewStation("");
+                  setNewJurisdiction("");
+                  load();
+                })
+                .catch((err: Error) => setMessage(err.message))
+                .finally(() => setCreating(false));
+            }}
+          >
+            <input
+              placeholder={t("login.badge")}
+              value={newBadge}
+              onChange={(e) => setNewBadge(e.target.value)}
+              required
+            />
+            <input
+              placeholder={t("setup.fullName")}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              required
+            />
+            <input
+              placeholder={t("admin.password")}
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+            />
+            <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
+              <option value="INVESTIGATOR">INVESTIGATOR</option>
+              <option value="VIEWER">VIEWER</option>
+              <option value="ADMIN">ADMIN</option>
+            </select>
+            <input
+              placeholder={t("admin.station")}
+              value={newStation}
+              onChange={(e) => setNewStation(e.target.value)}
+              required
+            />
+            <input
+              placeholder={t("setup.jurisdiction")}
+              value={newJurisdiction}
+              onChange={(e) => setNewJurisdiction(e.target.value)}
+              required
+            />
+            <button className="btn btn-primary" type="submit" disabled={creating}>
+              {creating ? t("state.loading") : t("admin.createUser")}
+            </button>
+          </form>
+          <p className="hint">Passwords must be at least 10 characters and mix letters with numbers or symbols.</p>
           {!users && <Spinner />}
           {users && users.length === 0 && <Empty />}
           {users && users.length > 0 && (

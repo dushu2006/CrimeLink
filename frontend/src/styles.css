@@ -452,7 +452,7 @@ select:focus {
 
 .login-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 440px;
   border: 1px solid var(--line);
   border-top: 4px solid var(--navy);
   padding: 28px;
