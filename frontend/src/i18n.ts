@@ -106,6 +106,13 @@ export const STRINGS: Record<string, [string, string]> = {
   "admin.thresholds": ["Detection thresholds", "पहचान सीमाएँ"],
   "admin.quarantine": ["Quarantine", "संगरोध"],
   "admin.overview": ["Overview", "अवलोकन"],
+  "admin.database": ["Database", "डेटाबेस"],
+  "admin.cases": ["Cases", "प्रकरण"],
+  "admin.documents": ["Documents", "दस्तावेज़"],
+  "admin.entities": ["Entities", "संस्थाएँ"],
+  "admin.relationships": ["Relationships", "संबंध"],
+  "admin.ai": ["AI Activity", "एआई गतिविधि"],
+  "admin.health": ["System Health", "सिस्टम स्वास्थ्य"],
 
   "state.loading": ["Loading…", "लोड हो रहा है…"],
   "state.empty": ["Nothing to show.", "दिखाने के लिए कुछ नहीं।"],

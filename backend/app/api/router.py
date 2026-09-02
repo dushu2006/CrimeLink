@@ -12,8 +12,10 @@ from fastapi import APIRouter
 from app.api.v1 import (
     access,
     admin,
+    ai,
     auth,
     cases,
+    database,
     documents,
     export,
     graph,
@@ -39,5 +41,7 @@ api_router.include_router(resolution.router)
 api_router.include_router(patterns.router)
 api_router.include_router(access.router)
 api_router.include_router(admin.router)
+api_router.include_router(database.router)
+api_router.include_router(ai.router)
 
 __all__ = ["api_router"]

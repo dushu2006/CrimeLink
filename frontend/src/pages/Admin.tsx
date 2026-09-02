@@ -51,7 +51,28 @@ interface UserRow {
   is_active: boolean;
 }
 
-const TABS = ["overview", "audit", "users", "thresholds", "quarantine"] as const;
+interface DatabaseSummary {
+  postgres: Record<string, number>;
+  graph: { backend: string; nodes: number; edges: number; labels?: Record<string, number>; relationships?: Record<string, number> };
+  infra: Record<string, unknown>;
+}
+
+interface HealthInfo {
+  postgres: { ok: boolean; backend: string };
+  graph: { ok: boolean; backend: string };
+  redis: { ok: boolean; backend: string };
+  object_store: { ok: boolean; backend: string };
+  broker: { ok: boolean };
+  nlp_provider: string;
+  ai_roles: Record<string, boolean>;
+}
+
+interface NodeRow { id: string; label: string; name: string; confidence: number; case_count: number; source_doc_count: number; is_active: boolean }
+interface EdgeRow { key: string; source: string; target: string; rel_type: string; confidence: number; source_doc_count: number }
+interface CaseRow { id: string; case_number: string; title: string; jurisdiction_id: string; status: string; created_at?: string }
+interface DocRow { id: string; case_id: string; document_type: string; filename: string; size_bytes: number; ingestion_status: string; quarantined: boolean; created_at?: string }
+
+const TABS = ["overview", "database", "cases", "documents", "entities", "relationships", "ai", "health", "audit", "users", "thresholds", "quarantine"] as const;
 
 export default function Admin() {
   const session = useAuth((state) => state.session);
@@ -73,22 +94,44 @@ export default function Admin() {
   const [newStation, setNewStation] = useState("");
   const [newJurisdiction, setNewJurisdiction] = useState("");
   const [creating, setCreating] = useState(false);
+  const [dbSummary, setDbSummary] = useState<DatabaseSummary | null>(null);
+  const [health, setHealth] = useState<HealthInfo | null>(null);
+  const [cases, setCases] = useState<CaseRow[] | null>(null);
+  const [docs, setDocs] = useState<DocRow[] | null>(null);
+  const [entities, setEntities] = useState<NodeRow[] | null>(null);
+  const [rels, setRels] = useState<EdgeRow[] | null>(null);
+  const [entitiesTotal, setEntitiesTotal] = useState(0);
+  const [relsTotal, setRelsTotal] = useState(0);
 
   const load = useCallback(() => {
     setError(null);
     Promise.all([
       api<OverviewStats>("/admin/overview"),
       api<{ items: AuditRow[] }>("/admin/audit/search?limit=100"),
-      api<UserRow[]>("/admin/users"),
+      api<{ items: UserRow[] }>("/admin/users"),
       api<{ items: ThresholdRow[] }>("/admin/thresholds"),
       api<{ items: { id: string; filename: string; failure_reason: string | null }[] }>("/admin/quarantine"),
+      api<DatabaseSummary>("/admin/database/summary"),
+      api<HealthInfo>("/admin/database/health"),
+      api<{ items: CaseRow[]; total: number }>("/admin/database/cases?limit=50"),
+      api<{ items: DocRow[]; total: number }>("/admin/database/documents?limit=50"),
+      api<{ items: NodeRow[]; total: number }>("/admin/database/entities?limit=50"),
+      api<{ items: EdgeRow[]; total: number }>("/admin/database/relationships?limit=50"),
     ])
-      .then(([o, a, u, th, q]) => {
+      .then(([o, a, u, th, q, ds, h, c, d, e, r]) => {
         setOverview(o);
         setAudit(a.items);
-        setUsers(Array.isArray(u) ? u : ((u as unknown as { items: UserRow[] }).items ?? []));
-        setThresholds(th.items ?? (th as unknown as ThresholdRow[]));
+        setUsers(u.items);
+        setThresholds(th.items);
         setQuarantine(q.items);
+        setDbSummary(ds);
+        setHealth(h);
+        setCases(c.items);
+        setDocs(d.items);
+        setEntities(e.items);
+        setEntitiesTotal(e.total);
+        setRels(r.items);
+        setRelsTotal(r.total);
       })
       .catch((err: Error) => setError(err.message));
   }, []);
@@ -156,6 +199,157 @@ export default function Admin() {
             </section>
           )}
         </>
+      )}
+
+      {tab === "database" && dbSummary && (
+        <section className="panel">
+          <h2>Database overview (live)</h2>
+          <div className="cards">
+            {Object.entries(dbSummary.postgres).map(([k, v]) => (
+              <div className="card" key={k}><span className="card-value">{v}</span><span className="card-label">{k}</span></div>
+            ))}
+          </div>
+          <h3>Graph store ({dbSummary.graph.backend})</h3>
+          <p className="hint">{dbSummary.graph.nodes} nodes · {dbSummary.graph.edges} relationships</p>
+          {dbSummary.graph.labels && (
+            <table className="table">
+              <thead><tr><th>Node label</th><th>Count</th></tr></thead>
+              <tbody>
+                {Object.entries(dbSummary.graph.labels).map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
+              </tbody>
+            </table>
+          )}
+          {dbSummary.graph.relationships && (
+            <table className="table">
+              <thead><tr><th>Relationship type</th><th>Count</th></tr></thead>
+              <tbody>
+                {Object.entries(dbSummary.graph.relationships).map(([k, v]) => <tr key={k}><td>{k}</td><td>{v}</td></tr>)}
+              </tbody>
+            </table>
+          )}
+          <h3>Infrastructure</h3>
+          <table className="table">
+            <tbody>
+              {Object.entries(dbSummary.infra).map(([k, v]) => (
+                <tr key={k}><td>{k}</td><td><code>{typeof v === "boolean" ? (v ? "yes" : "no") : String(v)}</code></td></tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {tab === "health" && health && (
+        <section className="panel">
+          <h2>System health</h2>
+          <table className="table">
+            <thead><tr><th>Component</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody>
+              <tr><td>PostgreSQL</td><td>{health.postgres.ok ? "OK" : "FAIL"}</td><td>{health.postgres.backend}</td></tr>
+              <tr><td>Graph</td><td>{health.graph.ok ? "OK" : "FAIL"}</td><td>{health.graph.backend}</td></tr>
+              <tr><td>Redis/broker</td><td>{health.redis.ok ? "OK" : "FAIL"}</td><td>{health.redis.backend}</td></tr>
+              <tr><td>Object store</td><td>{health.object_store.ok ? "OK" : "FAIL"}</td><td>{health.object_store.backend}</td></tr>
+              <tr><td>Job broker</td><td>{health.broker.ok ? "OK" : "FAIL"}</td><td></td></tr>
+              <tr><td>NLP provider</td><td>OK</td><td>{health.nlp_provider}</td></tr>
+            </tbody>
+          </table>
+          <h3>AI model roles</h3>
+          <table className="table">
+            <tbody>
+              {Object.entries(health.ai_roles).map(([role, on]) => (
+                <tr key={role}><td>{role}</td><td>{on ? "configured" : "unavailable (offline mode)"}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {tab === "cases" && (
+        <section className="panel">
+          {!cases && <Spinner />}
+          {cases && (
+            <table className="table">
+              <thead><tr><th>Case number</th><th>Title</th><th>Jurisdiction</th><th>Status</th><th>Created</th></tr></thead>
+              <tbody>
+                {cases.map((c) => (
+                  <tr key={c.id}><td>{c.case_number}</td><td>{c.title}</td><td>{c.jurisdiction_id}</td><td><Badge value={c.status} /></td><td>{(c.created_at ?? "").slice(0, 10)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {tab === "documents" && (
+        <section className="panel">
+          {!docs && <Spinner />}
+          {docs && (
+            <table className="table">
+              <thead><tr><th>File</th><th>Type</th><th>Case</th><th>Status</th><th>Size</th></tr></thead>
+              <tbody>
+                {docs.map((d) => (
+                  <tr key={d.id}><td>{d.filename}</td><td>{d.document_type}</td><td>{d.case_id.slice(0, 8)}…</td><td><Badge value={d.ingestion_status} /></td><td>{(d.size_bytes / 1024).toFixed(1)} KB</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {tab === "entities" && (
+        <section className="panel">
+          {!entities && <Spinner />}
+          {entities && (
+            <>
+              <p className="hint">Showing {entities.length} of {entitiesTotal} entities.</p>
+              <table className="table">
+                <thead><tr><th>ID</th><th>Label</th><th>Display</th><th>Confidence</th><th>Cases</th><th>Evidence docs</th></tr></thead>
+                <tbody>
+                  {entities.map((n) => (
+                    <tr key={n.id}><td><code>{n.id.slice(0, 16)}…</code></td><td>{n.label}</td><td>{n.name}</td><td>{n.confidence.toFixed(2)}</td><td>{n.case_count}</td><td>{n.source_doc_count}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </section>
+      )}
+
+      {tab === "relationships" && (
+        <section className="panel">
+          {!rels && <Spinner />}
+          {rels && (
+            <>
+              <p className="hint">Showing {rels.length} of {relsTotal} relationships.</p>
+              <table className="table">
+                <thead><tr><th>Source</th><th>Type</th><th>Target</th><th>Confidence</th><th>Evidence</th></tr></thead>
+                <tbody>
+                  {rels.map((r) => (
+                    <tr key={r.key}><td><code>{r.source.slice(0, 12)}…</code></td><td><Badge value={r.rel_type} /></td><td><code>{r.target.slice(0, 12)}…</code></td><td>{r.confidence.toFixed(2)}</td><td>{r.source_doc_count}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </section>
+      )}
+
+      {tab === "ai" && (
+        <section className="panel">
+          <h2>AI activity</h2>
+          <p className="hint">
+            Every AI request is audited — see the Audit tab (action type <code>AI_QUERY</code>).
+            The AI gateway pseudonymizes identifiers before sending context to models
+            (e.g. PERSON_023 instead of real names) and the trusted backend retains
+            the mapping only for authorized de-pseudonymization.
+          </p>
+          {health && (
+            <ul>
+              {Object.entries(health.ai_roles).map(([role, on]) => (
+                <li key={role}><code>{role}</code>: {on ? "configured" : "unavailable"}</li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       {tab === "audit" && (
