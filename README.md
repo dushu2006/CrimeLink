@@ -183,6 +183,58 @@ Every synthetic record carries `source_environment="synthetic"` so it can
 never be confused with operational data. The UI labels synthetic data
 accordingly.
 
+### Optional: ingest an external synthetic corpus from disk
+
+If you have an external synthetic corpus on disk (e.g. the
+`CrimeLink_Synthetic_Corpus_v1` dataset), keep it **outside** this repository
+as a sibling directory — it is not part of the Git project:
+
+```
+<parent folder>/
+├── CrimeLink/                          # this repository
+└── CrimeLink_Synthetic_Corpus_v1/      # external dataset (not in Git)
+    ├── operational/                    # structured files (CSV/JSON) — ingested
+    ├── documents/                      # investigation documents — ingested
+    ├── metadata/                       # dataset documentation — never imported
+    ├── ground_truth/                   # evaluation answers — NEVER ingested
+    ├── README.md
+    └── SCHEMA.md
+```
+
+Configure CrimeLink to use it:
+
+```bash
+# .env
+CRIMELINK_SYNTHETIC_DATA_MODE=external
+CRIMELINK_SYNTHETIC_DATA_ROOT=../CrimeLink_Synthetic_Corpus_v1   # relative to the repo root
+```
+
+Ingestion is **explicit** — application startup never imports the dataset:
+
+```bash
+# validate / classify only (writes nothing)
+.venv/bin/python -m app.synthetic_corpus.external --dry-run
+
+# ingest through the standard six-stage pipeline
+.venv/bin/python -m app.synthetic_corpus.external
+
+# equivalent mode-aware umbrella command
+.venv/bin/python -m app.cli ingest-synthetic
+```
+
+Records flow through the exact same path as investigator uploads:
+`SourceAdapter → upload_document → six-stage pipeline → PostgreSQL → graph →
+entity resolution → pattern detection → UI → AI Data Gateway`. Only
+`operational/` and `documents/` are read; files are classified by content
+signature (CSV header/JSON structure) against the same schemas the pipeline
+adapters support, and unrecognised files are reported by name instead of
+being skipped silently. Re-running the command is safe: cases match on their
+deterministic `SYN-EXT/<group>` number and documents on
+`UNIQUE(case_id, content_hash)`, so a second run reports records as
+duplicates rather than copying them. `ground_truth/` is isolation-checked and
+excluded — it may only be consumed by a separate evaluation harness, never by
+the operational pipeline, AI context or UI.
+
 ### Manual start (without run.py)
 
 ```bash
@@ -290,7 +342,7 @@ backend/
       sources/                # SourceAdapter protocol + registry
     pipeline/                 # extraction, source adapters, entity resolution,
                               # orchestrator, celery tasks
-    synthetic_corpus/         # configurable realistic development corpus (CLI)
+    synthetic_corpus/         # configurable dev corpus + external corpus ingest (CLI)
     analytics/                # centrality, patterns, explanations, temporal paths
     api/v1/                   # REST surface (auth, cases, documents, graph,
                               # resolution, patterns, access, admin, ai, database)

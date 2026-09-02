@@ -327,6 +327,9 @@ def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
     print("    .venv/Scripts/python -m app.synthetic_corpus.generate     (Windows)")
     print("    .venv/bin/python -m app.synthetic_corpus.generate         (macOS/Linux)")
     print("  Add --help to see options (seed, size, clear, regenerate).")
+    print("  To ingest an EXTERNAL synthetic corpus from disk instead (never")
+    print("  automatic; configure SYNTHETIC_DATA_MODE=external + SYNTHETIC_DATA_ROOT):")
+    print("    .venv/bin/python -m app.cli ingest-synthetic")
     print()
     if nlp_key or ai_key:
         print("  NLP/AI: API key detected — model extraction & AI gateway enabled.")

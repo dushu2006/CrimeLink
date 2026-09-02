@@ -138,10 +138,11 @@ External data enters CrimeLink through `SourceAdapter`, a narrow interface:
 
 ```
 SourceAdapter
-├── SyntheticCorpusAdapter    # synthetic development corpus (§7)
-├── FileImportAdapter         # real user uploads (FIR, CDR, bank, surveillance)
-├── DatabaseAdapter           # reserved for authorised relational feeds
-└── FutureGovernmentAdapter   # reserved for authorised CCNS/CCTNS adapters
+├── SyntheticCorpusAdapter          # generated synthetic development corpus (§7)
+├── ExternalSyntheticCorpusAdapter  # external synthetic corpus on disk (§7a)
+├── FileImportAdapter               # real user uploads (FIR, CDR, bank, surveillance)
+├── DatabaseAdapter                 # reserved for authorised relational feeds
+└── FutureGovernmentAdapter         # reserved for authorised CCNS/CCTNS adapters
 ```
 
 CrimeLink does **not** claim CCNS/CCTNS/police database access. The
@@ -198,6 +199,49 @@ Corpus characteristics:
 
 The same seed reproduces the same corpus; different seeds produce different
 corpora. Changing entity counts requires no source code changes.
+
+---
+
+## 7a. External Synthetic Corpus (filesystem dataset)
+
+`CRIMELINK_SYNTHETIC_DATA_MODE=external` switches synthetic ingestion from the
+in-process generator to a corpus directory on disk (for example a sibling
+`CrimeLink_Synthetic_Corpus_v1` checkout next to this repository, resolved via
+`CRIMELINK_SYNTHETIC_DATA_ROOT`; relative paths resolve against the repo root,
+absolute paths are honoured verbatim; nothing is copied into Git and nothing
+is ingested at startup).
+
+The **ExternalSyntheticCorpusAdapter** implements the same `SourceAdapter`
+boundary as the generator and feeds the same pipeline
+(`upload_document` → six stages → relational store → graph):
+
+1. **Resolve + validate** the root; `operational/` and `documents/` must
+   exist. Missing directories fail loudly with the offending path.
+2. **Discover** files under `operational/` and `documents/` only. Any
+   `ground_truth/` or `metadata/` component is explicitly excluded
+   (ground truth is evaluation-only data and never enters PostgreSQL, the
+   graph, the UI, or AI context). Root-level corpus docs (`README.md`,
+   `SCHEMA.md`) are listed as ignored.
+3. **Classify by content signature**, never by assumed filenames: CSV header
+   rows are matched against the same alias tables the pipeline adapters
+   parse with (CDR schema registry, financial aliases, surveillance,
+   criminal history); JSON is matched by structural signature (social export,
+   sighting, named record); TXT/MD/PDF/DOCX go through the text document
+   adapter. Unrecognised files are reported as `unsupported` with their
+   header quoted — the operator sees the gap instead of a silent skip.
+4. **Ingest explicitly** — `python -m app.synthetic_corpus.external`
+   (or `python -m app.cli ingest-synthetic`, or
+   `POST /api/v1/admin/synthetic/ingest`). Files are grouped into synthetic
+   cases by directory (`SYN-EXT/<GROUP>`, title prefixed `[SYNTHETIC]`), then
+   uploaded with `source_confidence=SYNTHETIC`; the inline/celery broker runs
+   the pipeline exactly as for investigator uploads.
+5. **Idempotency**: case numbers are deterministic, documents dedupe on
+   `UNIQUE(case_id, content_hash)`, and graph writes converge via
+   provenance keys — re-running reports duplicates instead of copying data.
+
+A run reports: records discovered / accepted / ingested / duplicates /
+rejected / failed, excluded evaluation files, per-file outcomes and (with
+`--wait`) the embedded pipeline's document/job statuses and graph counts.
 
 ---
 
