@@ -58,7 +58,7 @@ WEB_HOST = "0.0.0.0"
 DEFAULT_WEB_PORT = 5173
 
 MIN_PYTHON = (3, 11)
-MAX_PYTHON_TESTED = (3, 13)  # we test on 3.11 and 3.12; warn on 3.13+
+MAX_PYTHON_TESTED = (3, 13)  # tested on 3.11–3.13; warn on 3.14+
 MIN_NODE_MAJOR = 18
 
 
@@ -143,8 +143,9 @@ def require_python() -> None:
         warn(
             f"Python {sys.version_info.major}.{sys.version_info.minor} is newer than the versions "
             f"we test against ({MIN_PYTHON[0]}.{MIN_PYTHON[1]}–{MAX_PYTHON_TESTED[0]}.{MAX_PYTHON_TESTED[1]}). "
-            "It will likely work, but if pip falls back to building packages from source, install"
-            " Python 3.12 from https://www.python.org/ instead."
+            "Some pinned native dependencies (e.g. asyncpg) have no prebuilt wheel for it yet, so"
+            " pip would fall back to compiling from source and fail without a C compiler. Install"
+            " Python 3.13 from https://www.python.org/ instead."
         )
 
 
