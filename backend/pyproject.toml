@@ -15,10 +15,13 @@ dependencies = [
   "alembic==1.14.0",
   "neo4j==5.28.1",
   "networkx>=3.2,<4.0",
-  # Loose NumPy pin so pip can always pick a prebuilt wheel on Windows/macOS/Linux
-  # for every supported Python version (3.11, 3.12, 3.13). networkx and our
-  # analytics code only use the stable ndarray API.
-  "numpy>=1.26,<2.3",
+  # NumPy pin is kept below 2.5 on purpose: 2.5 dropped Python 3.11, while 2.4.x
+  # is the newest line that still ships prebuilt wheels for the supported
+  # interpreters (3.11, 3.12, 3.13) and for 3.14 where available. The old <2.3
+  # cap resolved to NumPy 2.2.x, which has no Python 3.14 wheel, so pip fell
+  # back to a source build and failed without a C compiler. networkx and our
+  # analytics code only use the stable ndarray API, so any 1.26+ / 2.x works.
+  "numpy>=1.26,<2.5",
   "minio==7.2.12",
   "celery[redis]==5.4.0",
   "redis==5.2.1",
