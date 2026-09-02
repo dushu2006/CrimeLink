@@ -1,146 +1,408 @@
-# Architecture
+# CrimeLink Architecture
 
-CrimeLink is built so that the interesting rules live in one place each, and so
-that the place is the one an auditor would expect to find it in. This document
-explains the shape of the code and, where a decision is non-obvious, why it was
-made.
+This document is the technical map of the CrimeLink platform. It is the
+companion to `README.md` (operator-oriented quick start) and the PRD.
 
-## 1. Layering
+---
 
-```
-app/api/v1/         HTTP only: parse, authorise, delegate, audit
-app/services/       application logic; the only layer the API calls
-app/domain/         the model: enums, provenance keys, normalisation, graph types
-app/pipeline/       ingestion: extraction → entity resolution → write
-app/analytics/      centrality, patterns, explanations, temporal paths
-app/adapters/       the outside world: graph, NLP, object store, broker
-app/security/       tokens, RBAC, jurisdiction, rate limiting, @audited
-app/ports/          the interfaces the adapters implement
-```
-
-Dependencies point downwards only. `app/domain` imports nothing from the rest of
-the application, which is what makes the domain tests fast and meaningful.
-
-## 2. Ports and adapters
-
-Four ports have two implementations each. The profile selects them; nothing else
-in the codebase changes.
-
-| Port | embedded | production |
-|---|---|---|
-| graph | NetworkX `MultiDiGraph` with JSON write-through | Neo4j 5 (Cypher through `injector.py`) |
-| objects | filesystem, HMAC-signed links | MinIO, three buckets |
-| broker | in-process thread pool | Celery + Redis |
-| relational | SQLite | PostgreSQL 15 |
-
-The embedded profile is not a toy: it is what the tests and local development run on, and
-it is the only thing a district can use while waiting for infrastructure. It
-means a broken port contract shows up in CI rather than at a deployment.
-
-### Why the embedded graph exists at all
-
-Neo4j Community is a single-database server; running one per test is slow and
-running one per district before procurement is impossible. The embedded graph
-keeps the *same* injector interface, so the Cypher in `injector.py` is exercised
-in production and the domain rules are exercised everywhere.
-
-## 3. The graph write path (G1)
+## 1. Topology
 
 ```
-pipeline  ──►  GraphInjector.upsert_nodes / upsert_edges  ──►  store
-                        │
-                        └── _validate_nodes / _validate_edges
-                              raise UnevidencedGraphWriteError when
-                              properties["source_doc_id"] is absent
+                    ┌─────────────────┐
+   browser  ───────►│  nginx (web)    │  React console, TLS, reverse proxy
+                    └────────┬────────┘
+                             │ /api
+                    ┌────────▼────────┐
+                    │  FastAPI (api)  │  REST + WebSocket progress
+                    └───┬─────┬───┬───┘
+        ┌───────────────┘     │   └──────────────────┐
+        ▼                     ▼                      ▼
+ ┌──────────────┐   ┌──────────────────┐   ┌──────────────────┐
+ │ PostgreSQL   │   │ Celery + Redis   │   │  Neo4j / embed   │
+ │ system of    │   │ 6-stage pipeline │   │  knowledge graph │
+ │ record       │   │ patterns, anchor │   │                  │
+ └──────────────┘   └────────┬─────────┘   └──────────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │ MinIO / local   │  documents / derived / anchors
+                    └─────────────────┘
 ```
 
-`app/adapters/graph/injector.py` is the **only** module permitted to write to the
-graph. This is enforced by convention and checked by tests, and it means a
-reviewer auditing "can anything enter the graph without evidence?" has one file
-to read.
+**Two profiles, one codebase.**
 
-Three idempotence rules keep re-ingestion safe:
+|                 | Embedded (default `python run.py`) | Production (`docker compose up`) |
+| --------------- | ---------------------------------- | -------------------------------- |
+| Relational DB   | SQLite (file in `var/data/`)       | PostgreSQL 15                    |
+| Graph           | NetworkX (in-process, persisted)   | Neo4j 5 Community                |
+| Object storage  | Local filesystem (`var/objects/`)  | MinIO                            |
+| Job broker      | In-process thread pool             | Celery + Redis                   |
+| Web             | Vite dev server                    | Nginx (built React)              |
 
-* `provenance_key = SHA256(case_id | doc_id | entity_type | normalized_value)`
-* `edge_key(rel_type, source, target, *discriminators)` — see `app/domain/provenance.py`
-* `CALL` edges aggregate (`call_count`, `first_ts`, `last_ts`) instead of
-  creating one edge per call, so a CDR with 50,000 calls does not create 50,000
-  edges.
+The domain, pipeline, analytics and API layers are byte-for-byte identical
+in both profiles — only the adapters behind the ports change.
 
-Meta-relationships (`POTENTIAL_ALIAS`, `SIMILARITY_REJECTED`) are review
-artifacts rather than evidence, but they still carry the union of both endpoints'
-document ids — an investigator must be able to open the sources from the edge.
+---
 
-## 4. Entity resolution (G2)
+## 2. The Three Guarantees
+
+Everything else in CrimeLink is subordinate to these, enforced in code and
+tested by `backend/tests/test_guarantees.py`.
+
+|     | Guarantee         | Enforcement                                                                                                |
+| --- | ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| G1  | Every fact is evidenced | `GraphEdge` refuses construction without `source_doc_id`; the Graph Injector is the *only* module that writes to the graph; unevidenced writes raise `UnevidencedGraphWriteError`. |
+| G2  | Nothing serious without a human | Fuzzy identity matches land in a review queue; pattern findings are created as `NEW` and stay that way until confirmed/dismissed; there is no `DELETE` anywhere in the API. |
+| G3  | Everything is auditable | Audit log is append-only and hash-chained (`row_hash = SHA256(prev_hash ‖ canonical_json(row))`); documents are write-once addressed by SHA-256; nightly anchor of chain head. |
+
+---
+
+## 3. PostgreSQL — System of Record
+
+PostgreSQL (SQLite in embedded) is the authoritative transactional store. It
+holds:
+
+* `users`, `refresh_tokens` (rotating, reuse-detecting)
+* `cases` (case metadata, jurisdiction, status)
+* `case_documents` (original evidence metadata + content hash; UNIQUE on
+  `(case_id, content_hash)` enforces de-duplication at the DB level)
+* `ingestion_jobs`, `document_stage_events` (pipeline progress, WebSocket feed)
+* `entity_resolution_queue` (fuzzy identity proposals, reversible)
+* `detected_patterns`, `pattern_config`
+* `jurisdiction_access_requests` (time-boxed cross-jurisdiction grants)
+* `audit_logs`, `audit_chain_head`, `audit_anchors` (tamper-evident)
+
+### Migrations
+
+Schema changes go through Alembic (`backend/alembic/versions/`). Never modify
+schemas only through runtime startup code.
+
+---
+
+## 4. Neo4j / Embedded Graph — Relationship Knowledge Graph
+
+The graph holds entities and the evidence-backed relationships between them.
+
+**Node labels:**
+
+* `Person`, `Phone`, `Vehicle`, `Location`, `BankAccount`, `Organization`,
+  `Event`, `Case`
+
+**Relationship types:**
+
+| Type                 | Meaning                                                 |
+| -------------------- | ------------------------------------------------------- |
+| `MENTIONED_IN`       | Entity appears in a case                                |
+| `PARTICIPATED_IN`    | Person is a party to a case                             |
+| `OWNS_VEHICLE`       | Person ↔ Vehicle                                        |
+| `USES_PHONE`         | Person ↔ Phone                                          |
+| `CALLED`             | Phone ↔ Phone (aggregated: `call_count`, `first_ts`, `last_ts`) |
+| `MEMBER_OF`          | Person ↔ Organization                                   |
+| `CONTROLS_ACCOUNT`   | Person ↔ BankAccount                                    |
+| `TRANSFER_TO`        | BankAccount → BankAccount (per-transfer)                |
+| `LOCATED_AT`         | Person/Vehicle → Location                               |
+| `ACCUSED_IN`         | Person → Case                                           |
+| `ASSOCIATE_OF`, `RELATIVE_OF`, `ARRESTED_WITH`, `NAMED_ACCOMPLICE_OF`, `LINKED_ON_SOCIAL` | probabilistic person-to-person edges (low confidence) |
+| `POTENTIAL_ALIAS`, `SIMILARITY_REJECTED`, `MERGED_INTO` | meta-edges for entity review (the only edges permitted without a source document) |
+
+Every node and every edge carries `source_doc_id` (or `source_doc_ids` for
+aggregated edges) so it can be traced back to the document that produced it.
+
+Centrality (betweenness, PageRank, degree) is computed **in Python** using
+NetworkX on a `CaseGraphSnapshot`, so the platform does not require the Neo4j
+GDS plugin and produces deterministic rankings on every backend.
+
+---
+
+## 5. Six-Stage Document Pipeline
+
+Every uploaded document moves through the same stages:
+
+1. **Validate** — type, size, MIME, SHA-256, duplicate detection.
+2. **Extract text** — natively for txt/csv/json; pypdf/python-docx/openpyxl for
+   binary formats.
+3. **Deterministic extraction** — regex/gazetteer extraction for phones, IFSC,
+   vehicle plates, dates, amounts, IPC sections, districts. Confidence 0.95.
+4. **NLP extraction** — NVIDIA NIM → IndicNER → heuristic fallback.
+   **Confidence capped at 0.80** — model output is a lead, not evidence.
+5. **Entity resolution** — hard identifiers merge deterministically; name
+   similarity ≥ 0.85 (with Devanagari transliteration) creates a *proposal*,
+   never a merge.
+6. **Graph write + pattern detection** — through the single-writer injector;
+   then STRUCTURING, BURNER_PHONE, RAPID_MOVEMENT, NETWORK_BRIDGE detectors.
+
+---
+
+## 6. Source Adapter Architecture
+
+External data enters CrimeLink through `SourceAdapter`, a narrow interface:
 
 ```
-hard identifier match (Aadhaar / phone / IFSC+account / vehicle)   →  merge now
-name similarity ≥ 0.85                                             →  propose
-alias co-mention                                                   →  propose
-otherwise                                                          →  distinct nodes
+SourceAdapter
+├── SyntheticCorpusAdapter    # synthetic development corpus (§7)
+├── FileImportAdapter         # real user uploads (FIR, CDR, bank, surveillance)
+├── DatabaseAdapter           # reserved for authorised relational feeds
+└── FutureGovernmentAdapter   # reserved for authorised CCNS/CCTNS adapters
 ```
 
-`combined_similarity` is the max of Jaccard, token-sort, a weighted containment
-score and a consonant-skeleton ratio, computed on a **script-agnostic key**:
-Devanagari is transliterated to ISO-15919 and folded to ASCII first, so
-`सुरेश मेहता` and `Suresh Mehta` score 1.00.
+CrimeLink does **not** claim CCNS/CCTNS/police database access. The
+`FutureGovernmentAdapter` slot is an adapter boundary; nothing in the codebase
+fabricates a live police database connection.
 
-Two deliberate constraints:
+---
 
-* **One proposal per new mention.** Seven documents naming the same person
-  produce seven nodes (the provenance key is per document by definition);
-  comparing each against every existing person would put dozens of identical
-  decisions in the queue. A queue nobody can work through gets rubber-stamped,
-  which is the failure G2 exists to prevent. Merges are transitive, so the best
-  single proposal per mention still lets the cluster form.
-* **A rejected pair is tombstoned** (`SIMILARITY_REJECTED`) and never
-  re-proposed. Re-deciding the same non-match every time a document lands is how
-  a review queue becomes background noise.
+## 7. Synthetic Development Corpus
 
-## 5. Analytics
+The `synthetic_corpus` module generates a realistic, configurable Indian-style
+investigation corpus designed to exercise every layer of CrimeLink. It is
+**not demo data** — every record carries `source_environment="synthetic"` and
+the UI labels it as synthetic.
 
-Centrality is computed **in Python**, with a hand-written confidence-weighted
-PageRank (see `app/analytics/centrality.py::weighted_pagerank`) rather than
-NetworkX's SciPy-backed implementation. Three reasons:
+Generate explicitly from the command line:
 
-1. an air-gapped district can install CrimeLink from a wheelhouse without
-   pulling a scientific Python stack;
-2. edge weights are normalised by out-weight, so a low-confidence social link
-   cannot inflate a node's reach — the "source-confidence discipline" the PRD
-   asks for, expressed in the maths;
-3. the same code runs in both profiles, so the ranking an investigator sees is
-   the ranking the tests assert.
+```bash
+# Default corpus (60 people, 12 cases, 75 phones, …)
+.venv/bin/python -m app.synthetic_corpus.generate
 
-Every influence response carries its justification: the summary sentence, the
-weighted edges that produced the score, the community, the method description and
-the document ids behind it. **A score never travels alone** — a number without
-its derivation is not something an officer can defend in court.
+# Custom size
+.venv/bin/python -m app.synthetic_corpus.generate --persons 100 --cases 20 --seed 42
 
-## 6. Security
+# Show live database counts
+.venv/bin/python -m app.synthetic_corpus.generate --stats
 
-* **Tokens** — 15-minute access tokens, 8-hour refresh tokens with rotation.
-  Replaying a rotated refresh token is treated as theft: the entire family is
-  revoked and the event is audited.
-* **RBAC** — three roles (VIEWER, INVESTIGATOR, ADMIN), enforced on the server
-  (`Principal.require`), never by hiding UI.
-* **Jurisdiction** — `JurisdictionScope` narrows every query. A case outside your
-  jurisdiction returns the same 404 as one that does not exist, so the API does
-  not confirm that another district's case is real.
-* **Audit** — `@audited(action, …)` wraps a handler and writes a hash-chained row
-  in the *same transaction* as the mutation, so "the action happened but the
-  record did not" is impossible.
-* **Rate limiting and lockout** — 100 requests/minute, 10 logins/minute, five
-  failed logins lock an account for 30 minutes. Both counters are committed
-  before the error response is returned, because a request-scoped session is
-  rolled back on an error path and would otherwise discard the lock.
+# Clear the dev database (dev only)
+.venv/bin/python -m app.synthetic_corpus.generate --clear --yes-i-am-sure
+```
 
-## 7. Failure handling
+Corpus characteristics:
 
-The pipeline records a stage event for each of its six stages. A document that
-cannot be parsed is **quarantined** with the reason, not dropped; an
-administrator releases or discards it, and both are audited. A model that cannot
-be reached falls through NIM → IndicNER → deterministic heuristic, and the
-extraction continues at lower confidence rather than stopping the case.
+* Configurable counts (persons, cases, phones, vehicles, locations, accounts,
+  organisations, documents, calls, transactions, bridges, networks).
+* Indian-style names with realistic variations (e.g. `Ramesh Kumar` /
+  `Ramesh K.` / `RAMESH KUMAR` / `R. Kumar`) that create natural
+  entity-resolution ambiguity.
+* Controlled missing/dirty fields at configurable rates.
+* Multiple independent criminal networks plus **bridge** individuals who
+  appear across networks — exercising betweenness centrality, PageRank,
+  cross-case analysis.
+* **Indirect connections** (A→phone→phone→B, vehicle→location→person,
+  account→account→person), no fake `CONNECTED_TO` edges.
+* Multiple cases with overlapping entities (cross-case signal).
+* Chronologically coherent timestamps with bursts around incident dates,
+  structuring chains, burner-phone lifespans.
+* Known scenarios (burner phone, rapid transactions, bridge, mule,
+  vehicle-location pattern, identity ambiguity, communication clusters,
+  temporal paths, noisy relationships) encoded in
+  `synthetic_ground_truth.json` for testing — never surfaced to the
+  investigator UI.
+* Deterministic seed for reproducible tests.
 
-No component fails silently: every exception path either records a stage event,
-writes to the audit log, or both.
+The same seed reproduces the same corpus; different seeds produce different
+corpora. Changing entity counts requires no source code changes.
+
+---
+
+## 8. AI Gateway and Data Boundary
+
+CrimeLink never sends the entire PostgreSQL or Neo4j database to an LLM, and
+it never hashes the whole graph for "privacy". Instead the architecture is:
+
+```
+Investigator Question
+    ↓
+AI Request Orchestrator
+    ↓
+Query Planner / Retrieval (Postgres + Neo4j)
+    ↓
+Relevant Evidence Selection
+    ↓
+Graph Subgraph Construction
+    ↓
+Data Minimization
+    ↓
+Reversible Pseudonymization   (PERSON_023, PHONE_041, VEHICLE_009, …)
+    ↓
+Model-specific context
+    ↓
+LLM
+    ↓
+Structured result (Pydantic-validated)
+    ↓
+Backend validation (evidence refs present; no forbidden labels; no
+    irreversible-action requests)
+    ↓
+De-pseudonymization for authorized UI only
+    ↓
+Investigator
+```
+
+### Reversible pseudonymization
+
+Pseudo-IDs are deterministic within an investigation context. The mapping
+table lives inside the trusted backend only; the model never sees it. Hashing
+is explicitly NOT used as the only mechanism because it is one-way and would
+prevent authorized de-pseudonymization.
+
+### Model roles
+
+Five independently configurable roles (each can point at a different
+provider/model via environment variables):
+
+| Role             | Used for                                                                    |
+| ---------------- | --------------------------------------------------------------------------- |
+| `EXTRACTION`     | NER, relation extraction, document understanding                            |
+| `REASONING`      | Multi-hop investigation, hypothesis generation, temporal reasoning          |
+| `EXPLANATION`    | Investigator-friendly summaries, "why this matters", evidence-grounded text |
+| `CLASSIFICATION` | Pattern classification, prioritization, triage, relevance scoring           |
+| `EMBEDDING`      | Semantic search, similar-case/FIR retrieval, near-duplicate detection       |
+
+All role configuration comes from env vars (`AI_EXTRACTION_MODEL`,
+`AI_REASONING_API_KEY`, …). No model name or key is hard-coded. When a role's
+key is absent the gateway returns a structured "insufficient evidence"
+response and the system keeps working in offline/heuristic mode.
+
+### Structured output contract
+
+Every AI response is validated against the `FindingResult` Pydantic model
+(finding_type, summary, confidence, evidence_level, entities, relationships,
+evidence_refs, reasoning_steps, uncertainties, recommended_review,
+suggested_next_actions). Malformed output is rejected and surfaced to the
+investigator as "model output failed validation; human review required".
+
+### Evidence grounding and fact/inference distinction
+
+Every finding must carry `evidence_refs`. If the model cannot cite evidence,
+the result is marked `UNKNOWN` / unsupported rather than presented as fact.
+The output distinguishes:
+
+* **FACT** — directly supported by provided evidence
+* **INFERENCE** — analytically derived
+* **HYPOTHESIS** — possible explanation requiring investigation
+* **UNKNOWN** — insufficient evidence
+
+### Neutral language policy
+
+AI output is filtered for forbidden labels (`criminal`, `guilty`, `terrorist`,
+`gang member`, `mastermind`, `kingpin`). The system uses: *person of interest*,
+*associated entity*, *analytically significant entity*, *potential connection*,
+*pattern requiring review*, *evidence-supported association*. All serious
+findings require human review (`recommended_review=true` by default).
+
+### Audit
+
+Every AI request is audited with requesting user, case, model role/ID,
+timestamp, entity/evidence IDs, output hash, latency, and (if configured)
+token counts. Full prompts are only persisted if `CRIMELINK_AI_AUDIT_PROMPT_STORAGE=true`.
+
+### AI cannot write to the database directly
+
+Models produce findings; they cannot merge identities, delete evidence,
+confirm a criminal pattern, or modify authoritative data. Human investigators
+remain responsible for consequential decisions.
+
+---
+
+## 9. Human-in-the-Loop
+
+* Fuzzy entity matches are **proposed**, never merged. Investigators approve,
+  reject, or unmerge from the Review Queue. Merges are reversible: the
+  pre-merge edge list is stored on the deactivated node.
+* Detected patterns are created as `NEW` and must be confirmed/dismissed with
+  a written reason.
+* Anonymous-tip content stays in a staging subgraph until an investigator
+  promotes it (`promote_staging`).
+* Cross-jurisdiction access is always time-boxed and requires approval.
+* There is no `DELETE` anywhere in the API; documents are soft-deleted.
+
+---
+
+## 10. Security Model
+
+The data flow is strictly:
+
+```
+Raw source data
+  → Trusted backend
+  → Controlled graph representation
+  → Relevant subgraph
+  → Minimized/pseudonymized AI context
+  → AI
+  → Validated result
+  → Authorized de-pseudonymization
+  → Investigator
+```
+
+It is never:
+
+```
+Raw police database → LLM           (forbidden)
+Entire Neo4j → LLM                  (forbidden)
+LLM → direct database write         (forbidden)
+```
+
+---
+
+## 11. Administrator Database Inspection
+
+Authorized administrators can inspect the live state of the system through
+read-only endpoints (RBAC + jurisdiction scoped; no secrets):
+
+| Endpoint                              | Provides                                               |
+| ------------------------------------- | ------------------------------------------------------ |
+| `GET /api/v1/admin/database/summary`  | Aggregate counts + infrastructure status               |
+| `GET /api/v1/admin/database/health`   | Postgres / graph / redis / object-store / broker / NLP / AI role status |
+| `GET /api/v1/admin/database/cases`    | Paginated case listing                                 |
+| `GET /api/v1/admin/database/documents`| Paginated document listing                             |
+| `GET /api/v1/admin/database/entities` | Paginated graph entities (type-filterable)             |
+| `GET /api/v1/admin/database/relationships` | Paginated graph relationships (type-filterable)    |
+| `GET /api/v1/admin/database/postgres` | PostgreSQL table counts                                |
+| `GET /api/v1/admin/database/neo4j`    | Graph store stats                                      |
+
+The Administration UI exposes these through the Overview, Database, Cases,
+Documents, Entities, Relationships, Health, AI Activity and Audit Log tabs.
+
+---
+
+## 12. Windows/Dependency Notes
+
+CrimeLink supports Python 3.11 and 3.12. The `numpy` and `networkx` pins are
+deliberately loose (`numpy>=1.26,<2.3`, `networkx>=3.2,<4.0`) so that pip always
+picks a prebuilt wheel on Windows, macOS and Linux. **You do not need Visual
+Studio Build Tools** to install CrimeLink on Windows. If you see NumPy trying
+to build from source, upgrade pip first:
+
+```
+python -m pip install --upgrade pip setuptools wheel
+python run.py
+```
+
+---
+
+## 13. Commands Cheat Sheet
+
+```bash
+# Start the embedded profile (recommended for first use)
+python run.py
+
+# Reinstall dependencies
+python run.py --reinstall
+
+# Generate a realistic synthetic development corpus
+.venv/Scripts/python -m app.synthetic_corpus.generate            # Windows
+.venv/bin/python -m app.synthetic_corpus.generate                # macOS/Linux
+
+# Scale the corpus up to 100+ people
+.venv/bin/python -m app.synthetic_corpus.generate --persons 100 --cases 20
+
+# Show live counts
+.venv/bin/python -m app.synthetic_corpus.generate --stats
+
+# Reset the dev database (dev only)
+.venv/bin/python -m app.synthetic_corpus.generate --clear --regenerate --yes-i-am-sure
+
+# Run backend tests
+cd backend && ../.venv/bin/python -m pytest tests/ -q
+
+# Production (containers)
+cp .env.example .env        # set CRIMELINK_SECRET_KEY and AI keys
+docker compose up -d --build
+```

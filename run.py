@@ -2,19 +2,31 @@
 """One-command CrimeLink launcher (embedded / laptop profile).
 
 First run installs Python and Node dependencies, starts the FastAPI backend
-and the Vite console, then opens a browser.  The database starts empty —
-create the first administrator in the console.
+and the Vite console, then opens a browser.  The database starts EMPTY —
+create the first administrator in the console.  No demo data is inserted.
+
+Quick start::
 
     python run.py
     python run.py --reinstall     # force pip + npm again
     python run.py --no-browser
 
-Requires Python 3.11+ and Node.js 18+ (with npm).  No Docker, Postgres,
-Neo4j, Redis or MinIO is needed for this profile.
+Requires Python 3.11+ and Node.js 18+ (with npm).  No Docker, Postgres, Neo4j,
+Redis or MinIO is needed for this profile.
 
-Optional: set NVIDIA_API_KEY (or CRIMELINK_NIM_API_KEY) in the environment
-or in a `.env` file to use NVIDIA NIM for NLP extraction.  Without a key
-the heuristic extractor runs fully offline.
+Optional: set ``NVIDIA_API_KEY`` (or ``CRIMELINK_AI_API_KEY``) in ``.env`` to
+enable AI extraction/reasoning/explanation through NVIDIA NIM.  Without a key
+the system runs fully offline on the heuristic extractor and still produces a
+complete graph.
+
+Troubleshooting Windows
+-----------------------
+The embedded profile uses loose NumPy / NetworkX pins so pip always picks a
+prebuilt wheel — you do NOT need Visual Studio Build Tools.  If ``pip`` still
+tries to compile NumPy from source, upgrade pip first::
+
+    python -m pip install --upgrade pip setuptools wheel
+    python run.py
 """
 
 from __future__ import annotations
@@ -45,6 +57,10 @@ DEFAULT_API_PORT = 8000
 WEB_HOST = "0.0.0.0"
 DEFAULT_WEB_PORT = 5173
 
+MIN_PYTHON = (3, 11)
+MAX_PYTHON_TESTED = (3, 13)  # we test on 3.11 and 3.12; warn on 3.13+
+MIN_NODE_MAJOR = 18
+
 
 def die(message: str, code: int = 1) -> None:
     print(f"\n[CrimeLink] ERROR: {message}", file=sys.stderr)
@@ -53,6 +69,10 @@ def die(message: str, code: int = 1) -> None:
 
 def info(message: str) -> None:
     print(f"[CrimeLink] {message}", flush=True)
+
+
+def warn(message: str) -> None:
+    print(f"[CrimeLink] WARNING: {message}", file=sys.stderr, flush=True)
 
 
 def venv_bin(name: str) -> Path:
@@ -81,14 +101,17 @@ def load_dotenv(path: Path) -> None:
 
 
 def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
-    """Force the no-containers profile and map the NVIDIA key the README documents."""
+    """Force the no-containers profile and map the NVIDIA/AI keys the README documents."""
     load_dotenv(ROOT / ".env")
     load_dotenv(BACKEND / ".env")
 
-    nvidia = os.environ.get("NVIDIA_API_KEY") or os.environ.get("CRIMELINK_NIM_API_KEY")
+    nvidia = (os.environ.get("NVIDIA_API_KEY")
+              or os.environ.get("CRIMELINK_NIM_API_KEY")
+              or os.environ.get("CRIMELINK_AI_API_KEY"))
     if nvidia:
         os.environ["NVIDIA_API_KEY"] = nvidia
         os.environ["CRIMELINK_NIM_API_KEY"] = nvidia
+        os.environ.setdefault("CRIMELINK_AI_API_KEY", nvidia)
 
     os.environ["CRIMELINK_PROFILE"] = "embedded"
     os.environ["CRIMELINK_ENVIRONMENT"] = "dev"
@@ -101,6 +124,8 @@ def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
         "CRIMELINK_CORS_ORIGINS",
         f"http://127.0.0.1:{web_port},http://localhost:{web_port},{api_url}",
     )
+    # Security: never auto-generate demo data on startup.
+    os.environ["CRIMELINK_SYNTHETIC_CORPUS_ENABLED"] = "false"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     OBJECT_DIR.mkdir(parents=True, exist_ok=True)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
@@ -108,10 +133,18 @@ def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
 
 
 def require_python() -> None:
-    if sys.version_info < (3, 11):
+    if sys.version_info < MIN_PYTHON:
         die(
-            f"Python 3.11+ is required (found {sys.version.split()[0]}). "
-            "Install Python 3.11 or newer and re-run."
+            f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ is required (found "
+            f"{sys.version.split()[0]}). Install Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer "
+            "from https://www.python.org/ (on Windows, tick 'Add Python to PATH')."
+        )
+    if sys.version_info >= (MAX_PYTHON_TESTED[0], MAX_PYTHON_TESTED[1] + 1):
+        warn(
+            f"Python {sys.version_info.major}.{sys.version_info.minor} is newer than the versions "
+            f"we test against ({MIN_PYTHON[0]}.{MIN_PYTHON[1]}–{MAX_PYTHON_TESTED[0]}.{MAX_PYTHON_TESTED[1]}). "
+            "It will likely work, but if pip falls back to building packages from source, install"
+            " Python 3.12 from https://www.python.org/ instead."
         )
 
 
@@ -123,15 +156,21 @@ def require_node() -> str:
             "Node.js 18+ (with npm) is required for the investigator console.\n"
             "  macOS:   brew install node\n"
             "  Ubuntu:  sudo apt install nodejs npm\n"
-            "  Windows: https://nodejs.org/"
+            "  Windows: download LTS from https://nodejs.org/ and tick 'Add to PATH'."
         )
     try:
-        out = subprocess.check_output([node, "-v"], text=True).strip().lstrip("v")
+        out = subprocess.check_output([node, "-v"], text=True, stderr=subprocess.STDOUT).strip().lstrip("v")
     except subprocess.CalledProcessError as exc:
-        die(f"Could not run node: {exc}")
-    major = int(out.split(".")[0])
-    if major < 18:
-        die(f"Node.js 18+ is required (found v{out}).")
+        die(f"Could not run node: {exc.output or exc}")
+    try:
+        major = int(out.split(".")[0])
+    except ValueError:
+        die(f"Could not parse Node version '{out}'. Reinstall Node.js 18+ from https://nodejs.org/.")
+    if major < MIN_NODE_MAJOR:
+        die(
+            f"Node.js {MIN_NODE_MAJOR}+ is required (found v{out}). Install the LTS release from "
+            "https://nodejs.org/."
+        )
     return npm
 
 
@@ -179,13 +218,14 @@ def ensure_venv(env: dict[str, str], reinstall: bool) -> Path:
     need_install = reinstall or not marker.is_file()
     if not need_install:
         probe = subprocess.run(
-            [str(py), "-c", "import fastapi, uvicorn, sqlalchemy"],
+            [str(py), "-c", "import fastapi, uvicorn, sqlalchemy, networkx"],
             capture_output=True,
         )
         need_install = probe.returncode != 0
 
     if need_install:
         info("Installing backend Python dependencies (first time can take a few minutes) …")
+        info("Upgrading pip/setuptools/wheel first so NumPy uses a prebuilt wheel on Windows.")
         run([str(py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], env=env)
         run([str(py), "-m", "pip", "install", str(BACKEND)], env=env)
         marker.write_text("ok\n", encoding="utf-8")
@@ -252,7 +292,7 @@ def stop(proc: subprocess.Popen | None) -> None:
             pass
 
 
-def banner(*, nlp_key: bool, open_url: str, api_url: str) -> None:
+def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
     print()
     print("=" * 72)
     print("  CrimeLink is running (embedded profile — no containers).")
@@ -261,20 +301,31 @@ def banner(*, nlp_key: bool, open_url: str, api_url: str) -> None:
     print(f"  API                  : {api_url}")
     print(f"  Interactive API docs : {api_url}/api/docs")
     print()
-    print("  First launch: create the administrator account in the browser.")
-    print("  After that, sign in with that badge number and password.")
-    print("  Add investigators and viewers from Administration → Users.")
+    print("  The database starts EMPTY. Create the administrator account in")
+    print("  the browser on first launch, then sign in with that badge number")
+    print("  and password.  No demo data is inserted automatically.")
     print()
-    if nlp_key:
-        print("  NLP: NVIDIA NIM key detected — model extraction is enabled.")
+    print("  To generate a realistic synthetic development corpus:")
+    print("    .venv/Scripts/python -m app.synthetic_corpus.generate     (Windows)")
+    print("    .venv/bin/python -m app.synthetic_corpus.generate         (macOS/Linux)")
+    print("  Add --help to see options (seed, size, clear, regenerate).")
+    print()
+    if nlp_key or ai_key:
+        print("  NLP/AI: API key detected — model extraction & AI gateway enabled.")
     else:
-        print("  NLP: no NVIDIA_API_KEY set — running fully offline (heuristic).")
-        print("       Get a key at https://build.nvidia.com and put it in .env")
-        print("       as NVIDIA_API_KEY=nvapi-… to enable NIM extraction.")
+        print("  NLP/AI: no API key set — running fully offline on heuristics.")
+        print("          Set NVIDIA_API_KEY in .env for NIM-based extraction/reasoning.")
     print()
     print("  Press Ctrl+C to stop both servers.")
     print("=" * 72)
     print()
+
+
+def _check_env(env: dict[str, str]) -> None:
+    """Surface actionable errors for common missing-config situations."""
+    if env.get("CRIMELINK_SECRET_KEY", "").startswith("change-me"):
+        warn("CRIMELINK_SECRET_KEY is the placeholder value. This is fine for local"
+             " development; change it before exposing CrimeLink to a network.")
 
 
 def main() -> int:
@@ -298,6 +349,7 @@ def main() -> int:
         die("run.py must live at the CrimeLink repository root (next to backend/ and frontend/).")
 
     env = apply_embedded_env(api_url=api_url, web_port=web_port)
+    _check_env(env)
     py = ensure_venv(env, reinstall=args.reinstall)
     ensure_frontend(npm, env, reinstall=args.reinstall)
 
@@ -353,15 +405,16 @@ def main() -> int:
         signal.signal(signal.SIGTERM, shutdown)
 
     try:
-        wait_http(health_url, timeout=60, label="API")
+        wait_http(health_url, timeout=90, label="API")
         if api_proc.poll() is not None:
-            die(f"API exited early. See {api_log}")
-        wait_http(open_url, timeout=60, label="Console")
+            die(f"API exited early (code {api_proc.returncode}). See {api_log}")
+        wait_http(open_url, timeout=90, label="Console")
         if web_proc.poll() is not None:
-            die(f"Frontend exited early. See {web_log}")
+            die(f"Frontend exited early (code {web_proc.returncode}). See {web_log}")
 
         nlp_key = bool(env.get("CRIMELINK_NIM_API_KEY") or env.get("NVIDIA_API_KEY"))
-        banner(nlp_key=nlp_key, open_url=open_url, api_url=api_url)
+        ai_key = bool(env.get("CRIMELINK_AI_API_KEY")) or nlp_key
+        banner(nlp_key=nlp_key, ai_key=ai_key, open_url=open_url, api_url=api_url)
 
         if not args.no_browser:
             info(f"Opening {open_url} in your browser …")

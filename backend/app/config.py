@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     environment: Literal["dev", "staging", "production"] = "dev"
     debug: bool = False
     log_level: str = "INFO"
+    api_base_url: str = "http://127.0.0.1:8000"
 
     # ------------------------------------------------------------ persistence
     # Backend selection; "auto" resolves from `profile`.
@@ -71,7 +72,7 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "crimelink"
     neo4j_database: str = "neo4j"
-    neo4j_gds_enabled: bool = True
+    neo4j_gds_enabled: bool = False  # GDS is optional; centrality is computed in Python
 
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/1"
@@ -100,6 +101,7 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 30
     rate_limit_per_minute: int = 100
     rate_limit_auth_per_minute: int = 10
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
     # ------------------------------------------------------------------- nlp
     # "auto" -> NIM when an API key is present, else the deterministic+heuristic
@@ -117,6 +119,69 @@ class Settings(BaseSettings):
     nim_max_chars_per_block: int = 3000
     indicner_model: str = "ai4bharat/IndicNER"
     nlp_max_confidence: float = 0.8            # PRD 8.2: NLP output is capped
+
+    # -------------------------------------------------------- AI Gateway / multi-model routing
+    #
+    # Each model role can point at a different provider/model.  The same
+    # OpenAI-compatible HTTP client is used; different base_url / api_key / model
+    # values can be configured per role.  When a role's key is empty the system
+    # either falls back to heuristic processing (extraction/classification) or
+    # returns a structured "insufficient evidence" result (reasoning/explanation).
+    ai_provider: str = "nvidia"
+    ai_api_key: str | None = None
+    ai_base_url: str = "https://integrate.api.nvidia.com/v1"
+    ai_temperature: float = 0.1
+    ai_max_tokens: int = 2048
+    ai_timeout_s: float = 90.0
+    ai_allow_raw_pii: bool = False            # safety: always false unless explicit
+    ai_pseudonymize: bool = True              # apply reversible pseudonymization
+    ai_audit_prompt_storage: bool = False     # whether to persist full prompts in audit
+
+    ai_extraction_model: str = "deepseek-ai/deepseek-v4-pro-0813"
+    ai_extraction_provider: str = "default"   # "default" uses ai_provider/ai_api_key
+    ai_extraction_api_key: str | None = None
+    ai_extraction_base_url: str | None = None
+
+    ai_reasoning_model: str = "deepseek-ai/deepseek-r1"
+    ai_reasoning_provider: str = "default"
+    ai_reasoning_api_key: str | None = None
+    ai_reasoning_base_url: str | None = None
+
+    ai_explanation_model: str = "meta/llama-3.1-8b-instruct"
+    ai_explanation_provider: str = "default"
+    ai_explanation_api_key: str | None = None
+    ai_explanation_base_url: str | None = None
+
+    ai_classification_model: str = "meta/llama-3.1-8b-instruct"
+    ai_classification_provider: str = "default"
+    ai_classification_api_key: str | None = None
+    ai_classification_base_url: str | None = None
+
+    ai_embedding_model: str = "nvidia/llama-3.2-nv-embedqa-1b-v2"
+    ai_embedding_provider: str = "default"
+    ai_embedding_api_key: str | None = None
+    ai_embedding_base_url: str | None = None
+
+    # ------------------------------------------------------ synthetic corpus
+    synthetic_corpus_enabled: bool = False
+    synthetic_corpus_seed: int = 20260902
+    synthetic_corpus_version: int = 1
+    synthetic_person_count: int = 60
+    synthetic_case_count: int = 12
+    synthetic_phone_count: int = 75
+    synthetic_vehicle_count: int = 30
+    synthetic_location_count: int = 25
+    synthetic_account_count: int = 35
+    synthetic_organization_count: int = 12
+    synthetic_document_count: int = 60
+    synthetic_call_count: int = 350
+    synthetic_transaction_count: int = 180
+    synthetic_bridge_count: int = 4
+    synthetic_network_count: int = 3
+    synthetic_missing_field_rate: float = 0.12
+    synthetic_duplicate_rate: float = 0.08
+    synthetic_name_variation_rate: float = 0.15
+    synthetic_source_environment: str = "synthetic"  # provenance tag
 
     # ------------------------------------------------------ entity resolution
     er_fuzzy_threshold: float = 0.85
@@ -137,22 +202,14 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------------- misc
     presigned_url_ttl_seconds: int = 900       # 15 minutes (PRD 6.3)
     upload_max_bytes: int = 64 * 1024 * 1024
-    # Optional path to a Devanagari TTF for the exported brief.  When unset (or
-    # missing) Devanagari names are transliterated to ISO-15919 instead of
-    # rendering as empty boxes.
     pdf_devanagari_font: str | None = None
     graph_max_expand_depth: int = 2            # PRD 10: hard cap
     graph_expand_node_limit: int = 300
     temporal_path_max_depth: int = 4
     export_watermark: str = "CrimeLink — CONFIDENTIAL / LAW ENFORCEMENT USE ONLY"
     audit_anchor_enabled: bool = True
-    # Reserved: the lifecycle countdown that applies once a case is closed.
-    # Closing a case already makes it read-only.  Automatic deletion after this
-    # many days is deliberately *not* scheduled — purging evidence is the one
-    # irreversible action in the system, so it stays an explicit, audited
-    # administrator procedure until a district defines one.
     retention_days_after_closure: int = 90
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    http_port: int = 8000  # used by docker compose
 
     @model_validator(mode="after")
     def _relocate_graph_snapshot(self) -> "Settings":
@@ -167,6 +224,20 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [part.strip() for part in v.split(",") if part.strip()]
         return v
+
+    @field_validator(
+        "synthetic_missing_field_rate",
+        "synthetic_duplicate_rate",
+        "synthetic_name_variation_rate",
+        mode="before",
+    )
+    @classmethod
+    def _clamp_unit(cls, v: Any) -> float:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, f))
 
     # ------------------------------------------------------------- resolution
     @property
@@ -204,6 +275,32 @@ class Settings(BaseSettings):
     @property
     def sqlite_url_sync(self) -> str:
         return f"sqlite:///{self.sqlite_path}"
+
+    # ---- AI role resolution (provider "default" falls back to global) ------
+    def role_config(self, role: str) -> dict[str, Any]:
+        """Return base_url / api_key / model for a given AI model role."""
+        prefix = f"ai_{role}"
+        model = getattr(self, f"{prefix}_model", "")
+        provider = getattr(self, f"{prefix}_provider", "default")
+        api_key = getattr(self, f"{prefix}_api_key", None) or self.ai_api_key
+        base_url = getattr(self, f"{prefix}_base_url", None) or self.ai_base_url
+        if not api_key:
+            # fall back to NVIDIA_API_KEY for convenience
+            import os
+            api_key = os.environ.get("NVIDIA_API_KEY")
+        return {
+            "role": role,
+            "provider": provider if provider != "default" else self.ai_provider,
+            "model": model,
+            "api_key": api_key,
+            "base_url": base_url,
+            "temperature": self.ai_temperature,
+            "max_tokens": self.ai_max_tokens,
+            "timeout": self.ai_timeout_s,
+        }
+
+    def ai_role_available(self, role: str) -> bool:
+        return bool(self.role_config(role).get("api_key"))
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

@@ -505,6 +505,74 @@ class EmbeddedGraphStore:
                 "version": self._version,
             }
 
+    def get_case_snapshot(self, case_id: str):
+        return self.snapshot(case_id)
+
+    def reset(self) -> None:
+        """Wipe the in-memory graph and persisted snapshot (DEV/TEST only)."""
+        with self._lock:
+            self._graph = nx.MultiDiGraph()
+            self._version = 0
+            if self.persist and self.snapshot_path.exists():
+                try:
+                    self.snapshot_path.unlink()
+                except OSError:
+                    pass
+
+    def list_nodes(self, label: str | None = None, limit: int = 100, offset: int = 0) -> dict:
+        """Paginated node listing for the admin DB-inspection UI."""
+        with self._lock:
+            rows = []
+            total = 0
+            for pk, data in self._graph.nodes(data=True):
+                lbl = data.get(_LABEL, "?")
+                if label and lbl != label:
+                    continue
+                total += 1
+                rows.append((pk, data, lbl))
+            rows.sort(key=lambda r: r[0])
+            page = rows[offset : offset + limit]
+            items = []
+            for pk, data, lbl in page:
+                items.append({
+                    "id": pk,
+                    "label": lbl,
+                    "name": (
+                        data.get("name") or data.get("number") or data.get("plate")
+                        or data.get("address") or data.get("case_number") or pk[:8]
+                    ),
+                    "confidence": float(data.get("confidence", 1.0) or 1.0),
+                    "case_count": len(data.get("case_ids") or []),
+                    "source_doc_count": len(data.get("source_doc_ids") or []),
+                    "is_active": bool(data.get("is_active", True)),
+                })
+            return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    def list_edges(self, rel_type: str | None = None, limit: int = 100, offset: int = 0) -> dict:
+        with self._lock:
+            rows = []
+            total = 0
+            for u, v, k, data in self._graph.edges(keys=True, data=True):
+                rt = data.get(_REL, "?")
+                if rel_type and rt != rel_type:
+                    continue
+                total += 1
+                rows.append((u, v, k, data, rt))
+            rows.sort(key=lambda r: (r[0], r[1], r[2]))
+            page = rows[offset : offset + limit]
+            items = []
+            for u, v, k, data, rt in page:
+                items.append({
+                    "key": k,
+                    "source": u,
+                    "target": v,
+                    "rel_type": rt,
+                    "confidence": float(data.get("confidence", 1.0) or 1.0),
+                    "source_doc_id": data.get("source_doc_id"),
+                    "source_doc_count": len(data.get("source_doc_ids") or []),
+                })
+            return {"items": items, "total": total, "limit": limit, "offset": offset}
+
     # ----------------------------------------------------- entity resolution
     def find_by_hard_identifier(
         self, entity_type: str, normalized_value: str, case_id: str | None = None

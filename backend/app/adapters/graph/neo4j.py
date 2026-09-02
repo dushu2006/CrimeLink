@@ -521,6 +521,96 @@ class Neo4jGraphStore:
             "version": self._version,
         }
 
+    def get_case_snapshot(self, case_id: str):
+        return self.snapshot(case_id)
+
+    def reset(self) -> None:
+        """DEV/TEST only: remove all nodes and relationships."""
+        def _apply(tx):
+            tx.run("MATCH (n) DETACH DELETE n")
+        try:
+            self._write(_apply)
+        except Exception:
+            log.exception("graph.neo4j.reset_failed")
+
+    def list_nodes(self, label: str | None = None, limit: int = 100, offset: int = 0) -> dict:
+        def _apply(tx):
+            if label:
+                q = (
+                    f"MATCH (n:{label}) RETURN n.provenance_key AS pk, labels(n) AS labels, "
+                    "n.name AS name, n.number AS number, n.plate AS plate, n.address AS address, "
+                    "n.case_number AS case_number, n.confidence AS confidence, "
+                    "n.case_ids AS case_ids, n.source_doc_ids AS source_doc_ids, n.is_active AS is_active "
+                    "ORDER BY pk SKIP $offset LIMIT $limit"
+                )
+                count_q = f"MATCH (n:{label}) RETURN count(*) AS c"
+            else:
+                q = (
+                    "MATCH (n) RETURN n.provenance_key AS pk, labels(n) AS labels, "
+                    "n.name AS name, n.number AS number, n.plate AS plate, n.address AS address, "
+                    "n.case_number AS case_number, n.confidence AS confidence, "
+                    "n.case_ids AS case_ids, n.source_doc_ids AS source_doc_ids, n.is_active AS is_active "
+                    "ORDER BY pk SKIP $offset LIMIT $limit"
+                )
+                count_q = "MATCH (n) RETURN count(*) AS c"
+            rows = list(tx.run(q, offset=offset, limit=limit))
+            total = tx.run(count_q).single()
+            return rows, int(total["c"]) if total else 0
+
+        try:
+            rows, total = self._read(_apply)
+        except Exception as exc:
+            return {"items": [], "total": 0, "error": str(exc)}
+        items = []
+        for r in rows:
+            lbl = next(iter(r["labels"] or []), "?")
+            items.append({
+                "id": r["pk"],
+                "label": lbl,
+                "name": r["name"] or r["number"] or r["plate"] or r["address"]
+                         or r["case_number"] or (r["pk"][:8] if r["pk"] else ""),
+                "confidence": float(r["confidence"] or 1.0),
+                "case_count": len(r["case_ids"] or []),
+                "source_doc_count": len(r["source_doc_ids"] or []),
+                "is_active": bool(r["is_active"] if r["is_active"] is not None else True),
+            })
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    def list_edges(self, rel_type: str | None = None, limit: int = 100, offset: int = 0) -> dict:
+        def _apply(tx):
+            rel_filter = "WHERE type(r) = $rel_type" if rel_type else ""
+            q = (
+                f"MATCH (a)-[r]->(b) {rel_filter} "
+                "RETURN a.provenance_key AS src, b.provenance_key AS dst, "
+                "type(r) AS type, elementId(r) AS key, r.confidence AS confidence, "
+                "r.source_doc_id AS source_doc_id, r.source_doc_ids AS source_doc_ids "
+                "ORDER BY src, dst SKIP $offset LIMIT $limit"
+            )
+            cq = f"MATCH ()-[r]->() {rel_filter} RETURN count(*) AS c"
+            params = {"offset": offset, "limit": limit}
+            if rel_type:
+                params["rel_type"] = rel_type
+            rows = list(tx.run(q, **params))
+            total_rec = tx.run(cq, **({} if not rel_type else {"rel_type": rel_type})).single()
+            return rows, int(total_rec["c"]) if total_rec else 0
+
+        try:
+            rows, total = self._read(_apply)
+        except Exception as exc:
+            return {"items": [], "total": 0, "error": str(exc)}
+        items = []
+        for r in rows:
+            items.append({
+                "key": r["key"],
+                "source": r["src"],
+                "target": r["dst"],
+                "rel_type": r["type"],
+                "confidence": float(r["confidence"] or 1.0),
+                "source_doc_id": r["source_doc_id"],
+                "source_doc_count": len(r["source_doc_ids"] or []),
+            })
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
     # ----------------------------------------------------- entity resolution
     def find_by_hard_identifier(
         self, entity_type: str, normalized_value: str, case_id: str | None = None

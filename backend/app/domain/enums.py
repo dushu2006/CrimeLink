@@ -39,6 +39,7 @@ class SourceConfidence(str, Enum):
     VERIFIED = "VERIFIED"
     UNVERIFIED = "UNVERIFIED"
     ANONYMOUS_TIP = "ANONYMOUS_TIP"
+    SYNTHETIC = "SYNTHETIC"   # development/synthetic corpus — never operational evidence
 
 
 class IngestionStatus(str, Enum):
@@ -109,6 +110,36 @@ class AuditAction(str, Enum):
     ACCESS_APPROVAL = "ACCESS_APPROVAL"
     QUARANTINE_RELEASE = "QUARANTINE_RELEASE"
     CONFIG_CHANGE = "CONFIG_CHANGE"
+    AI_QUERY = "AI_QUERY"
+
+
+class AIModelRole(str, Enum):
+    """Distinct AI capabilities that can be routed to separate models."""
+    EXTRACTION = "EXTRACTION"
+    REASONING = "REASONING"
+    EXPLANATION = "EXPLANATION"
+    CLASSIFICATION = "CLASSIFICATION"
+    EMBEDDING = "EMBEDDING"
+
+
+class AIFindingType(str, Enum):
+    CROSS_CASE_LINK = "CROSS_CASE_LINK"
+    BRIDGE_ENTITY = "BRIDGE_ENTITY"
+    HIDDEN_CONNECTION = "HIDDEN_CONNECTION"
+    TEMPORAL_PATTERN = "TEMPORAL_PATTERN"
+    MULE_PATTERN = "MULE_PATTERN"
+    BURNER_PATTERN = "BURNER_PATTERN"
+    COMMUNICATION_CLUSTER = "COMMUNICATION_CLUSTER"
+    IDENTITY_AMBIGUITY = "IDENTITY_AMBIGUITY"
+    GENERAL = "GENERAL"
+
+
+class AIEvidenceLevel(str, Enum):
+    """Fact vs inference vs hypothesis (§26)."""
+    FACT = "FACT"
+    INFERENCE = "INFERENCE"
+    HYPOTHESIS = "HYPOTHESIS"
+    UNKNOWN = "UNKNOWN"
 
 
 class AccessRequestStatus(str, Enum):
