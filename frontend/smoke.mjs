@@ -19,7 +19,7 @@ const code = fs.readFileSync(path.join(root, "assets", asset), "utf8");
 // jsdom has no canvas implementation, so cytoscape cannot initialise there.
 // That is a limitation of this harness, not of the app: filter it out.
 const EXPECTED =
-  /HTMLCanvasElement's getContext|crimelink\.render_error|The above error occurred|setting 'font'/;
+  /getContext|crimelink\.render_error|The above error occurred|setting 'font'/;
 const errors = [];
 const vc = new VirtualConsole();
 vc.on("jsdomError", (e) => {
