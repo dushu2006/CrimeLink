@@ -68,6 +68,10 @@ export default function CaseDetail() {
   const [busy, setBusy] = useState(false);
   const [docType, setDocType] = useState("FIR");
   const [confidence, setConfidence] = useState("OFFICIAL");
+  const [question, setQuestion] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<Record<string, unknown> | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
@@ -234,6 +238,60 @@ export default function CaseDetail() {
               })}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Ask AI about this case</h2>
+        <p className="hint">
+          Questions go through the AI gateway. Only the case subgraph is sent, never the whole
+          database. If no model key is configured, the response says so instead of inventing an answer.
+        </p>
+        <form
+          className="form-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const text = question.trim();
+            if (!text) return;
+            setAiBusy(true);
+            setAiError(null);
+            api<Record<string, unknown>>(`/ai/cases/${caseId}/ask`, {
+              method: "POST",
+              body: JSON.stringify({ question: text }),
+            })
+              .then(setAiResult)
+              .catch((err: Error) => setAiError(err.message))
+              .finally(() => setAiBusy(false));
+          }}
+        >
+          <input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="What connections appear in this case?"
+            style={{ minWidth: 280, flex: 1 }}
+          />
+          <button className="btn btn-primary" type="submit" disabled={aiBusy}>
+            {aiBusy ? t("state.loading") : "Ask"}
+          </button>
+        </form>
+        {aiError && (
+          <div className="alert" role="alert">
+            {aiError}
+          </div>
+        )}
+        {aiResult && (
+          <div className="evidence">
+            <p>
+              {aiResult.available ? "Model response" : "AI unavailable"}{" "}
+              {aiResult.fallback_reason ? `— ${String(aiResult.fallback_reason)}` : ""}
+            </p>
+            <blockquote>
+              {String(
+                (aiResult.finding as { summary?: string } | undefined)?.summary ??
+                  "No finding returned.",
+              )}
+            </blockquote>
+          </div>
         )}
       </section>
 

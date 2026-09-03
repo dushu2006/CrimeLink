@@ -38,6 +38,10 @@ export const STRINGS: Record<string, [string, string]> = {
   "setup.fullName": ["Full name", "पूरा नाम"],
   "setup.station": ["Station ID", "थाना आईडी"],
   "setup.jurisdiction": ["Jurisdiction ID", "क्षेत्राधिकार आईडी"],
+  "setup.jurisdictionHint": [
+    "Use SYN-DEV so imported synthetic cases are visible in this account.",
+    "SYN-DEV का उपयोग करें ताकि आयातित सिंथेटिक प्रकरण दिखें।",
+  ],
   "admin.createUser": ["Create user", "उपयोगकर्ता बनाएँ"],
   "admin.password": ["Password", "पासवर्ड"],
   "admin.role": ["Role", "भूमिका"],
@@ -51,7 +55,10 @@ export const STRINGS: Record<string, [string, string]> = {
   "cases.documents": ["Documents", "दस्तावेज़"],
   "cases.pending": ["Pending review", "लंबित समीक्षा"],
   "cases.status": ["Status", "स्थिति"],
-  "cases.empty": ["No cases in your jurisdiction yet.", "आपके क्षेत्राधिकार में अभी कोई प्रकरण नहीं है।"],
+  "cases.empty": [
+    "No cases in your jurisdiction yet. Imported synthetic cases use jurisdiction SYN-DEV. An administrator can import the dataset from Administration → Dataset.",
+    "आपके क्षेत्राधिकार में अभी कोई प्रकरण नहीं है। आयातित सिंथेटिक प्रकरण SYN-DEV क्षेत्राधिकार में हैं। प्रशासक Administration → Dataset से आयात कर सकते हैं।",
+  ],
 
   "case.detail": ["Case", "प्रकरण"],
   "case.upload": ["Upload document", "दस्तावेज़ अपलोड करें"],
@@ -105,6 +112,7 @@ export const STRINGS: Record<string, [string, string]> = {
   "admin.users": ["Users", "उपयोगकर्ता"],
   "admin.thresholds": ["Detection thresholds", "पहचान सीमाएँ"],
   "admin.quarantine": ["Quarantine", "संगरोध"],
+  "admin.dataset": ["Dataset", "डेटासेट"],
   "admin.overview": ["Overview", "अवलोकन"],
   "admin.database": ["Database", "डेटाबेस"],
   "admin.cases": ["Cases", "प्रकरण"],
@@ -122,6 +130,15 @@ export const STRINGS: Record<string, [string, string]> = {
     "Your role does not allow this action.",
     "आपकी भूमिका इस कार्य की अनुमति नहीं देती।",
   ],
+
+  "env.banner": [
+    "Development environment — corpus records are marked [SYNTHETIC] and are not operational police data.",
+    "विकास वातावरण — कॉर्पस रिकॉर्ड [SYNTHETIC] चिह्नित हैं और वास्तविक पुलिस डेटा नहीं हैं।",
+  ],
+  "dataset.validate": ["Validate Dataset", "डेटासेट सत्यापित करें"],
+  "dataset.import": ["Import Dataset", "डेटासेट आयात करें"],
+  "dataset.refresh": ["Refresh status", "स्थिति ताज़ा करें"],
+  "dataset.idle": ["Idle — nothing is being imported.", "निष्क्रिय — कोई आयात नहीं चल रहा।"],
 };
 
 const STORAGE_KEY = "crimelink.lang";

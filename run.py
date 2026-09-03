@@ -121,6 +121,10 @@ def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
     os.environ["CRIMELINK_OBJECT_STORE_DIR"] = str(OBJECT_DIR)
     os.environ["PYTHONPATH"] = str(BACKEND)
     os.environ["CRIMELINK_API"] = api_url
+    os.environ.setdefault("CRIMELINK_SYNTHETIC_DATA_MODE", "external")
+    os.environ.setdefault(
+        "CRIMELINK_SYNTHETIC_DATA_ROOT", "backend/CrimeLink_Synthetic_Corpus_v1"
+    )
     os.environ["CRIMELINK_CORS_ORIGINS"] = json.dumps([
         f"http://127.0.0.1:{web_port}",
         f"http://localhost:{web_port}",
@@ -323,13 +327,14 @@ def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
     print("  the browser on first launch, then sign in with that badge number")
     print("  and password.  No demo data is inserted automatically.")
     print()
-    print("  To generate a realistic synthetic development corpus:")
-    print("    .venv/Scripts/python -m app.synthetic_corpus.generate     (Windows)")
-    print("    .venv/bin/python -m app.synthetic_corpus.generate         (macOS/Linux)")
-    print("  Add --help to see options (seed, size, clear, regenerate).")
-    print("  To ingest an EXTERNAL synthetic corpus from disk instead (never")
-    print("  automatic; configure SYNTHETIC_DATA_MODE=external + SYNTHETIC_DATA_ROOT):")
-    print("    .venv/bin/python -m app.cli ingest-synthetic")
+    print("  Use jurisdiction SYN-DEV for the first administrator so imported")
+    print("  synthetic cases are visible. Then: Administration → Dataset →")
+    print("  Validate Dataset / Import Dataset.")
+    print()
+    print("  Dataset path (gitignored, local): backend/CrimeLink_Synthetic_Corpus_v1")
+    print("  CLI equivalent:")
+    print("    .venv/bin/python -m app.cli ingest-synthetic --mode external --dry-run")
+    print("    .venv/bin/python -m app.cli ingest-synthetic --mode external")
     print()
     if nlp_key or ai_key:
         print("  NLP/AI: API key detected — model extraction & AI gateway enabled.")

@@ -73,6 +73,7 @@ class ExternalIngestReport:
     excluded: list[dict[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     cases: dict[str, str] = field(default_factory=dict)   # case_number -> case id
+    records_processed: int = 0
     elapsed_seconds: float = 0.0
     pipeline: dict[str, Any] = field(default_factory=dict)  # filled when CLI waits
 
@@ -102,6 +103,7 @@ class ExternalIngestReport:
             ),
             "records_accepted": len(self.files),
             "records_ingested": self.uploaded,
+            "records_processed": self.records_processed,
             "records_skipped_duplicates": self.duplicates,
             "records_rejected": self.rejected + len(self.unsupported),
             "records_failed": self.failed,
@@ -132,13 +134,14 @@ class ExternalIngestReport:
 
 
 async def _ensure_external_cases(
-    case_keys: dict[str, str], user_id: str
+    case_specs: dict[str, dict[str, str]], user_id: str
 ) -> dict[str, str]:
     """Find-or-create the synthetic cases; returns case_number -> case id.
 
     Mirrors ``app.synthetic_corpus.generate._ensure_cases``: matching by
     deterministic case number makes re-ingestion converge instead of
     duplicating cases.  Titles carry the ``[SYNTHETIC]`` marker.
+    Existing cases are left unchanged (idempotent).
     """
     from sqlalchemy import select
 
@@ -149,7 +152,8 @@ async def _ensure_external_cases(
 
     mapping: dict[str, str] = {}
     async with async_session() as session:
-        for case_key, case_number in sorted(case_keys.items(), key=lambda kv: kv[1]):
+        for case_number in sorted(case_specs):
+            spec = case_specs[case_number]
             existing = (
                 await session.execute(
                     select(DBCase).where(DBCase.case_number == case_number)
@@ -158,12 +162,23 @@ async def _ensure_external_cases(
             if existing is not None:
                 mapping[case_number] = existing.id
                 continue
+            status_raw = (spec.get("status") or "OPEN").strip().upper()
+            try:
+                status = CaseStatus(status_raw)
+            except ValueError:
+                status = CaseStatus.OPEN
+            title = spec.get("title") or (
+                f"{CASE_TITLE_PREFIX} External synthetic corpus — "
+                f"{spec.get('case_key') or case_number}"
+            )
+            if not title.startswith(CASE_TITLE_PREFIX):
+                title = f"{CASE_TITLE_PREFIX} {title}"
             db_case = DBCase(
                 id=new_uuid(),
                 case_number=case_number,
-                title=f"{CASE_TITLE_PREFIX} External synthetic corpus — {case_key}",
+                title=title,
                 jurisdiction_id=JURISDICTION_ID,
-                status=CaseStatus.OPEN,
+                status=status,
                 created_by=user_id,
             )
             session.add(db_case)
@@ -216,7 +231,6 @@ async def ingest_external_corpus(
         )
 
     report = ExternalIngestReport(root=str(resolved))
-    report.warnings.extend(scan.warnings)
     for entry in scan.files:
         if entry.status in ("unsupported", "unreadable"):
             report.unsupported.append(
@@ -232,6 +246,8 @@ async def ingest_external_corpus(
             )
 
     accepted = [r for r in adapter.records_from_scan(scan)]
+    report.warnings.extend(scan.warnings)
+    report.records_processed = sum(int(r.metadata.get("row_count") or 1) for r in accepted)
     if not accepted:
         report.elapsed_seconds = time.time() - started
         log.warning("synthetic.external.nothing_to_ingest", root=str(resolved))
@@ -241,8 +257,18 @@ async def ingest_external_corpus(
     container = container or get_container()
     user_id = await _ensure_system_user()
 
-    case_keys = {r.metadata["case_key"]: r.case_number for r in accepted}
-    case_map = await _ensure_external_cases(case_keys, user_id)
+    case_specs: dict[str, dict[str, str]] = {}
+    for record in accepted:
+        spec = case_specs.setdefault(record.case_number, {})
+        if record.metadata.get("case_title"):
+            spec["title"] = str(record.metadata["case_title"])
+        if record.metadata.get("case_status"):
+            spec["status"] = str(record.metadata["case_status"])
+        spec.setdefault(
+            "case_key",
+            str(record.metadata.get("case_key") or record.case_number),
+        )
+    case_map = await _ensure_external_cases(case_specs, user_id)
     report.cases = dict(sorted(case_map.items()))
 
     async with async_session() as session:
@@ -392,6 +418,113 @@ async def await_pipeline_quiet(
     except Exception as exc:  # noqa: BLE001 - stats are best-effort
         log.debug("synthetic.external.graph_stats_failed", error=str(exc))
     return summary
+
+
+async def corpus_status(container: Any | None = None) -> dict[str, Any]:
+    """Live dataset / ingestion status for the administration UI.
+
+    Counts come from the application database and graph — never hardcoded.
+    """
+    from sqlalchemy import func, select
+
+    from app.adapters.sources import get_source_adapter
+    from app.container import get_container
+    from app.db.models import Case, CaseDocument, DetectedPattern, EntityResolutionItem
+    from app.db.session import async_session
+    from app.domain.enums import IngestionStatus, PatternStatus, ResolutionStatus
+
+    settings = get_settings()
+    container = container or get_container()
+    adapter = get_source_adapter("synthetic_external")
+    root = adapter.resolve_root()
+    scan = adapter.scan()
+
+    pending_jobs = None
+    try:
+        pending_jobs = container.broker.health().get("pending_jobs")
+    except Exception:  # noqa: BLE001
+        pending_jobs = None
+
+    async with async_session() as session:
+        case_count = int(
+            (
+                await session.execute(
+                    select(func.count(Case.id)).where(Case.jurisdiction_id == JURISDICTION_ID)
+                )
+            ).scalar()
+            or 0
+        )
+        doc_rows = (
+            await session.execute(
+                select(CaseDocument.ingestion_status, func.count(CaseDocument.id))
+                .join(Case, Case.id == CaseDocument.case_id)
+                .where(Case.jurisdiction_id == JURISDICTION_ID)
+                .group_by(CaseDocument.ingestion_status)
+            )
+        ).all()
+        documents_by_status = {
+            (status.value if hasattr(status, "value") else str(status)): int(count)
+            for status, count in doc_rows
+        }
+        documents_total = sum(documents_by_status.values())
+        pending_matches = int(
+            (
+                await session.execute(
+                    select(func.count(EntityResolutionItem.id)).where(
+                        EntityResolutionItem.status == ResolutionStatus.PENDING
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        new_patterns = int(
+            (
+                await session.execute(
+                    select(func.count(DetectedPattern.id)).where(
+                        DetectedPattern.status == PatternStatus.NEW
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+
+    busy_docs = sum(
+        documents_by_status.get(name, 0)
+        for name in (
+            IngestionStatus.PENDING.value,
+            IngestionStatus.PROCESSING.value,
+        )
+    )
+    graph: dict[str, Any] = {}
+    try:
+        graph = container.graph_store.stats()
+    except Exception as exc:  # noqa: BLE001
+        graph = {"error": str(exc)}
+
+    stage_hint = "Idle"
+    if pending_jobs or busy_docs:
+        if documents_by_status.get(IngestionStatus.PROCESSING.value):
+            stage_hint = "Importing documents / resolving entities / updating graph"
+        else:
+            stage_hint = "Importing structured data"
+
+    return {
+        "mode": settings.synthetic_data_mode,
+        "root": str(root),
+        "root_exists": root.is_dir(),
+        "dataset_name": root.name,
+        "jurisdiction_id": JURISDICTION_ID,
+        "scan": scan.summary(),
+        "cases": case_count,
+        "documents_total": documents_total,
+        "documents_by_status": documents_by_status,
+        "pending_jobs": pending_jobs,
+        "pending_matches": pending_matches,
+        "new_patterns": new_patterns,
+        "graph": graph,
+        "busy": bool(pending_jobs) or busy_docs > 0,
+        "stage_hint": stage_hint,
+    }
 
 
 # ---------------------------------------------------------------------------

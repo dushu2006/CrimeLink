@@ -183,33 +183,34 @@ Every synthetic record carries `source_environment="synthetic"` so it can
 never be confused with operational data. The UI labels synthetic data
 accordingly.
 
-### Optional: ingest an external synthetic corpus from disk
+### Optional: ingest the local synthetic corpus from disk
 
-If you have an external synthetic corpus on disk (e.g. the
-`CrimeLink_Synthetic_Corpus_v1` dataset), keep it **outside** this repository
-as a sibling directory — it is not part of the Git project:
+The development dataset lives at **`backend/CrimeLink_Synthetic_Corpus_v1/`**
+(gitignored; its absence from GitHub does not mean it is absent locally):
 
 ```
-<parent folder>/
-├── CrimeLink/                          # this repository
-└── CrimeLink_Synthetic_Corpus_v1/      # external dataset (not in Git)
-    ├── operational/                    # structured files (CSV/JSON) — ingested
-    ├── documents/                      # investigation documents — ingested
-    ├── metadata/                       # dataset documentation — never imported
-    ├── ground_truth/                   # evaluation answers — NEVER ingested
-    ├── README.md
-    └── SCHEMA.md
+CrimeLink/
+└── backend/
+    └── CrimeLink_Synthetic_Corpus_v1/
+        ├── operational/     # structured CSV — ingested
+        ├── documents/       # investigation documents — ingested
+        ├── metadata/        # dataset documentation — never imported
+        ├── ground_truth/    # evaluation answers — NEVER ingested
+        ├── README.md
+        └── SCHEMA.md
 ```
 
-Configure CrimeLink to use it:
+Configure CrimeLink to use it (these are the development defaults):
 
 ```bash
 # .env
 CRIMELINK_SYNTHETIC_DATA_MODE=external
-CRIMELINK_SYNTHETIC_DATA_ROOT=../CrimeLink_Synthetic_Corpus_v1   # relative to the repo root
+CRIMELINK_SYNTHETIC_DATA_ROOT=backend/CrimeLink_Synthetic_Corpus_v1
 ```
 
-Ingestion is **explicit** — application startup never imports the dataset:
+Ingestion is **explicit** — application startup never imports the dataset.
+In the console: **Administration → Dataset → Validate Dataset / Import Dataset**.
+Equivalent CLI:
 
 ```bash
 # validate / classify only (writes nothing)
@@ -222,18 +223,20 @@ Ingestion is **explicit** — application startup never imports the dataset:
 .venv/bin/python -m app.cli ingest-synthetic
 ```
 
+Create the first administrator with jurisdiction **`SYN-DEV`** so imported
+cases appear on the Cases page.
+
 Records flow through the exact same path as investigator uploads:
 `SourceAdapter → upload_document → six-stage pipeline → PostgreSQL → graph →
 entity resolution → pattern detection → UI → AI Data Gateway`. Only
-`operational/` and `documents/` are read; files are classified by content
-signature (CSV header/JSON structure) against the same schemas the pipeline
-adapters support, and unrecognised files are reported by name instead of
-being skipped silently. Re-running the command is safe: cases match on their
-deterministic `SYN-EXT/<group>` number and documents on
-`UNIQUE(case_id, content_hash)`, so a second run reports records as
-duplicates rather than copying them. `ground_truth/` is isolation-checked and
-excluded — it may only be consumed by a separate evaluation harness, never by
-the operational pipeline, AI context or UI.
+`operational/` and `documents/` are read. `cases.csv` becomes Case records
+(using the dataset case numbers); event tables are sliced by `case_id` (or
+via `case_members` when `case_id` is empty). Unrecognised files are reported
+by name instead of being skipped silently. Re-running is safe: cases match on
+case number and documents on `UNIQUE(case_id, content_hash)`, so a second run
+reports duplicates rather than copying them. `ground_truth/` is isolation-checked
+and excluded — it may only be consumed by a separate evaluation harness, never
+by the operational pipeline, AI context or UI.
 
 ### Manual start (without run.py)
 

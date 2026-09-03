@@ -128,6 +128,14 @@ pre {
   text-align: right;
 }
 
+.env-banner {
+  background: var(--navy-soft);
+  color: var(--navy);
+  border-bottom: 1px solid var(--line);
+  padding: 6px 20px;
+  font-size: 12px;
+}
+
 .content {
   flex: 1;
   padding: 20px;

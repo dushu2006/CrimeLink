@@ -72,11 +72,276 @@ interface EdgeRow { key: string; source: string; target: string; rel_type: strin
 interface CaseRow { id: string; case_number: string; title: string; jurisdiction_id: string; status: string; created_at?: string }
 interface DocRow { id: string; case_id: string; document_type: string; filename: string; size_bytes: number; ingestion_status: string; quarantined: boolean; created_at?: string }
 
-const TABS = ["overview", "database", "cases", "documents", "entities", "relationships", "ai", "health", "audit", "users", "thresholds", "quarantine"] as const;
+const TABS = ["dataset", "overview", "database", "cases", "documents", "entities", "relationships", "ai", "health", "audit", "users", "thresholds", "quarantine"] as const;
+
+interface DatasetScan {
+  ok: boolean;
+  issues: string[];
+  warnings: string[];
+  counts: Record<string, number>;
+  files_discovered: number;
+  operational_files: number;
+  document_files: number;
+  accepted_files: number;
+  reference_files: number;
+  excluded_evaluation_files: number;
+  unsupported_files: number;
+  ground_truth_excluded: boolean;
+  schema_tables: string[];
+  files?: {
+    relative_path: string;
+    status: string;
+    document_type: string | null;
+    size_bytes: number;
+    reason: string | null;
+  }[];
+}
+
+interface DatasetStatus {
+  mode: string;
+  root: string;
+  root_exists: boolean;
+  dataset_name: string;
+  jurisdiction_id: string;
+  scan: DatasetScan;
+  cases: number;
+  documents_total: number;
+  documents_by_status: Record<string, number>;
+  pending_jobs: number | null;
+  pending_matches: number;
+  new_patterns: number;
+  graph: { nodes?: number; edges?: number; error?: string; backend?: string };
+  busy: boolean;
+  stage_hint: string;
+}
+
+function DatasetPanel({ jurisdictionId }: { jurisdictionId?: string }) {
+  const [status, setStatus] = useState<DatasetStatus | null>(null);
+  const [preview, setPreview] = useState<DatasetScan | null>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"validate" | "import" | null>(null);
+
+  const loadStatus = useCallback(() => {
+    api<DatasetStatus>("/admin/synthetic/status")
+      .then((data) => {
+        setStatus(data);
+        setError(null);
+      })
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  useEffect(loadStatus, [loadStatus]);
+
+  useEffect(() => {
+    if (!status?.busy) return;
+    const timer = window.setInterval(loadStatus, 2000);
+    return () => window.clearInterval(timer);
+  }, [status?.busy, loadStatus]);
+
+  async function validate() {
+    setBusyAction("validate");
+    setError(null);
+    try {
+      const data = await api<DatasetScan>("/admin/synthetic/external/preview");
+      setPreview(data);
+      loadStatus();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function importDataset() {
+    setBusyAction("import");
+    setError(null);
+    setResult(null);
+    try {
+      const data = await api<Record<string, unknown>>("/admin/synthetic/ingest", {
+        method: "POST",
+        body: JSON.stringify({ adapter: "external" }),
+      });
+      setResult(data);
+      loadStatus();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  const scan = preview ?? status?.scan;
+  const jurisdictionMismatch =
+    jurisdictionId && status?.jurisdiction_id && jurisdictionId !== status.jurisdiction_id;
+
+  return (
+    <section className="panel">
+      <h2>{t("admin.dataset")}</h2>
+      <p className="hint">
+        Import is explicit. Startup never loads the corpus. Ground truth and metadata stay on disk.
+      </p>
+      {error && (
+        <div className="alert" role="alert">
+          {error}
+        </div>
+      )}
+      {jurisdictionMismatch && (
+        <div className="alert" role="status">
+          Your account jurisdiction is {jurisdictionId}. Imported cases use {status?.jurisdiction_id}.
+          Cases will not appear on the Cases page until you sign in with a {status?.jurisdiction_id} account.
+        </div>
+      )}
+      <div className="row-actions">
+        <button className="btn" onClick={loadStatus} disabled={busyAction !== null}>
+          {t("dataset.refresh")}
+        </button>
+        <button className="btn" onClick={() => void validate()} disabled={busyAction !== null}>
+          {busyAction === "validate" ? t("state.loading") : t("dataset.validate")}
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={() => void importDataset()}
+          disabled={busyAction !== null || !status?.root_exists || status?.scan.ok === false}
+        >
+          {busyAction === "import" ? t("state.loading") : t("dataset.import")}
+        </button>
+      </div>
+
+      {!status && !error && <Spinner />}
+      {status && (
+        <>
+          <div className="cards" style={{ marginTop: 16 }}>
+            <div className="card">
+              <span className="card-value">{status.root_exists ? "Found" : "Missing"}</span>
+              <span className="card-label">dataset</span>
+            </div>
+            <div className="card">
+              <span className="card-value">{status.cases}</span>
+              <span className="card-label">imported cases</span>
+            </div>
+            <div className="card">
+              <span className="card-value">{status.documents_total}</span>
+              <span className="card-label">documents</span>
+            </div>
+            <div className="card">
+              <span className="card-value">{status.graph.nodes ?? "—"}</span>
+              <span className="card-label">graph nodes</span>
+            </div>
+            <div className="card">
+              <span className="card-value">{status.graph.edges ?? "—"}</span>
+              <span className="card-label">graph edges</span>
+            </div>
+            <div className="card">
+              <span className="card-value">{status.pending_matches}</span>
+              <span className="card-label">pending matches</span>
+            </div>
+          </div>
+          <p className="hint">
+            Path: <code>{status.root}</code>
+            {status.root_exists ? "" : " — directory not found"} · mode {status.mode} ·
+            jurisdiction {status.jurisdiction_id}
+          </p>
+          <p className="hint">
+            {status.busy
+              ? `${status.stage_hint}${status.pending_jobs ? ` · ${status.pending_jobs} job(s) pending` : ""}`
+              : t("dataset.idle")}
+          </p>
+
+          {Object.keys(status.documents_by_status).length > 0 && (
+            <p className="hint">
+              Document statuses:{" "}
+              {Object.entries(status.documents_by_status)
+                .map(([name, count]) => `${name} ${count}`)
+                .join(" · ")}
+            </p>
+          )}
+        </>
+      )}
+
+      {scan && (
+        <>
+          <h3>Validation</h3>
+          {!scan.ok && (
+            <div className="alert" role="alert">
+              {(scan.issues || []).join(" ")}
+            </div>
+          )}
+          {scan.ok && <p className="hint">Dataset layout is valid. Ground truth excluded: {scan.ground_truth_excluded ? "yes" : "no files found"}.</p>}
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Measure</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Files discovered</td><td>{scan.files_discovered}</td></tr>
+              <tr><td>Operational files</td><td>{scan.operational_files}</td></tr>
+              <tr><td>Document files</td><td>{scan.document_files}</td></tr>
+              <tr><td>Accepted for ingest</td><td>{scan.accepted_files}</td></tr>
+              <tr><td>Reference tables</td><td>{scan.reference_files}</td></tr>
+              <tr><td>Unsupported / unreadable</td><td>{scan.unsupported_files}</td></tr>
+              <tr><td>Excluded evaluation / metadata</td><td>{scan.excluded_evaluation_files}</td></tr>
+            </tbody>
+          </table>
+          {scan.schema_tables?.length > 0 && (
+            <p className="hint">Tables: {scan.schema_tables.join(", ")}</p>
+          )}
+          {(scan.warnings || []).map((warning) => (
+            <p className="hint" key={warning}>
+              warning: {warning}
+            </p>
+          ))}
+          {scan.files && scan.files.length > 0 && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Status</th>
+                  <th>Type</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scan.files.slice(0, 80).map((file) => (
+                  <tr key={file.relative_path}>
+                    <td><code>{file.relative_path}</code></td>
+                    <td><Badge value={file.status} /></td>
+                    <td>{file.document_type ?? "—"}</td>
+                    <td className="hint">{file.reason ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+
+      {result && (
+        <>
+          <h3>Last import</h3>
+          <p className="hint">
+            ingested {String(result.records_ingested ?? 0)} · duplicates{" "}
+            {String(result.records_skipped_duplicates ?? 0)} · rejected{" "}
+            {String(result.records_rejected ?? 0)} · failed {String(result.records_failed ?? 0)} ·
+            excluded {String(result.excluded_evaluation_files ?? 0)}
+          </p>
+          {Array.isArray(result.warnings) &&
+            (result.warnings as string[]).map((warning) => (
+              <p className="hint" key={warning}>
+                warning: {warning}
+              </p>
+            ))}
+        </>
+      )}
+    </section>
+  );
+}
 
 export default function Admin() {
   const session = useAuth((state) => state.session);
-  const [tab, setTab] = useState<(typeof TABS)[number]>("overview");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("dataset");
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [audit, setAudit] = useState<AuditRow[] | null>(null);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
@@ -166,6 +431,8 @@ export default function Admin() {
       </div>
 
       {message && <div className="alert">{message}</div>}
+
+      {tab === "dataset" && <DatasetPanel jurisdictionId={session?.jurisdiction_id} />}
 
       {tab === "overview" && (
         <>

@@ -204,12 +204,12 @@ corpora. Changing entity counts requires no source code changes.
 
 ## 7a. External Synthetic Corpus (filesystem dataset)
 
-`CRIMELINK_SYNTHETIC_DATA_MODE=external` switches synthetic ingestion from the
-in-process generator to a corpus directory on disk (for example a sibling
-`CrimeLink_Synthetic_Corpus_v1` checkout next to this repository, resolved via
-`CRIMELINK_SYNTHETIC_DATA_ROOT`; relative paths resolve against the repo root,
-absolute paths are honoured verbatim; nothing is copied into Git and nothing
-is ingested at startup).
+`CRIMELINK_SYNTHETIC_DATA_MODE=external` (the development default) reads a
+corpus directory on disk. The local dataset lives at
+`backend/CrimeLink_Synthetic_Corpus_v1/` (gitignored). Relative
+`CRIMELINK_SYNTHETIC_DATA_ROOT` values resolve against the repo root;
+absolute paths are honoured verbatim. Nothing is copied into Git and nothing
+is ingested at startup. Use **Administration → Dataset → Validate / Import**.
 
 The **ExternalSyntheticCorpusAdapter** implements the same `SourceAdapter`
 boundary as the generator and feeds the same pipeline
@@ -229,12 +229,16 @@ boundary as the generator and feeds the same pipeline
    sighting, named record); TXT/MD/PDF/DOCX go through the text document
    adapter. Unrecognised files are reported as `unsupported` with their
    header quoted — the operator sees the gap instead of a silent skip.
-4. **Ingest explicitly** — `python -m app.synthetic_corpus.external`
-   (or `python -m app.cli ingest-synthetic`, or
-   `POST /api/v1/admin/synthetic/ingest`). Files are grouped into synthetic
-   cases by directory (`SYN-EXT/<GROUP>`, title prefixed `[SYNTHETIC]`), then
-   uploaded with `source_confidence=SYNTHETIC`; the inline/celery broker runs
-   the pipeline exactly as for investigator uploads.
+4. **Ingest explicitly** — Administration → Dataset, or
+   `python -m app.synthetic_corpus.external` (or `python -m app.cli
+   ingest-synthetic`, or `POST /api/v1/admin/synthetic/ingest`). For the
+   CrimeLink relational corpus, `cases.csv` becomes Case records using the
+   dataset case numbers (jurisdiction `SYN-DEV`, titles prefixed
+   `[SYNTHETIC]`); event tables are sliced by `case_id` (or via
+   `case_members` when `case_id` is empty). Other corpora still group by
+   directory (`SYN-EXT/<GROUP>`). Documents are uploaded with
+   `source_confidence=SYNTHETIC`; the inline/celery broker runs the pipeline
+   exactly as for investigator uploads.
 5. **Idempotency**: case numbers are deterministic, documents dedupe on
    `UNIQUE(case_id, content_hash)`, and graph writes converge via
    provenance keys — re-running reports duplicates instead of copying data.

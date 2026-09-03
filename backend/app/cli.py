@@ -7,11 +7,12 @@ application startup::
 
 ``ingest-synthetic`` honours ``CRIMELINK_SYNTHETIC_DATA_MODE``:
 
-* ``generate`` (the default) runs the deterministic in-process generator —
+* ``generate`` runs the deterministic in-process generator —
   equivalent to ``python -m app.synthetic_corpus.generate``.
-* ``external`` reads the filesystem corpus at ``CRIMELINK_SYNTHETIC_DATA_ROOT``
-  (e.g. the sibling ``../CrimeLink_Synthetic_Corpus_v1`` checkout) — equivalent
-  to ``python -m app.synthetic_corpus.external``.
+* ``external`` (the development default) reads the filesystem corpus at
+  ``CRIMELINK_SYNTHETIC_DATA_ROOT`` (default
+  ``backend/CrimeLink_Synthetic_Corpus_v1``) — equivalent to
+  ``python -m app.synthetic_corpus.external``.
 
 In both modes records enter through the standard ingestion pipeline with
 ``source_environment=synthetic`` provenance; nothing is imported at startup.

@@ -213,7 +213,11 @@ export default function GraphPage() {
             Re-layout
           </button>
         </div>
-        <div ref={containerRef} className="cy" />
+        {graph && graph.nodes.length === 0 ? (
+          <Empty message="No graph entities for this case yet." />
+        ) : (
+          <div ref={containerRef} className="cy" />
+        )}
         <p className="hint">{t("graph.legend")}</p>
       </div>
 

@@ -10,7 +10,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [station, setStation] = useState("");
-  const [jurisdiction, setJurisdiction] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("SYN-DEV");
   const { signIn, bootstrap, busy, error } = useAuth();
   const navigate = useNavigate();
   const lang = currentLang();
@@ -99,8 +99,10 @@ export default function Login() {
                   name="jurisdiction_id"
                   value={jurisdiction}
                   onChange={(e) => setJurisdiction(e.target.value)}
+                  placeholder="SYN-DEV"
                   required
                 />
+                <p className="login-note">{t("setup.jurisdictionHint", lang)}</p>
               </>
             )}
 
