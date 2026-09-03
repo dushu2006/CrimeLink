@@ -292,6 +292,77 @@ class SourceReference(Base):
     )
 
 
+class QuarantinedRecord(Base):
+    """A corpus row that was read but could not be attached to any case.
+
+    The adapter builds per-case documents, so a row it cannot route to a case
+    simply never becomes one.  Those rows used to be counted in a scan warning
+    and then dropped, which made real coverage unauditable: nothing recorded
+    *which* rows were missing or why.
+
+    This is deliberately not a ``CaseDocument`` with ``quarantined=True``.  That
+    flag marks a document that failed *processing* and still belongs to a case;
+    these rows have no case at all, which is precisely the problem.  They are
+    kept here with enough coordinates to open the original record, so the
+    quarantine view can show the row itself rather than a count.
+    """
+
+    __tablename__ = "quarantined_records"
+
+    id: Mapped[str] = pk_column()
+
+    # --- where the row came from -------------------------------------------
+    origin_file: Mapped[str] = mapped_column(
+        Text, nullable=False,
+        comment="Path relative to the dataset root, e.g. 'operational/cdr.csv'",
+    )
+    row_number: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="1-based line number including the header"
+    )
+    record_id: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True,
+        comment="Natural primary key within the origin file, e.g. 'CDR000032'",
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="cdr | transactions | vehicle_sightings | ..."
+    )
+
+    # --- why it could not be imported --------------------------------------
+    reason_code: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True,
+        comment="Stable machine-readable category, e.g. 'unresolved_case_id'",
+    )
+    reason: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="Human-readable explanation for an investigator"
+    )
+    unresolved_case_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+        comment="The case_id on the row, when it was present but unknown",
+    )
+
+    # --- the row itself, so the record can be inspected and re-driven -------
+    field_values: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    dataset_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    import_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    resolved: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False,
+        comment="Set when a later import attaches the row to a case",
+    )
+
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        # Re-running an import must converge on the same set of quarantined
+        # rows rather than accumulate a copy per run (idempotency, PRD 9.3).
+        UniqueConstraint(
+            "origin_file", "row_number", "record_id",
+            name="uq_quarantined_records_position",
+        ),
+        Index("ix_quarantined_records_reason", "source_type", "reason_code"),
+    )
+
+
 class EntityResolutionItem(Base):
     """Review queue 1 — possible duplicate people (PRD 6.1 / 9.2)."""
 

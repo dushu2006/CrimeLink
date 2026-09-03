@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 
 from app.domain.enums import DocumentType
-from app.domain.models import Block, NormalizedDocument
+from app.domain.models import Block, NormalizedDocument, OriginRef
 from app.errors import PipelineError
 from app.logging import get_logger
 from app.pipeline.adapters.protocol import (
@@ -63,12 +63,30 @@ class TextDocumentAdapter:
                 "If it is a scanned document, OCR is required."
             )
 
+        # A report is ingested verbatim, so the uploaded file is its own origin.
+        # Recording it per block lets a finding open the exact line (or PDF
+        # page) of the real document instead of only the derived rendering.
+        origin_file = (doc_meta.extra or {}).get("relative_path") or doc_meta.filename or ""
+
         blocks: list[Block] = []
         cursor = 0
         for page_number, page_text in pages:
             normalised_page = page_text.replace("\r\n", "\n")
             for block in text_blocks_from_text(normalised_page, page=page_number):
                 block.offset += cursor
+                if origin_file:
+                    block.origin = OriginRef(
+                        file=origin_file,
+                        row=block.line,
+                        fields=["text"],
+                        values={
+                            "page": page_number,
+                            "line": block.line,
+                            # A short excerpt keeps the reference legible in
+                            # listings without duplicating the document.
+                            "text": block.text[:200],
+                        },
+                    )
                 blocks.append(block)
             cursor += len(normalised_page) + 1
 

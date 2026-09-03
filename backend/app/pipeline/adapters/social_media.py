@@ -19,7 +19,7 @@ import json
 from typing import Any
 
 from app.domain.enums import DocumentType
-from app.domain.models import Block, NormalizedDocument
+from app.domain.models import Block, NormalizedDocument, OriginRef
 from app.errors import PipelineError
 from app.logging import get_logger
 from app.pipeline.adapters.protocol import DocumentMeta, detect_language
@@ -74,10 +74,16 @@ class SocialMediaAdapter:
                 f"(detected platform: {platform}). The schema may be unsupported."
             )
 
+        # An uploaded export is ingested verbatim, so the file is its own
+        # origin.  Recording it per block means a social link resolves back to
+        # the exact export rather than only to the derived document -- the same
+        # guarantee the CSV-backed adapters already provide.
+        origin_file = (doc_meta.extra or {}).get("relative_path") or doc_meta.filename
+
         blocks: list[Block] = []
         rendered: list[str] = []
         cursor = 0
-        for person_a, person_b, meta in links:
+        for index, (person_a, person_b, meta) in enumerate(links):
             text = (
                 f"Social connection: {person_a} {meta.get('relation', 'linked_to')} "
                 f"{person_b} on {platform}"
@@ -94,6 +100,18 @@ class SocialMediaAdapter:
                         "platform": platform,
                         "ts": meta.get("timestamp"),
                     },
+                    origin=OriginRef(
+                        file=origin_file,
+                        record_id=meta.get("id") or f"link[{index}]",
+                        fields=["person_a", "person_b", "relation", "timestamp"],
+                        values={
+                            "person_a": person_a,
+                            "person_b": person_b,
+                            "relation": meta.get("relation", "linked_to"),
+                            "timestamp": meta.get("timestamp"),
+                            "platform": platform,
+                        },
+                    ),
                 )
             )
             rendered.append(text)

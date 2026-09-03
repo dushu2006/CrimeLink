@@ -155,6 +155,10 @@ class CorpusScan:
     issues: list[str] = field(default_factory=list)   # fatal problems
     warnings: list[str] = field(default_factory=list)
     files: list[DiscoveredFile] = field(default_factory=list)
+    #: Rows that were read and understood but could not be attached to a case.
+    #: Kept as data rather than a warning count so the quarantine view can open
+    #: the original record.
+    quarantined: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -995,6 +999,62 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
         unmapped = {"cdr": 0, "transactions": 0, "vehicle_sightings": 0, "intelligence_reports": 0}
 
+        def quarantine(
+            row: dict[str, str],
+            *,
+            source_type: str,
+            record_id_field: str,
+            person_ids: tuple[str, ...],
+            subject_field: str,
+        ) -> None:
+            """Record *why* a row could not be routed, instead of dropping it.
+
+            Two very different situations reach here and an investigator needs
+            to tell them apart: a row whose subject is simply not party to any
+            case (ordinary background population in this corpus), and a row
+            whose subject could not be looked up at all (a referential gap that
+            would be a genuine data-quality defect).
+            """
+            unmapped[source_type] = unmapped.get(source_type, 0) + 1
+
+            declared = (row.get("case_id") or "").strip()
+            if declared:
+                reason_code = "unknown_case_id"
+                reason = (
+                    f"Row names case_id {declared!r}, which does not exist in "
+                    "operational/cases.csv."
+                )
+            elif not any(person_ids):
+                reason_code = "unresolvable_subject"
+                reason = (
+                    f"No {subject_field} could be resolved for this row, so it "
+                    "cannot be attached to a case through case membership."
+                )
+            else:
+                reason_code = "subject_in_no_case"
+                reason = (
+                    "The row's subject is known but is not a member of any case "
+                    "in operational/case_members.csv, so it belongs to the "
+                    "background population rather than to an investigation."
+                )
+
+            scan.quarantined.append(
+                {
+                    "origin_file": row.get(SOURCE_FILE_KEY) or f"operational/{source_type}.csv",
+                    "row_number": row.get(ROW_NUMBER_KEY),
+                    "record_id": row.get(record_id_field) or None,
+                    "source_type": source_type,
+                    "reason_code": reason_code,
+                    "reason": reason,
+                    "unresolved_case_id": declared or None,
+                    "field_values": {
+                        k: v
+                        for k, v in row.items()
+                        if not k.startswith("__crimelink")
+                    },
+                }
+            )
+
         cdr_by_case: dict[str, list[dict[str, str]]] = {}
         for row in tables.get("cdr.csv", []):
             owners = [
@@ -1003,7 +1063,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             ]
             targets = attach(row, *owners)
             if not targets:
-                unmapped["cdr"] += 1
+                quarantine(
+                    row,
+                    source_type="cdr",
+                    record_id_field="cdr_id",
+                    person_ids=tuple(owners),
+                    subject_field="phone owner",
+                )
                 continue
             for cid in targets:
                 cdr_by_case.setdefault(cid, []).append(row)
@@ -1016,7 +1082,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             ]
             targets = attach(row, *holders)
             if not targets:
-                unmapped["transactions"] += 1
+                quarantine(
+                    row,
+                    source_type="transactions",
+                    record_id_field="transaction_id",
+                    person_ids=tuple(holders),
+                    subject_field="account holder",
+                )
                 continue
             for cid in targets:
                 tx_by_case.setdefault(cid, []).append(row)
@@ -1026,7 +1098,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             owner = vehicle_by_id.get(row.get("vehicle_id", ""), {}).get("owner_person_id", "")
             targets = attach(row, owner)
             if not targets:
-                unmapped["vehicle_sightings"] += 1
+                quarantine(
+                    row,
+                    source_type="vehicle_sightings",
+                    record_id_field="sighting_id",
+                    person_ids=(owner,),
+                    subject_field="vehicle owner",
+                )
                 continue
             for cid in targets:
                 sight_by_case.setdefault(cid, []).append(row)
@@ -1035,7 +1113,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
         for row in tables.get("intelligence_reports.csv", []):
             targets = attach(row, row.get("subject_person_id", ""))
             if not targets:
-                unmapped["intelligence_reports"] += 1
+                quarantine(
+                    row,
+                    source_type="intelligence_reports",
+                    record_id_field="report_id",
+                    person_ids=(row.get("subject_person_id", ""),),
+                    subject_field="subject person",
+                )
                 continue
             for cid in targets:
                 intel_by_case.setdefault(cid, []).append(row)
@@ -1043,7 +1127,8 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
         for kind, count in unmapped.items():
             if count:
                 scan.warnings.append(
-                    f"{count} {kind} row(s) had no resolvable case_id and were not imported."
+                    f"{count} {kind} row(s) could not be attached to a case and were "
+                    "quarantined for review rather than imported."
                 )
 
         doc_manifest = {

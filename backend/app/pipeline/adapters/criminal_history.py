@@ -169,7 +169,17 @@ class CriminalHistoryAdapter:
 
     @staticmethod
     def _remap(record: dict) -> dict:
-        return {field: record.get(field) for field in _ALIASES}
+        """Keep the known fields, and the origin that says where they came from.
+
+        The remap deliberately drops unmapped keys, which silently took the
+        reserved origin column with them on the JSON branch -- so JSON-sourced
+        records produced blocks that could not be traced back to a corpus row
+        even though the CSV branch could.
+        """
+        remapped = {field: record.get(field) for field in _ALIASES}
+        if record.get(ORIGIN_COLUMN) is not None:
+            remapped[ORIGIN_COLUMN] = record[ORIGIN_COLUMN]
+        return remapped
 
     @staticmethod
     def _provenance(doc_meta: DocumentMeta) -> tuple[SourceConfidence, str | None]:

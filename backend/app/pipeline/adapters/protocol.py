@@ -136,7 +136,12 @@ def detect_language(text: str, hint: str | None = None) -> str:
 
 
 def text_blocks_from_text(text: str, *, page: int | None = None) -> list[Block]:
-    """Split plain text into paragraph blocks with accurate character offsets."""
+    """Split plain text into paragraph blocks with accurate character offsets.
+
+    Each block also records the 1-based line on which it starts, so a source
+    viewer can open the paragraph in the original file rather than only
+    highlighting a character range in the derived rendering.
+    """
     blocks: list[Block] = []
     cursor = 0
     for paragraph in re.split(r"\n\s*\n", text):
@@ -149,6 +154,9 @@ def text_blocks_from_text(text: str, *, page: int | None = None) -> list[Block]:
                 text=paragraph.strip(),
                 offset=start,
                 page=page,
+                # Counting newlines before the paragraph is what makes this the
+                # line number an investigator sees in an editor.
+                line=text.count("\n", 0, start) + 1,
             )
         )
         cursor = start + len(paragraph)
