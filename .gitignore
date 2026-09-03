@@ -158,7 +158,7 @@ env.bak/
 venv.bak/
 
 # Local external corpus data
-backend/CrimeLink_Synthetic_Corpus_v1/
+#backend/CrimeLink_Synthetic_Corpus_v1/
 
 # Spyder project settings
 .spyderproject

@@ -1,0 +1,181 @@
+person_id,full_name,gender,dob,address,city,state,status
+P0001,Rupa Babu,F,,,Kurnool,Andhra Pradesh,ACTIVE
+P0002,Priya Rao,F,,,Nizamabad,Telangana,ACTIVE
+P0003,Krishna Murthy,M,,,Warangal,Telangana,ACTIVE
+P0004,Manasa Rao,F,,,Nellore,Andhra Pradesh,ACTIVE
+P0005,Rahul Rao,M,,,Visakhapatnam,Andhra Pradesh,ACTIVE
+P0006,Rajesh Naidu,M,,,Hyderabad,Telangana,ACTIVE
+P0007,Venkat Goud,M,,,Tirupati,Andhra Pradesh,ACTIVE
+P0008,Meena Varma,F,,,Hyderabad,Telangana,ACTIVE
+P0009,Rajesh Murthy,M,,,Visakhapatnam,Andhra Pradesh,ACTIVE
+P0010,Anil Prasad,M,,,Nellore,Andhra Pradesh,ACTIVE
+P0011,Rajesh Prasad,M,,,Tirupati,Andhra Pradesh,INACTIVE
+P0012,Anil Rao,M,,,Nizamabad,Telangana,ACTIVE
+P0013,Deepak Goud,M,1978-03-06,,Nizamabad,Telangana,ACTIVE
+P0014,Sai Kumar,M,1973-11-08,,Hyderabad,Telangana,ACTIVE
+P0015,Divya Naidu,F,1999-09-12,,Nellore,Andhra Pradesh,ACTIVE
+P0016,Karthik Murthy,M,1968-04-19,,Tirupati,Andhra Pradesh,ACTIVE
+P0017,Madhav Murthy,M,1994-04-23,,Hyderabad,Telangana,INACTIVE
+P0018,Rohit Raju,M,2003-02-12,,Kurnool,Andhra Pradesh,ACTIVE
+P0019,Arun Prasad,M,2001-02-04,,Vijayawada,Andhra Pradesh,ACTIVE
+P0020,Chandra Varma,M,1988-09-01,,Tirupati,Andhra Pradesh,ACTIVE
+P0021,Venkat Murthy,M,2005-10-05,,Warangal,Telangana,INACTIVE
+P0022,Raghu Murthy,M,1992-03-12,,Nellore,Andhra Pradesh,INACTIVE
+P0023,Shalini Kumar,F,1986-06-03,,Nellore,Andhra Pradesh,ACTIVE
+P0024,Aditya Babu,M,1988-02-15,,Hyderabad,Telangana,ACTIVE
+P0025,Ramya Konda,F,1982-02-25,,Kurnool,Andhra Pradesh,ACTIVE
+P0026,Rithika Prasad,F,1984-08-11,"184 Ring Road, Warangal",Warangal,Telangana,ACTIVE
+P0027,Uday Reddy,M,1994-08-06,"40 Main Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0028,Madhav Rao,M,1981-08-23,"18 Canal Road, Warangal",Warangal,Telangana,ACTIVE
+P0029,Prakash Prasad,M,2000-03-14,"16 Main Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0030,Srikanth Murthy,M,1970-03-23,"145 Temple Street, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0031,Abhishek Reddy,M,1982-03-17,"190 Ring Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0032,Vamsi Raju,M,2000-10-07,"119 MG Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0033,Dinesh Goud,M,1999-08-03,"57 Main Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0034,Swathi Kumar,F,2005-02-28,"62 Canal Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0035,Lakshmi Goud,F,1984-08-14,"50 Station Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0036,Sahithi Reddy,F,1978-04-09,"126 MG Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0037,Ravi Reddy,M,1982-01-12,"95 Ring Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0038,Harish Rao,M,1985-11-27,"25 Main Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0039,Rajesh Reddy,M,1979-08-25,"188 MG Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0040,Anjali Raju,F,1998-09-10,"40 MG Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0041,Gopal Chowdary,M,1981-12-24,"106 Station Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0042,Gopal Chowdary,M,1999-07-12,"10 Station Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0043,Sai Chowdary,M,1987-07-27,"124 RTC Colony, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0044,Manoj Rao,M,1980-04-14,"99 Ring Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0045,Uday Chowdary,M,1982-04-10,"193 Station Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0046,Meena Prasad,F,1987-10-23,"138 Market Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0047,Prakash Babu,M,2000-04-03,"68 MG Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0048,Nikhil Reddy,M,1984-10-27,"114 Ring Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0049,Vijay Varma,M,1993-06-20,"185 Ring Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0050,Jyothi Kumar,F,1969-04-08,"57 Main Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0051,Aditya Chowdary,M,1995-04-18,"44 Ring Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0052,Aditya Murthy,M,2000-04-19,"27 Temple Street, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0053,Sunitha Murthy,F,2001-11-03,"152 Canal Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0054,Shalini Rao,F,1970-10-03,"12 Ring Road, Warangal",Warangal,Telangana,INACTIVE
+P0055,Sanjay Naidu,M,1992-09-21,"33 MG Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0056,Harini Naidu,F,1974-03-25,"71 Canal Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0057,Manoj Naidu,M,1993-12-05,"3 Ring Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0058,Shalini Kumar,M,2000-10-25,"188 Temple Street, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0059,Naveen Raju,M,1980-04-04,"101 Ring Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0060,Madhav Chowdary,M,1984-11-11,"48 Ring Road, Warangal",Warangal,Telangana,ACTIVE
+P0061,Anitha Rao,F,2005-09-01,"80 Ring Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0062,Sai Rao,M,1981-06-13,"86 Market Road, Warangal",Warangal,Telangana,ACTIVE
+P0063,Divya Reddy,F,1995-05-08,"38 RTC Colony, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0064,Uday Babu,M,1988-01-05,"173 RTC Colony, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0065,Tarun Kumar,M,1986-03-18,"197 MG Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0066,Mahesh Reddy,M,1971-11-16,"37 Market Road, Warangal",Warangal,Telangana,ACTIVE
+P0067,Shiva Raju,M,1995-01-17,"119 Station Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0068,Ramesh Naidu,M,1993-06-11,"7 RTC Colony, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0069,Vamsi Prasad,M,1976-04-11,"56 Temple Street, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0070,Ramesh Murthy,M,2005-06-22,"171 Market Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0071,Vamsi Reddy,M,1981-06-20,"38 Market Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0072,Nikhil Chowdary,M,1991-12-06,"96 Temple Street, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0073,Rakesh Naidu,M,1978-05-15,"185 Main Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0074,Vivek Naidu,M,1987-06-19,"168 Station Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0075,Vamsi Babu,M,1982-09-25,"70 MG Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0076,Teja Reddy,M,1983-11-21,"10 Main Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0077,Lavanya Raju,F,1999-12-02,"42 Main Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0078,Naveen Kumar,M,1973-12-21,"154 Temple Street, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0079,Srinivas Goud,M,2005-11-24,"149 Canal Road, Tirupati",Tirupati,Andhra Pradesh,INACTIVE
+P0080,Rupa Rao,F,1985-04-18,"32 Market Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0081,Naveen Prasad,M,1987-09-14,"149 Market Road, Warangal",Warangal,Telangana,ACTIVE
+P0082,Madhavi Kumar,F,1973-08-05,"185 Main Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0083,Nikhil Kumar,M,1985-08-23,"23 Canal Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0084,Varun Chowdary,M,1973-04-15,"145 Canal Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0085,Bhavya Naidu,F,2000-12-02,"128 RTC Colony, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0086,Ganesh Prasad,M,1981-03-01,"162 Station Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0087,Vani Naidu,F,1998-08-20,"131 Canal Road, Nizamabad",Nizamabad,Telangana,INACTIVE
+P0088,Jyothi Reddy,F,1985-03-28,"129 Main Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0089,Vijay Chowdary,M,2005-04-04,"29 Main Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0090,Arun Babu,M,1978-01-06,"91 Temple Street, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0091,Shiva Rao,M,1982-01-28,"62 Temple Street, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0092,Shalini Kumar,M,1982-12-13,"110 Station Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0093,Madhav Naidu,M,1992-10-25,"120 Market Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0094,Mounika Babu,F,1986-05-28,"35 Main Road, Warangal",Warangal,Telangana,ACTIVE
+P0095,Meena Raju,F,1977-12-16,"144 Station Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0096,Srikanth Prasad,M,1995-03-07,"165 Market Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0097,Srinivas Rao,M,1991-02-04,"70 Market Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0098,Rohit Murthy,M,1999-11-19,"15 Market Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0099,Gopal Naidu,M,2000-10-22,"89 Market Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0100,Gopal Chowdary,M,2003-01-25,"168 RTC Colony, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0101,Keerthi Rao,F,1986-08-03,"81 RTC Colony, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0102,Pradeep Naidu,M,1977-06-11,"48 RTC Colony, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0103,Vivek Babu,M,2005-03-03,"127 RTC Colony, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0104,Kavitha Goud,F,1989-04-22,"101 Temple Street, Warangal",Warangal,Telangana,ACTIVE
+P0105,Kiran Reddy,M,1987-09-01,"123 RTC Colony, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0106,Rohit Reddy,M,1986-08-14,"66 Canal Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0107,Pallavi Naidu,F,1992-10-02,"179 Main Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0108,Anil Reddy,M,1989-08-14,"199 Station Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0109,Chandra Reddy,M,1981-01-12,"95 Canal Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0110,Shruthi Goud,F,1999-05-11,"72 Canal Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0111,Shruthi Reddy,F,1976-01-01,"50 RTC Colony, Guntur",Guntur,Andhra Pradesh,INACTIVE
+P0112,Sanjay Murthy,M,1983-02-17,"77 Station Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0113,Naveen Murthy,M,1976-04-25,"96 RTC Colony, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0114,Ganesh Raju,M,1988-03-19,"146 Station Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0115,Raghu Babu,M,1974-03-07,"45 Canal Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0116,Anjali Naidu,F,1969-12-19,"126 Main Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0117,Naresh Reddy,M,1982-11-16,"66 Ring Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0118,Pooja Babu,F,1986-04-13,"89 MG Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0119,Ravi Babu,M,1971-12-24,"152 Temple Street, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0120,Shruthi Goud,F,1992-04-04,"121 RTC Colony, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0121,Swathi Chowdary,F,1968-09-27,"61 Station Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0122,Vamsi Murthy,M,2002-05-20,"141 MG Road, Warangal",Warangal,Telangana,ACTIVE
+P0123,Lokesh Reddy,M,1977-04-21,"90 MG Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0124,Karthik Prasad,M,1972-02-18,"45 Temple Street, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0125,Aditya Konda,M,1988-01-01,"148 RTC Colony, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0126,Rupa Rao,F,1968-01-01,"181 Main Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0127,Karthik Rao,M,1993-04-06,"109 Canal Road, Guntur",Guntur,Andhra Pradesh,INACTIVE
+P0128,Naveen Babu,M,1988-09-27,"180 Canal Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0129,Venkat Chowdary,M,1976-06-14,"38 Main Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0130,Swathi Konda,F,1988-02-24,"7 Station Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0131,Naveen Rao,M,1993-05-12,"110 Market Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0132,Naresh Raju,M,1990-09-13,"107 Market Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0133,Aparna Naidu,F,1998-03-02,"101 Main Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0134,Meena Murthy,F,1970-02-01,"162 MG Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0135,Srikanth Rao,M,1969-12-24,"142 Main Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0136,Nandini Rao,F,1979-10-04,"158 MG Road, Warangal",Warangal,Telangana,ACTIVE
+P0137,Naveen Chowdary,M,2005-05-02,"9 Station Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0138,Uday Rao,M,1996-07-18,"45 MG Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0139,Rithika Goud,F,1974-09-18,"72 Ring Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0140,Uday Raju,M,1995-07-18,"172 Main Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0141,Tejaswini Reddy,F,1977-08-13,"104 Station Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0142,Vani Prasad,F,2002-04-15,"136 Temple Street, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0143,Vamsi Rao,M,1984-05-24,"51 Market Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0144,Harish Konda,M,1993-03-06,"194 Ring Road, Warangal",Warangal,Telangana,INACTIVE
+P0145,Ramesh Varma,M,1975-10-18,"169 Market Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0146,Srinivas Konda,M,2004-05-26,"40 Ring Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0147,Madhav Kumar,M,1995-06-04,"128 Station Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0148,Varun Reddy,M,1987-12-10,"189 Station Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0149,Shruthi Babu,F,2003-10-24,"37 Ring Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0150,Sunitha Rao,F,1990-09-18,"18 MG Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0151,Naveen Rao,M,2001-09-17,"59 MG Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0152,Rohit Kumar,M,1983-02-17,"178 Ring Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0153,Karthik Naidu,M,1969-06-02,"70 Ring Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0154,Uday Murthy,M,1973-11-27,"61 Station Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0155,Naveen Goud,M,1986-11-17,"192 Main Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0156,Sireesha Chowdary,F,1973-10-27,"197 Market Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0157,Vamsi Prasad,M,1994-05-09,"160 RTC Colony, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0158,Lokesh Prasad,M,1998-03-02,"15 Market Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0159,Sunil Chowdary,M,1972-09-10,"40 Station Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0160,Meena Murthy,F,1989-06-01,"143 Ring Road, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0161,Nikhil Reddy,M,1994-12-13,"132 Ring Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0162,Vivek Naidu,M,2001-01-24,"56 Station Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0163,Pavan Kumar,M,1985-10-14,"172 Station Road, Tirupati",Tirupati,Andhra Pradesh,INACTIVE
+P0164,Divya Goud,F,1985-09-10,"115 Main Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0165,Priya Prasad,F,1985-08-08,"93 Canal Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0166,Pooja Varma,F,2004-02-28,"198 Market Road, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0167,Sanjay Chowdary,M,1990-09-06,"73 MG Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0168,Lokesh Rao,M,1971-01-19,"54 Market Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0169,Sirisha Naidu,F,1994-10-08,"39 MG Road, Nizamabad",Nizamabad,Telangana,ACTIVE
+P0170,Navya Naidu,F,1995-02-14,"82 RTC Colony, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0171,Ganesh Naidu,M,1982-06-10,"102 Ring Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0172,Pavan Naidu,M,1985-02-09,"115 Station Road, Vijayawada",Vijayawada,Andhra Pradesh,ACTIVE
+P0173,Krishna Kumar,M,1978-11-20,"164 RTC Colony, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0174,Ramesh Konda,M,2002-12-26,"40 Canal Road, Nellore",Nellore,Andhra Pradesh,ACTIVE
+P0175,Manasa Naidu,F,1969-10-28,"67 Ring Road, Hyderabad",Hyderabad,Telangana,ACTIVE
+P0176,Naresh Prasad,M,1992-05-16,"14 MG Road, Guntur",Guntur,Andhra Pradesh,ACTIVE
+P0177,Anil Konda,M,1971-02-27,"51 Temple Street, Tirupati",Tirupati,Andhra Pradesh,ACTIVE
+P0178,Rekha Chowdary,F,1970-02-22,"15 MG Road, Visakhapatnam",Visakhapatnam,Andhra Pradesh,ACTIVE
+P0179,Mahesh Naidu,M,1989-07-15,"170 Temple Street, Kurnool",Kurnool,Andhra Pradesh,ACTIVE
+P0180,Manasa Chowdary,F,1995-04-25,"186 RTC Colony, Nizamabad",Nizamabad,Telangana,ACTIVE

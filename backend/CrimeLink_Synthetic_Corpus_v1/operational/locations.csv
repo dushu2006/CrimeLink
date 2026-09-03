@@ -1,0 +1,91 @@
+location_id,name,city,state,latitude,longitude
+L0001,Petrol Pump 1,Kurnool,Andhra Pradesh,16.689918,83.124205
+L0002,Railway Station 4,Visakhapatnam,Andhra Pradesh,16.685836,82.39627
+L0003,Market 1,Tirupati,Andhra Pradesh,16.593862,82.568686
+L0004,Industrial Area 12,Kurnool,Andhra Pradesh,16.911299,82.401268
+L0005,Highway Junction 8,Nellore,Andhra Pradesh,17.628676,83.32537
+L0006,Hotel 11,Vijayawada,Andhra Pradesh,16.203782,83.347975
+L0007,Market 23,Vijayawada,Andhra Pradesh,17.023912,82.978908
+L0008,Bus Stand 13,Nizamabad,Telangana,17.573387,78.762579
+L0009,Railway Station 12,Vijayawada,Andhra Pradesh,18.748553,78.590312
+L0010,Highway Junction 29,Warangal,Telangana,17.352859,78.243031
+L0011,Warehouse 9,Vijayawada,Andhra Pradesh,16.729101,83.084987
+L0012,Railway Station 28,Nizamabad,Telangana,17.492964,83.843082
+L0013,Petrol Pump 15,Visakhapatnam,Andhra Pradesh,16.216021,81.798189
+L0014,Hotel 18,Nizamabad,Telangana,17.391907,82.117941
+L0015,Warehouse 7,Nizamabad,Telangana,16.712418,82.180933
+L0016,Bus Stand 30,Vijayawada,Andhra Pradesh,17.656775,83.848354
+L0017,Industrial Area 13,Visakhapatnam,Andhra Pradesh,17.879199,83.8365
+L0018,Highway Junction 2,Kurnool,Andhra Pradesh,18.178955,83.528971
+L0019,Railway Station 9,Warangal,Telangana,16.839283,83.801945
+L0020,Highway Junction 18,Hyderabad,Telangana,16.242756,82.956796
+L0021,Bus Stand 19,Kurnool,Andhra Pradesh,16.673956,79.556088
+L0022,Market 27,Visakhapatnam,Andhra Pradesh,16.928381,78.804582
+L0023,Highway Junction 26,Vijayawada,Andhra Pradesh,18.735119,79.948647
+L0024,Petrol Pump 10,Visakhapatnam,Andhra Pradesh,17.182935,84.277859
+L0025,Hotel 14,Tirupati,Andhra Pradesh,18.526943,80.822219
+L0026,Petrol Pump 5,Nellore,Andhra Pradesh,16.58906,83.885853
+L0027,Petrol Pump 18,Vijayawada,Andhra Pradesh,18.64382,82.647277
+L0028,Hotel 10,Guntur,Andhra Pradesh,18.166242,81.101608
+L0029,Industrial Area 5,Guntur,Andhra Pradesh,17.980664,83.328356
+L0030,Warehouse 29,Warangal,Telangana,17.848498,83.160861
+L0031,Petrol Pump 20,Hyderabad,Telangana,18.356038,81.234523
+L0032,Petrol Pump 24,Warangal,Telangana,18.37766,81.953302
+L0033,Industrial Area 15,Vijayawada,Andhra Pradesh,16.355414,80.779131
+L0034,Market 12,Warangal,Telangana,17.239043,79.139808
+L0035,Railway Station 22,Vijayawada,Andhra Pradesh,16.37657,80.066371
+L0036,Industrial Area 19,Tirupati,Andhra Pradesh,16.359884,80.319492
+L0037,Market 14,Warangal,Telangana,18.243057,78.47026
+L0038,Industrial Area 30,Guntur,Andhra Pradesh,17.508548,79.864966
+L0039,Railway Station 14,Visakhapatnam,Andhra Pradesh,17.539897,82.92204
+L0040,Railway Station 16,Kurnool,Andhra Pradesh,16.206991,81.8043
+L0041,Industrial Area 9,Vijayawada,Andhra Pradesh,18.014301,83.08804
+L0042,Warehouse 15,Visakhapatnam,Andhra Pradesh,16.569529,83.381277
+L0043,Railway Station 25,Hyderabad,Telangana,18.562755,79.278023
+L0044,Market 22,Vijayawada,Andhra Pradesh,16.719056,82.561383
+L0045,Petrol Pump 26,Tirupati,Andhra Pradesh,17.977818,81.73524
+L0046,Warehouse 8,Guntur,Andhra Pradesh,18.218982,80.494608
+L0047,Railway Station 9,Tirupati,Andhra Pradesh,18.753387,83.28125
+L0048,Bus Stand 4,Tirupati,Andhra Pradesh,18.421312,81.604456
+L0049,Industrial Area 28,Vijayawada,Andhra Pradesh,17.184405,83.063337
+L0050,Industrial Area 29,Nizamabad,Telangana,16.232611,81.91626
+L0051,Industrial Area 3,Guntur,Andhra Pradesh,18.144205,83.16524
+L0052,Market 7,Kurnool,Andhra Pradesh,17.995189,83.676349
+L0053,Railway Station 8,Vijayawada,Andhra Pradesh,17.798517,84.280269
+L0054,Industrial Area 4,Warangal,Telangana,16.900393,83.192987
+L0055,Warehouse 30,Warangal,Telangana,18.152815,83.537895
+L0056,Market 12,Kurnool,Andhra Pradesh,18.391164,84.287165
+L0057,Petrol Pump 9,Guntur,Andhra Pradesh,18.703436,79.953017
+L0058,Bus Stand 15,Kurnool,Andhra Pradesh,17.281022,83.631285
+L0059,Highway Junction 12,Visakhapatnam,Andhra Pradesh,18.302104,79.318992
+L0060,Hotel 27,Guntur,Andhra Pradesh,18.10373,78.140771
+L0061,Industrial Area 21,Kurnool,Andhra Pradesh,16.559607,81.975665
+L0062,Petrol Pump 6,Nizamabad,Telangana,17.143473,83.386277
+L0063,Industrial Area 1,Guntur,Andhra Pradesh,17.007705,82.710065
+L0064,Petrol Pump 7,Warangal,Telangana,17.103502,78.962458
+L0065,Bus Stand 2,Vijayawada,Andhra Pradesh,16.959367,79.726277
+L0066,Warehouse 12,Vijayawada,Andhra Pradesh,17.547604,78.497109
+L0067,Hotel 2,Nizamabad,Telangana,18.153575,82.371311
+L0068,Warehouse 14,Kurnool,Andhra Pradesh,18.706971,79.034156
+L0069,Hotel 1,Guntur,Andhra Pradesh,18.209158,78.55904
+L0070,Warehouse 25,Tirupati,Andhra Pradesh,16.324162,83.637167
+L0071,Highway Junction 22,Tirupati,Andhra Pradesh,17.124125,80.141109
+L0072,Warehouse 26,Hyderabad,Telangana,17.067523,78.183127
+L0073,Bus Stand 21,Guntur,Andhra Pradesh,17.532856,81.230761
+L0074,Hotel 6,Nizamabad,Telangana,17.504925,84.288476
+L0075,Warehouse 8,Nizamabad,Telangana,18.274671,84.225649
+L0076,Warehouse 9,Visakhapatnam,Andhra Pradesh,18.294805,84.422679
+L0077,Market 30,Guntur,Andhra Pradesh,17.058832,78.687429
+L0078,Warehouse 12,Visakhapatnam,Andhra Pradesh,17.920585,78.207952
+L0079,Highway Junction 25,Guntur,Andhra Pradesh,18.518841,84.262453
+L0080,Industrial Area 22,Guntur,Andhra Pradesh,16.815751,81.871162
+L0081,Railway Station 3,Warangal,Telangana,17.355485,84.362985
+L0082,Warehouse 1,Kurnool,Andhra Pradesh,18.097613,84.333005
+L0083,Market 23,Kurnool,Andhra Pradesh,17.925934,81.207591
+L0084,Market 23,Guntur,Andhra Pradesh,18.645472,80.638086
+L0085,Highway Junction 27,Nellore,Andhra Pradesh,17.825861,81.264687
+L0086,Railway Station 22,Guntur,Andhra Pradesh,18.362133,79.31848
+L0087,Railway Station 27,Warangal,Telangana,16.43012,82.54905
+L0088,Petrol Pump 3,Warangal,Telangana,18.621948,78.628137
+L0089,Warehouse 19,Nellore,Andhra Pradesh,17.501145,82.639479
+L0090,Highway Junction 22,Tirupati,Andhra Pradesh,17.831132,83.099954
