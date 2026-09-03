@@ -535,4 +535,4 @@ async def test_admin_ingest_missing_corpus_returns_validation_error(
         headers=admin_headers,
     )
     assert response.status_code == 422, response.text
-    assert str(missing) in response.text
+    assert str(missing) in response.json()["error"]["message"]

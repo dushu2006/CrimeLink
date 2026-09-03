@@ -40,6 +40,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,6 +83,23 @@ _CONTENT_TYPES = {
     ".json": "application/json",
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+_DATASET_TABLE_HEADERS: dict[str, frozenset[str]] = {
+    "accounts.csv": frozenset({"account_id", "account_number", "holder_person_id", "bank_code", "account_status"}),
+    "case_members.csv": frozenset({"case_member_id", "case_id", "person_id", "role"}),
+    "cases.csv": frozenset({"case_id", "case_number", "registered_date", "case_type", "police_station", "city", "status"}),
+    "cdr.csv": frozenset({"cdr_id", "timestamp", "from_phone_id", "to_phone_id", "duration_seconds", "call_type", "cell_location_id", "case_id"}),
+    "documents.csv": frozenset({"document_id", "case_id", "document_type", "file_path", "language", "source_environment"}),
+    "intelligence_reports.csv": frozenset({"report_id", "report_date", "subject_person_id", "location_id", "case_id", "source_type", "summary"}),
+    "locations.csv": frozenset({"location_id", "name", "city", "state", "latitude", "longitude"}),
+    "organizations.csv": frozenset({"organization_id", "name", "organization_type", "city", "state"}),
+    "person_organizations.csv": frozenset({"person_org_id", "person_id", "organization_id", "role", "start_date", "end_date"}),
+    "persons.csv": frozenset({"person_id", "full_name", "gender", "dob", "address", "city", "state", "status"}),
+    "phones.csv": frozenset({"phone_id", "phone_number", "owner_person_id", "status", "source"}),
+    "transactions.csv": frozenset({"transaction_id", "timestamp", "from_account_id", "to_account_id", "amount_inr", "transaction_type", "location_id", "case_id"}),
+    "vehicle_sightings.csv": frozenset({"sighting_id", "vehicle_id", "location_id", "timestamp", "case_id", "source"}),
+    "vehicles.csv": frozenset({"vehicle_id", "registration_number", "vehicle_type", "owner_person_id", "color"}),
 }
 
 
@@ -214,6 +232,28 @@ def _classify_csv(headers: list[str]) -> tuple[DocumentType | None, str]:
 
     if not headers:
         return None, "the CSV file has no header row"
+
+    # The checked-out CrimeLink corpus uses relational tables rather than the
+    # generic operator exports below.  Match the complete, documented header
+    # set before applying generic aliases so these tables are normalized by
+    # records_from_scan without weakening validation for unknown CSVs.
+    normalized_headers = frozenset(re.sub(r"[^a-z0-9]+", "", h.lower()) for h in headers)
+    for filename, expected in _DATASET_TABLE_HEADERS.items():
+        normalized_expected = frozenset(re.sub(r"[^a-z0-9]+", "", h) for h in expected)
+        if normalized_headers == normalized_expected:
+            if filename == "documents.csv":
+                return None, "operational/documents.csv is a manifest; referenced evidence files are imported from documents/"
+            if filename == "cdr.csv":
+                return DocumentType.CDR, "matched CrimeLink corpus CDR table"
+            if filename == "transactions.csv":
+                return DocumentType.FINANCIAL, "matched CrimeLink corpus transaction table"
+            if filename == "vehicle_sightings.csv":
+                return DocumentType.SURVEILLANCE, "matched CrimeLink corpus vehicle-sighting table"
+            if filename == "persons.csv":
+                return DocumentType.CRIMINAL_HISTORY, "matched CrimeLink corpus persons table"
+            if filename == "intelligence_reports.csv":
+                return DocumentType.INTEL, "matched CrimeLink corpus intelligence-report table"
+            return DocumentType.FIR, f"matched CrimeLink corpus table '{filename}'"
 
     quoted = ", ".join(headers[:12])
 
@@ -540,6 +580,7 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
     def records_from_scan(self, scan: CorpusScan) -> Iterator[SourceRecord]:
         """Yield one :class:`SourceRecord` per accepted file of a prior scan."""
+        lookups = self._dataset_lookups(scan)
         for entry in scan.accepted:
             try:
                 raw = entry.path.read_bytes()
@@ -550,15 +591,16 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             external_id = hashlib.sha256(
                 f"{entry.relative_path}|{entry.sha256}".encode()
             ).hexdigest()[:24]
+            content, content_type = self._normalize_dataset_file(
+                entry.path, raw, lookups
+            )
             yield SourceRecord(
                 external_id=f"synthetic-external:{external_id}",
                 case_number=self.case_number_for(entry.case_key or CASE_GROUP_FALLBACK),
                 document_type=entry.document_type or DocumentType.FIR,
                 filename=entry.path.name,
-                content_type=_CONTENT_TYPES.get(
-                    entry.path.suffix.lower(), "application/octet-stream"
-                ),
-                content=raw,
+                content_type=content_type,
+                content=content,
                 source_environment="synthetic",
                 source_confidence=SourceConfidence.SYNTHETIC,
                 language="en",
@@ -573,6 +615,105 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                     "classification": entry.reason,
                 },
             )
+
+    @staticmethod
+    def _dataset_lookups(scan: CorpusScan) -> dict[str, dict[str, str]]:
+        """Load reference tables used to normalize the corpus's ID columns."""
+        result: dict[str, dict[str, str]] = {}
+        for entry in scan.accepted:
+            if entry.path.suffix.lower() != ".csv":
+                continue
+            try:
+                with entry.path.open(newline="", encoding="utf-8-sig") as handle:
+                    rows = list(csv.DictReader(handle))
+            except (OSError, UnicodeError, csv.Error):
+                continue
+            table = entry.path.name.lower()
+            if table == "persons.csv":
+                result["person"] = {r.get("person_id", ""): r.get("full_name", "") for r in rows}
+            elif table == "phones.csv":
+                result["phone"] = {r.get("phone_id", ""): r.get("phone_number", "") for r in rows}
+            elif table == "accounts.csv":
+                result["account"] = {r.get("account_id", ""): r.get("account_number", "") for r in rows}
+            elif table == "vehicles.csv":
+                result["vehicle"] = {r.get("vehicle_id", ""): r.get("registration_number", "") for r in rows}
+                result["vehicle_owner"] = {r.get("vehicle_id", ""): r.get("owner_person_id", "") for r in rows}
+            elif table == "locations.csv":
+                result["location"] = {r.get("location_id", ""): r.get("name", "") for r in rows}
+            elif table == "organizations.csv":
+                result["organization"] = {r.get("organization_id", ""): r.get("name", "") for r in rows}
+        return result
+
+    @classmethod
+    def _normalize_dataset_file(
+        cls, path: Path, raw: bytes, lookups: dict[str, dict[str, str]]
+    ) -> tuple[bytes, str]:
+        """Convert the documented relational tables to existing pipeline formats."""
+        name = path.name.lower()
+        if name not in _DATASET_TABLE_HEADERS:
+            return raw, _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        text = raw.decode("utf-8-sig", errors="replace")
+        rows = list(csv.DictReader(io.StringIO(text)))
+        person = lookups.get("person", {})
+        phone = lookups.get("phone", {})
+        account = lookups.get("account", {})
+        vehicle = lookups.get("vehicle", {})
+        vehicle_owner = lookups.get("vehicle_owner", {})
+        location = lookups.get("location", {})
+        organization = lookups.get("organization", {})
+
+        if name == "cdr.csv":
+            fields = ["calling_number", "called_number", "timestamp", "duration_seconds", "direction", "imei"]
+            output = [{"calling_number": phone.get(r.get("from_phone_id", ""), ""),
+                       "called_number": phone.get(r.get("to_phone_id", ""), ""),
+                       "timestamp": r.get("timestamp", ""),
+                       "duration_seconds": r.get("duration_seconds", ""),
+                       "direction": r.get("call_type", ""), "imei": ""} for r in rows]
+            return cls._csv_bytes(fields, output), "text/csv"
+        if name == "transactions.csv":
+            fields = ["transaction_id", "date", "from_account", "to_account", "amount", "channel", "reference"]
+            output = [{"transaction_id": r.get("transaction_id", ""),
+                       "date": r.get("timestamp", ""),
+                       "from_account": account.get(r.get("from_account_id", ""), ""),
+                       "to_account": account.get(r.get("to_account_id", ""), ""),
+                       "amount": r.get("amount_inr", ""),
+                       "channel": r.get("transaction_type", ""), "reference": r.get("transaction_id", "")} for r in rows]
+            return cls._csv_bytes(fields, output), "text/csv"
+        if name == "vehicle_sightings.csv":
+            fields = ["subject", "observed_at", "location", "vehicle", "remarks"]
+            output = [{"subject": person.get(vehicle_owner.get(r.get("vehicle_id", ""), ""), ""), "observed_at": r.get("timestamp", ""),
+                       "location": location.get(r.get("location_id", ""), ""),
+                       "vehicle": vehicle.get(r.get("vehicle_id", ""), ""),
+                       "remarks": r.get("source", "")} for r in rows]
+            return cls._csv_bytes(fields, output), "text/csv"
+        if name == "persons.csv":
+            fields = ["name", "aliases", "role", "case_ref", "case_date", "phone", "plate", "address"]
+            output = [{"name": r.get("full_name", ""), "aliases": "", "role": r.get("status", ""),
+                       "case_ref": "", "case_date": r.get("dob", ""), "phone": "", "plate": "",
+                       "address": ", ".join(x for x in (r.get("address", ""), r.get("city", ""), r.get("state", "")) if x)} for r in rows]
+            return cls._csv_bytes(fields, output), "text/csv"
+
+        lines: list[str] = []
+        for row in rows:
+            values = dict(row)
+            for key, table in (("person_id", person), ("owner_person_id", person),
+                               ("holder_person_id", person), ("subject_person_id", person),
+                               ("phone_id", phone), ("from_phone_id", phone), ("to_phone_id", phone),
+                               ("from_account_id", account), ("to_account_id", account),
+                               ("vehicle_id", vehicle), ("location_id", location),
+                               ("organization_id", organization)):
+                if values.get(key) and values[key] in table:
+                    values[key] = table[values[key]]
+            lines.append("; ".join(f"{key}: {value}" for key, value in values.items() if value))
+        return "\n".join(lines).encode("utf-8"), "text/plain"
+
+    @staticmethod
+    def _csv_bytes(fields: list[str], rows: list[dict[str, str]]) -> bytes:
+        output = io.StringIO(newline="")
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+        return output.getvalue().encode("utf-8")
 
     # --------------------------------------------------------------- describe
     def describe(self) -> dict[str, Any]:
