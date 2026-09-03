@@ -334,6 +334,7 @@ def _extract_from_record(
             source_doc_id=doc.doc_id,
             case_id=doc.case_id,
             text_span=block.span,
+                origin=block.origin,
             language=doc.language,
             extractor="deterministic",
             staging=staging,
@@ -368,6 +369,7 @@ def _extract_from_record(
                 source_doc_id=doc.doc_id,
                 case_id=doc.case_id,
                 text_span=block.span,
+                origin=block.origin,
                 extractor="deterministic",
                 staging=staging,
             )
@@ -413,6 +415,7 @@ def _extract_from_record(
                 source_doc_id=doc.doc_id,
                 case_id=doc.case_id,
                 text_span=block.span,
+                origin=block.origin,
                 extractor="deterministic",
                 staging=staging,
                 # Each transfer stays a discrete, separately-evidenced edge so
@@ -456,6 +459,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
+                origin=block.origin,
                     extractor="deterministic",
                 )
             )
@@ -476,6 +480,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
+                origin=block.origin,
                     extractor="deterministic",
                 )
             )
@@ -498,6 +503,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
+                origin=block.origin,
                     extractor="deterministic",
                     discriminator=f"prior::{data.get('case_ref') or ''}::{sections}",
                 )
@@ -531,6 +537,7 @@ def _extract_from_record(
                 source_doc_id=doc.doc_id,
                 case_id=doc.case_id,
                 text_span=block.span,
+                origin=block.origin,
                 extractor="deterministic",
                 staging=staging,
             )
@@ -568,6 +575,7 @@ def _extract_from_record(
                 source_doc_id=doc.doc_id,
                 case_id=doc.case_id,
                 text_span=block.span,
+                origin=block.origin,
                 extractor="deterministic",
                 staging=staging,
             )
@@ -600,6 +608,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
+                origin=block.origin,
                     extractor="deterministic",
                     staging=staging,
                 )
@@ -619,6 +628,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
+                origin=block.origin,
                     extractor="deterministic",
                     staging=staging,
                 )

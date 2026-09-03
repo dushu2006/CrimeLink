@@ -17,6 +17,7 @@ from app.api.v1 import (
     cases,
     database,
     documents,
+    explore,
     export,
     graph,
     health,
@@ -25,6 +26,7 @@ from app.api.v1 import (
     patterns,
     resolution,
     search,
+    sources,
 )
 
 api_router = APIRouter()
@@ -35,7 +37,9 @@ api_router.include_router(cases.router)
 api_router.include_router(documents.router)
 api_router.include_router(jobs.router)
 api_router.include_router(export.router)
+api_router.include_router(explore.router)
 api_router.include_router(search.router)
+api_router.include_router(sources.router)
 api_router.include_router(graph.router)
 api_router.include_router(resolution.router)
 api_router.include_router(patterns.router)

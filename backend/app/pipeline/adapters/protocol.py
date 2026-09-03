@@ -52,6 +52,45 @@ class SourceAdapter(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Origin coordinates carried by derived CSVs
+# ---------------------------------------------------------------------------
+
+
+def strip_origin_column(headers: list[str]) -> list[str]:
+    """Remove the reserved origin column from a header row.
+
+    Schema detection and column-alias matching must never see this column: it
+    is CrimeLink bookkeeping, not operational data.
+    """
+    from app.domain.models import ORIGIN_COLUMN
+
+    return [h for h in headers if h != ORIGIN_COLUMN]
+
+
+def pop_origin(row: dict[str, Any]) -> "OriginRefT | None":
+    """Extract and remove the origin reference from a parsed CSV row.
+
+    Returns ``None`` for ordinary uploads, which carry no origin column — those
+    documents are ingested verbatim and are their own origin.
+    """
+    from app.domain.models import ORIGIN_COLUMN, OriginRef
+
+    raw = row.pop(ORIGIN_COLUMN, None)
+    if not raw:
+        return None
+    return OriginRef.decode(str(raw))
+
+
+if True:  # pragma: no cover - typing alias kept local to avoid an import cycle
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from app.domain.models import OriginRef as OriginRefT
+    else:
+        OriginRefT = Any
+
+
+# ---------------------------------------------------------------------------
 # Language detection
 # ---------------------------------------------------------------------------
 

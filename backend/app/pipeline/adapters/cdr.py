@@ -30,6 +30,8 @@ from app.pipeline.adapters.protocol import (
     DocumentMeta,
     detect_language,
     pick_column,
+    pop_origin,
+    strip_origin_column,
     to_ist_iso,
 )
 from app.pipeline.extraction.gazetteers import CDR_SCHEMAS
@@ -64,6 +66,7 @@ class CDRAdapter:
         rendered_rows: list[str] = []
 
         for index, row in enumerate(rows, start=1):
+            origin = pop_origin(row)
             record = self._record_from_row(row, mapping)
             if record is None:
                 bad_rows += 1
@@ -80,6 +83,7 @@ class CDRAdapter:
                     text=rendered,
                     offset=text_cursor,
                     data={"kind": "call", **record},
+                    origin=origin,
                 )
             )
             rendered_rows.append(rendered)
@@ -135,7 +139,7 @@ class CDRAdapter:
         if not headers:
             raise PipelineError("The CDR file has no header row.")
         rows = [dict(row) for row in reader]
-        return rows, headers, "CSV"
+        return rows, strip_origin_column(headers), "CSV"
 
     @staticmethod
     def _read_xml(text: str):

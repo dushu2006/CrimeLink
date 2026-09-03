@@ -309,6 +309,11 @@ async def ingest_external_corpus(
                     source_confidence=record.source_confidence,
                     mime_type=record.content_type,
                     language_hint=record.language,
+                    source_metadata={
+                        key: record.metadata[key]
+                        for key in ("document_origin", "line_origins", "relative_path", "verbatim")
+                        if record.metadata.get(key) is not None
+                    },
                 )
             except ConflictError as exc:
                 await session.rollback()

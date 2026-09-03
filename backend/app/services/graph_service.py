@@ -307,6 +307,27 @@ class GraphService:
         return self.container.graph_store.stats()
 
 
+
+def _evidence_pointer(properties: dict[str, Any]) -> dict[str, Any] | None:
+    """The exact-source pointer carried by a node or edge.
+
+    ``text_span`` locates the evidence inside the ingested document; ``origin``
+    locates it inside the *original* corpus file (file + row + fields).  Both
+    are returned when known so the source viewer can open either, and ``None``
+    is returned rather than a fabricated pointer when neither exists.
+    """
+    span = properties.get("text_span")
+    origin = properties.get("origin")
+    if not span and not origin:
+        return None
+    pointer: dict[str, Any] = {
+        "source_doc_id": properties.get("source_doc_id"),
+        "text_span": list(span) if span else None,
+        "origin": origin or None,
+    }
+    return pointer
+
+
 def _node_row(node: GraphNode) -> dict[str, Any]:
     return {
         "provenance_key": node.provenance_key,
@@ -318,6 +339,7 @@ def _node_row(node: GraphNode) -> dict[str, Any]:
         "aliases": list(node.properties.get("aliases") or []),
         "staging": bool(node.properties.get("staging", False)),
         "is_active": bool(node.properties.get("is_active", True)),
+        "evidence": _evidence_pointer(node.properties),
         "properties": {
             k: v
             for k, v in node.properties.items()
@@ -330,6 +352,7 @@ def _node_row(node: GraphNode) -> dict[str, Any]:
                 "is_active",
                 "candidate_keys",
                 "text_span",
+                "origin",
                 "pre_merge_edges",
                 "post_merge_edge_keys",
             }
@@ -348,6 +371,7 @@ def _edge_row(edge: Any) -> dict[str, Any]:
         "source_doc_ids": list(edge.properties.get("source_doc_ids") or []),
         "source_doc_id": edge.properties.get("source_doc_id"),
         "staging": bool(edge.properties.get("staging", False)),
+        "evidence": _evidence_pointer(edge.properties),
         "properties": {
             k: v
             for k, v in edge.properties.items()
@@ -357,6 +381,7 @@ def _edge_row(edge: Any) -> dict[str, Any]:
                 "source_doc_id",
                 "staging",
                 "text_span",
+                "origin",
                 "discriminator",
             }
         },

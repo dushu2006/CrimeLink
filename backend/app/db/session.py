@@ -106,7 +106,11 @@ def _configure_sqlite_pragmas(engine: Any, *, sync: bool) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA busy_timeout=10000")
+            # A full-corpus import holds the single SQLite writer for long
+            # stretches while the API keeps serving.  Ten seconds was short
+            # enough that logins failed with "database is locked" during an
+            # ingest, so wait long enough to outlast a bulk write batch.
+            cursor.execute("PRAGMA busy_timeout=60000")
             cursor.close()
         except Exception:  # pragma: no cover - pragmas are advisory
             pass

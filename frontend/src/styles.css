@@ -692,3 +692,380 @@ ul.compact {
   color: var(--ink);
   white-space: pre-wrap;
 }
+
+/* ------------------------------------------------- evidence & source viewer */
+/* Anything that opens a source must look openable before it is hovered. */
+
+.evidence-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--navy);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.evidence-link:hover,
+.evidence-link:focus-visible {
+  background: var(--navy-soft);
+  border-color: var(--navy);
+}
+
+.evidence-icon {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  position: relative;
+}
+
+.evidence-icon::after {
+  content: "";
+  position: absolute;
+  inset: 3px 2px auto 2px;
+  height: 1.5px;
+  background: currentColor;
+  box-shadow: 0 3px 0 currentColor;
+}
+
+.evidence-pos {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* Modal ------------------------------------------------------------------ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(17, 24, 39, 0.25);
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+  width: min(1080px, 100%);
+}
+
+.modal-head,
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+}
+
+.modal-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-head strong {
+  display: block;
+  color: var(--navy);
+}
+
+.modal-foot {
+  border-top: 1px solid var(--line);
+  background: #fbfcfd;
+}
+
+.modal-scroll {
+  overflow: auto;
+  padding: 16px;
+}
+
+/* Source body ------------------------------------------------------------ */
+
+.source-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.source-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.source-record {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field-chip {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--navy-soft);
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.source-note {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+/* Tabular sources: highlight the row, and the cells that carry the evidence. */
+
+.source-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.source-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-table th,
+.source-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.source-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--navy-soft);
+  color: var(--navy);
+  border-bottom: 2px solid var(--navy);
+}
+
+.source-table th.field-relevant {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.source-gutter {
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+  width: 1%;
+}
+
+.row-highlight > td {
+  background: #fff7e0;
+}
+
+.cell-highlight {
+  background: #ffe9a8 !important;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px #d9a406;
+}
+
+/* Line-based sources ----------------------------------------------------- */
+
+.source-lines {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  background: #fbfcfd;
+}
+
+.source-lines .line {
+  display: flex;
+  gap: 12px;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.source-lines .source-gutter {
+  min-width: 3.5em;
+  flex: none;
+}
+
+.line-highlight {
+  background: #fff7e0;
+  box-shadow: inset 3px 0 0 #d9a406;
+}
+
+.line-text {
+  flex: 1;
+}
+
+/* --------------------------------------------------- explorers & detail views */
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.filter-input {
+  min-width: 240px;
+  flex: 1 1 240px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* A table cell that behaves like a link must look like one. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--navy);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: #12294c;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.hash {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.chip:hover {
+  border-color: var(--navy);
+  background: var(--navy-soft);
+}
+
+.chip-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.rel-type {
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.rel-dir {
+  color: var(--muted);
+}
+
+.excerpt {
+  max-width: 380px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint-bad {
+  color: var(--bad);
+}
+
+.alert-bad {
+  border-left: 3px solid var(--bad);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dashboard counts are navigation, not decoration. */
+.card-link {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.card-link:hover,
+.card-link:focus-visible {
+  border-color: var(--navy);
+  box-shadow: 0 2px 8px rgba(27, 58, 107, 0.12);
+}
+
+.card-link .card-value {
+  color: var(--navy);
+}

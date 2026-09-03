@@ -25,6 +25,72 @@ from app.errors import UnevidencedGraphWriteError
 BlockKind = Literal["text", "table_row", "record"]
 
 
+@dataclass(slots=True)
+class OriginRef:
+    """Coordinates of the *original* corpus record that produced a block.
+
+    CrimeLink's corpus adapter does not upload ``operational/cdr.csv`` verbatim:
+    it slices that table by case and rewrites the columns into the shape the CDR
+    pipeline adapter understands.  Without this structure the link back to the
+    real file is lost at ingestion, and provenance discarded at ingestion cannot
+    be reconstructed afterwards — so the origin travels *with* the row.
+
+    ``row`` is the 1-based line number of the record inside ``file`` counting the
+    header, i.e. the number an investigator sees in a text editor.
+    """
+
+    file: str                                   # posix path relative to the corpus root
+    row: int | None = None                      # 1-based line number within `file`
+    record_id: str | None = None                # natural key, e.g. "CDR000001"
+    fields: list[str] = field(default_factory=list)   # columns that carry the evidence
+    values: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "file": self.file,
+            "row": self.row,
+            "record_id": self.record_id,
+            "fields": list(self.fields),
+            "values": dict(self.values),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "OriginRef":
+        return cls(
+            file=str(payload.get("file") or ""),
+            row=payload.get("row"),
+            record_id=payload.get("record_id"),
+            fields=list(payload.get("fields") or []),
+            values=dict(payload.get("values") or {}),
+        )
+
+    def encode(self) -> str:
+        """Compact single-cell encoding carried inside the derived CSV."""
+        import json as _json
+
+        return _json.dumps(self.to_dict(), separators=(",", ":"), ensure_ascii=False)
+
+    @classmethod
+    def decode(cls, raw: str) -> "OriginRef | None":
+        import json as _json
+
+        if not raw:
+            return None
+        try:
+            payload = _json.loads(raw)
+        except ValueError:
+            return None
+        if not isinstance(payload, dict) or not payload.get("file"):
+            return None
+        return cls.from_dict(payload)
+
+
+#: Reserved column injected into derived CSVs to carry :class:`OriginRef`.
+#: Pipeline adapters strip it before column-alias matching so it can never be
+#: mistaken for operational data.
+ORIGIN_COLUMN = "crimelink_origin"
+
+
 # ---------------------------------------------------------------------------
 # Stage 1 output: a source document reduced to typed content units
 # ---------------------------------------------------------------------------
@@ -46,6 +112,9 @@ class Block:
     page: int | None = None
     line: int | None = None
     data: dict[str, Any] = field(default_factory=dict)
+    #: Where this block came from in the *original* source file, when the
+    #: ingested document is a derived artefact rather than the corpus file.
+    origin: "OriginRef | None" = None
 
     @property
     def span(self) -> tuple[int, int]:
@@ -93,6 +162,8 @@ class ExtractionCandidate:
     language: str = "en"
     extractor: str = "deterministic"   # "deterministic" | "nlp"
     staging: bool = False              # anonymous tips stay staged (PRD 7)
+    #: Origin coordinates of the source row/line that produced this mention.
+    origin: OriginRef | None = None
 
     def provenance_key(self, doc_id: str | None = None) -> str:
         from app.domain.provenance import candidate_key
@@ -127,6 +198,8 @@ class RelationCandidate:
     staging: bool = False
     # For aggregated edges (CALLED/TRANSFER_TO) this is the record identity
     discriminator: str = ""
+    #: Origin coordinates of the source row/line that produced this relation.
+    origin: OriginRef | None = None
 
     def provenance_pair(self, doc_id: str | None = None) -> tuple[str, str]:
         from app.domain.provenance import candidate_key

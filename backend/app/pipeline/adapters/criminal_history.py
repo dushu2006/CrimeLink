@@ -19,11 +19,18 @@ import io
 import json
 
 from app.domain.enums import DocumentType, SourceConfidence
-from app.domain.models import Block, NormalizedDocument
+from app.domain.models import ORIGIN_COLUMN, Block, NormalizedDocument
 from app.domain.normalize import normalize_name, normalize_phone, normalize_plate
 from app.errors import PipelineError
 from app.logging import get_logger
-from app.pipeline.adapters.protocol import DocumentMeta, detect_language, pick_column, to_ist_iso
+from app.pipeline.adapters.protocol import (
+    DocumentMeta,
+    detect_language,
+    pick_column,
+    pop_origin,
+    strip_origin_column,
+    to_ist_iso,
+)
 
 log = get_logger("crimelink.adapter.criminal_history")
 
@@ -55,6 +62,7 @@ class CriminalHistoryAdapter:
         skipped = 0
 
         for index, row in enumerate(rows, start=1):
+            origin = pop_origin(row)
             name = str(row.get("name") or "").strip()
             if not name:
                 skipped += 1
@@ -90,7 +98,9 @@ class CriminalHistoryAdapter:
                 + (f", phone {phone}" if phone else "")
                 + (f", case {record['case_ref']}" if record["case_ref"] else "")
             )
-            blocks.append(Block(kind="record", text=text, offset=cursor, data=record))
+            blocks.append(
+                Block(kind="record", text=text, offset=cursor, data=record, origin=origin)
+            )
             rendered.append(text)
             cursor += len(text) + 1
 
@@ -142,15 +152,19 @@ class CriminalHistoryAdapter:
                 records = payload.get("records") or payload.get("data") or [payload]
                 return [CriminalHistoryAdapter._remap(r) for r in records if isinstance(r, dict)], "JSON"
         reader = csv.DictReader(io.StringIO(text))
-        headers = [h for h in (reader.fieldnames or []) if h]
+        headers = strip_origin_column([h for h in (reader.fieldnames or []) if h])
         if not headers:
             raise PipelineError("The criminal-history file has no header row.")
         rows = []
         for row in reader:
-            rows.append(
-                {field: (row.get(pick_column(headers, aliases)) or None)
-                 for field, aliases in _ALIASES.items()}
-            )
+            remapped = {
+                field: (row.get(pick_column(headers, aliases)) or None)
+                for field, aliases in _ALIASES.items()
+            }
+            # The remap keeps only known fields, so the origin is carried across
+            # explicitly rather than being dropped with the unmapped columns.
+            remapped[ORIGIN_COLUMN] = row.get(ORIGIN_COLUMN)
+            rows.append(remapped)
         return rows, "CSV"
 
     @staticmethod
@@ -211,11 +225,17 @@ class SurveillanceAdapter:
             rows = self._read_json(text)
         else:
             reader = csv.DictReader(io.StringIO(text))
-            headers = [h for h in (reader.fieldnames or []) if h]
+            headers = strip_origin_column([h for h in (reader.fieldnames or []) if h])
             if not headers:
                 raise PipelineError("The surveillance log has no header row.")
             rows = [
-                {field: row.get(pick_column(headers, aliases)) for field, aliases in self._ALIASES.items()}
+                {
+                    **{
+                        field: row.get(pick_column(headers, aliases))
+                        for field, aliases in self._ALIASES.items()
+                    },
+                    ORIGIN_COLUMN: row.get(ORIGIN_COLUMN),
+                }
                 for row in reader
             ]
 
@@ -224,6 +244,7 @@ class SurveillanceAdapter:
         cursor = 0
         skipped = 0
         for row in rows:
+            origin = pop_origin(row)
             person = str(row.get("person") or "").strip()
             ts = to_ist_iso(row.get("ts"))
             location = str(row.get("location") or "").strip()
@@ -243,7 +264,9 @@ class SurveillanceAdapter:
                 f"on {ts}"
                 + (f" with vehicle {record['vehicle_plate']}" if record["vehicle_plate"] else "")
             )
-            blocks.append(Block(kind="record", text=rendered_text, offset=cursor, data=record))
+            blocks.append(
+                Block(kind="record", text=rendered_text, offset=cursor, data=record, origin=origin)
+            )
             rendered.append(rendered_text)
             cursor += len(rendered_text) + 1
 

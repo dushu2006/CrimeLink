@@ -22,6 +22,18 @@ export default function Layout() {
           <NavLink to="/cases" className={({ isActive }) => (isActive ? "nav-link on" : "nav-link")}>
             {t("nav.cases", lang)}
           </NavLink>
+          <NavLink to="/documents" className={({ isActive }) => (isActive ? "nav-link on" : "nav-link")}>
+            Documents
+          </NavLink>
+          <NavLink to="/entities" className={({ isActive }) => (isActive ? "nav-link on" : "nav-link")}>
+            Entities
+          </NavLink>
+          <NavLink to="/relationships" className={({ isActive }) => (isActive ? "nav-link on" : "nav-link")}>
+            Relationships
+          </NavLink>
+          <NavLink to="/sources" className={({ isActive }) => (isActive ? "nav-link on" : "nav-link")}>
+            Sources
+          </NavLink>
           <NavLink to="/review" className={({ isActive }) => (isActive ? "nav-link on" : "nav-link")}>
             {t("nav.review", lang)}
           </NavLink>

@@ -218,6 +218,7 @@ def _run(
         case_number = case.case_number
         jurisdiction_id = case.jurisdiction_id
         language_hint = document.language
+        source_metadata = dict(document.source_metadata or {})
 
     _mark_document(doc_id, status=IngestionStatus.PROCESSING, ingestion_stage=1)
 
@@ -254,16 +255,43 @@ def _run(
         document_nd.text.encode("utf-8"),
         content_type="text/plain",
     )
+    # Provenance is captured here, at parse time, because this is the last
+    # point at which a derived row still knows which corpus row produced it.
+    from app.domain.models import OriginRef
+    from app.services.provenance import (
+        collect_references,
+        persist_source_references,
+    )
+
+    raw_document_origin = source_metadata.get("document_origin")
+    reference_rows = collect_references(
+        document_nd,
+        doc_id=doc_id,
+        case_id=case_id,
+        document_origin=(
+            OriginRef.from_dict(raw_document_origin) if raw_document_origin else None
+        ),
+        line_origins=source_metadata.get("line_origins"),
+    )
+
     with sync_session() as session:
         doc = session.get(CaseDocument, doc_id)
         doc.derived_key = derived_key
         doc.language = document_nd.language
+        try:
+            persist_source_references(session, reference_rows)
+        except Exception as exc:  # noqa: BLE001 - provenance must not lose a document
+            log.warning("pipeline.provenance_failed", doc_id=doc_id, error=str(exc))
     _stage(
         doc_id,
         case_id,
         1,
         "DONE",
-        detail=f"{len(document_nd.blocks)} content blocks, language={document_nd.language}",
+        detail=(
+            f"{len(document_nd.blocks)} content blocks, "
+            f"{len(reference_rows)} source reference(s), "
+            f"language={document_nd.language}"
+        ),
     )
 
     # --- S2 ----------------------------------------------------------------
