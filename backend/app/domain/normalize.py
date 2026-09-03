@@ -101,9 +101,15 @@ def normalize_ifsc(raw: str) -> str | None:
 def normalize_account(raw: str) -> str | None:
     if not raw:
         return None
-    digits = re.sub(r"\D", "", unicodedata.normalize("NFKC", raw))
+    token = unicodedata.normalize("NFKC", raw).strip()
+    digits = re.sub(r"\D", "", token)
     if 9 <= len(digits) <= 18:
         return digits
+    # Masked corpus identifiers (e.g. XX90857229) are the account numbers as
+    # written in the dataset; dropping them would quarantine every transfer.
+    compact = re.sub(r"[^A-Za-z0-9]", "", token).upper()
+    if re.fullmatch(r"XX\d{6,14}", compact):
+        return compact
     return None
 
 

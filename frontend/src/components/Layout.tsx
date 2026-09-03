@@ -53,6 +53,9 @@ export default function Layout() {
           </button>
         </div>
       </header>
+      <div className="env-banner" role="status">
+        {t("env.banner", lang)}
+      </div>
       <main className="content">
         {/* One screen failing must not take the console down with it. */}
         <ErrorBoundary key={location.pathname}>

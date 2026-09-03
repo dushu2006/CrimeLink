@@ -233,8 +233,12 @@ def test_case_grouping_is_deterministic(corpus: Path):
 def test_relative_root_resolves_against_repo_root():
     from app.config import REPO_ROOT, Settings
 
-    settings = Settings(synthetic_data_root=Path("../CrimeLink_Synthetic_Corpus_v1"))
+    settings = Settings(synthetic_data_root=Path("backend/CrimeLink_Synthetic_Corpus_v1"))
     assert settings.resolved_synthetic_data_root == (
+        REPO_ROOT / "backend/CrimeLink_Synthetic_Corpus_v1"
+    ).resolve()
+    sibling = Settings(synthetic_data_root=Path("../CrimeLink_Synthetic_Corpus_v1"))
+    assert sibling.resolved_synthetic_data_root == (
         REPO_ROOT / "../CrimeLink_Synthetic_Corpus_v1"
     ).resolve()
 
@@ -246,11 +250,15 @@ def test_absolute_root_is_honoured(tmp_path: Path):
     assert settings.resolved_synthetic_data_root == tmp_path.resolve()
 
 
-def test_mode_defaults_to_generate():
-    from app.config import Settings
+def test_mode_defaults_to_external():
+    from app.config import BACKEND_ROOT, Settings
 
-    assert Settings().synthetic_data_mode == "generate"
-    assert Settings(synthetic_data_mode="external").synthetic_data_mode == "external"
+    settings = Settings()
+    assert settings.synthetic_data_mode == "external"
+    assert Settings(synthetic_data_mode="generate").synthetic_data_mode == "generate"
+    assert settings.resolved_synthetic_data_root == (
+        BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"
+    ).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -536,3 +544,239 @@ async def test_admin_ingest_missing_corpus_returns_validation_error(
     )
     assert response.status_code == 422, response.text
     assert str(missing) in response.json()["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# CrimeLink relational corpus mapping (cases.csv → Case records)
+# ---------------------------------------------------------------------------
+
+
+def _make_crimelink_corpus(root: Path) -> Path:
+    """Minimal corpus using the documented CrimeLink_Synthetic_Corpus_v1 headers."""
+    (root / "operational").mkdir(parents=True)
+    (root / "documents").mkdir(parents=True)
+    (root / "metadata").mkdir(parents=True)
+    (root / "ground_truth").mkdir(parents=True)
+
+    (root / "operational" / "cases.csv").write_text(
+        "case_id,case_number,registered_date,case_type,police_station,city,status\n"
+        "C0001,FIR/2026/00001,2026-08-30,VEHICLE_THEFT,PS-10,Warangal,UNDER_REVIEW\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "persons.csv").write_text(
+        "person_id,full_name,gender,dob,address,city,state,status\n"
+        "P0001,Ada Rao,F,,,Warangal,Telangana,ACTIVE\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "phones.csv").write_text(
+        "phone_id,phone_number,owner_person_id,status,source\n"
+        "PH0001,9982796927,P0001,ACTIVE,SYNTHETIC\n"
+        "PH0002,9876543210,P0001,ACTIVE,SYNTHETIC\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "vehicles.csv").write_text(
+        "vehicle_id,registration_number,vehicle_type,owner_person_id,color\n"
+        "V0001,AP49IY3171,TRUCK,P0001,Black\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "accounts.csv").write_text(
+        "account_id,account_number,holder_person_id,bank_code,account_status\n"
+        "AC0001,XX96152165,P0001,PUNB,ACTIVE\n"
+        "AC0002,XX96152166,P0001,PUNB,ACTIVE\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "locations.csv").write_text(
+        "location_id,name,city,state,latitude,longitude\n"
+        "L0001,Warehouse 9,Warangal,Telangana,17.9,79.6\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "organizations.csv").write_text(
+        "organization_id,name,organization_type,city,state\n"
+        "O0001,Bharat Traders 884,TRANSPORT,Warangal,Telangana\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "case_members.csv").write_text(
+        "case_member_id,case_id,person_id,role\n"
+        "CM00001,C0001,P0001,SUBJECT\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "person_organizations.csv").write_text(
+        "person_org_id,person_id,organization_id,role,start_date,end_date\n"
+        "PO00001,P0001,O0001,CONTRACTOR,2025-01-01,\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "cdr.csv").write_text(
+        "cdr_id,timestamp,from_phone_id,to_phone_id,duration_seconds,call_type,cell_location_id,case_id\n"
+        "CDR000001,2025-05-26 16:48:00,PH0001,PH0002,841,VOICE,L0001,C0001\n"
+        "CDR000002,2025-05-26 17:00:00,PH0001,PH0002,60,VOICE,L0001,\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "transactions.csv").write_text(
+        "transaction_id,timestamp,from_account_id,to_account_id,amount_inr,transaction_type,location_id,case_id\n"
+        "TX000001,2025-09-15 21:44:00,AC0001,AC0002,69462.27,CASH_DEPOSIT,L0001,C0001\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "vehicle_sightings.csv").write_text(
+        "sighting_id,vehicle_id,location_id,timestamp,case_id,source\n"
+        "VS000001,V0001,L0001,2025-10-25 19:17:00,C0001,CCTV\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "intelligence_reports.csv").write_text(
+        "report_id,report_date,subject_person_id,location_id,case_id,source_type,summary\n"
+        "IR00001,2024-06-18,P0001,L0001,C0001,SOURCE_REPORT,Field note near Warehouse 9.\n",
+        encoding="utf-8",
+    )
+    (root / "operational" / "documents.csv").write_text(
+        "document_id,case_id,document_type,file_path,language,source_environment\n"
+        "DOC00001,C0001,FIR_NOTE,documents/DOC00001.txt,en,synthetic\n",
+        encoding="utf-8",
+    )
+    (root / "documents" / "DOC00001.txt").write_text(
+        "Case Reference: FIR/2026/00001\n"
+        "Investigation note: Ada Rao was seen near Warehouse 9 with vehicle AP49IY3171.\n",
+        encoding="utf-8",
+    )
+    (root / "ground_truth" / "answers.csv").write_text(
+        "name,aliases\n" + GROUND_TRUTH_MARKER + ",The Answer\n",
+        encoding="utf-8",
+    )
+    (root / "metadata" / "schema.json").write_text("{\"structured_sources\":\"CSV\"}\n", encoding="utf-8")
+    return root
+
+
+def test_crimelink_reference_tables_are_not_uploaded_as_documents(tmp_path: Path):
+    root = _make_crimelink_corpus(tmp_path / "CrimeLink_Synthetic_Corpus_v1")
+    scan = ExternalSyntheticCorpusAdapter(root=root).scan()
+    assert scan.ok, scan.issues
+    by_path = {f.relative_path: f for f in scan.files}
+    assert by_path["operational/cases.csv"].status == "reference"
+    assert by_path["operational/persons.csv"].status == "reference"
+    assert by_path["operational/documents.csv"].status == "reference"
+    assert by_path["operational/case_members.csv"].status == "reference"
+    assert by_path["ground_truth/answers.csv"].status == "excluded"
+    assert by_path["metadata/schema.json"].status == "excluded"
+    assert by_path["documents/DOC00001.txt"].status == "accepted"
+
+
+def test_crimelink_mapped_transactions_parse_through_financial_adapter(tmp_path: Path):
+    from app.pipeline.adapters.financial import FinancialAdapter
+    from app.pipeline.adapters.protocol import DocumentMeta
+    from app.domain.enums import SourceConfidence
+
+    root = _make_crimelink_corpus(tmp_path / "CrimeLink_Synthetic_Corpus_v1")
+    record = next(
+        r
+        for r in ExternalSyntheticCorpusAdapter(root=root).iter_records()
+        if r.filename.endswith("-transactions.csv")
+    )
+    parsed = FinancialAdapter().parse(
+        record.content if isinstance(record.content, bytes) else record.content.encode(),
+        DocumentMeta(
+            doc_id="doc-tx",
+            case_id="case-tx",
+            filename=record.filename,
+            document_type=DocumentType.FINANCIAL,
+            source_confidence=SourceConfidence.SYNTHETIC,
+        ),
+    )
+    assert parsed.blocks
+    assert parsed.blocks[0].data["kind"] == "transfer"
+
+
+def test_crimelink_records_use_dataset_case_numbers(tmp_path: Path):
+    root = _make_crimelink_corpus(tmp_path / "CrimeLink_Synthetic_Corpus_v1")
+    records = list(ExternalSyntheticCorpusAdapter(root=root).iter_records())
+    assert records
+    assert {r.case_number for r in records} == {"FIR/2026/00001"}
+    assert all(r.is_synthetic() for r in records)
+    kinds = {r.filename: r.document_type for r in records}
+    assert kinds["C0001-case-record.txt"] is DocumentType.FIR
+    assert kinds["C0001-persons.csv"] is DocumentType.CRIMINAL_HISTORY
+    assert kinds["C0001-cdr.csv"] is DocumentType.CDR
+    assert kinds["DOC00001.txt"] is DocumentType.FIR
+    # Empty case_id CDR row is attached via phone owner → case_members.
+    cdr = next(r for r in records if r.filename == "C0001-cdr.csv")
+    assert cdr.metadata.get("row_count") == 2
+    blob = cdr.content.decode() if isinstance(cdr.content, bytes) else cdr.content
+    assert "9982796927" in blob
+    assert GROUND_TRUTH_MARKER not in "".join(
+        (r.content.decode() if isinstance(r.content, bytes) else r.content) for r in records
+    )
+
+
+async def test_crimelink_ingest_creates_dataset_cases(db, container, tmp_path: Path):
+    from sqlalchemy import select
+
+    from app.db.models import Case, CaseDocument
+    from app.synthetic_corpus.external import ingest_external_corpus
+
+    root = _make_crimelink_corpus(tmp_path / "CrimeLink_Synthetic_Corpus_v1")
+    report = await ingest_external_corpus(root=root)
+    assert report.failed == 0, report.to_dict()
+    assert "FIR/2026/00001" in report.cases
+    assert report.uploaded >= 4
+
+    container.broker.drain()
+
+    case = (
+        await db.execute(select(Case).where(Case.case_number == "FIR/2026/00001"))
+    ).scalar_one()
+    assert case.jurisdiction_id == "SYN-DEV"
+    assert case.title.startswith("[SYNTHETIC]")
+    assert "VEHICLE_THEFT" in case.title
+
+    filenames = {
+        row[0]
+        for row in (
+            await db.execute(select(CaseDocument.filename).where(CaseDocument.case_id == case.id))
+        ).all()
+    }
+    assert "answers.csv" not in filenames
+    assert "DOC00001.txt" in filenames
+    assert "C0001-cdr.csv" in filenames
+
+    graph = container.graph_store.snapshot(case.id)
+    assert graph.nodes
+    dumped = json.dumps({k: n.properties for k, n in graph.nodes.items()}, default=str)
+    assert GROUND_TRUTH_MARKER not in dumped
+    assert graph.edges_by_type("CALLED")
+
+    second = await ingest_external_corpus(root=root)
+    assert second.uploaded == 0, second.to_dict()
+    assert second.duplicates == report.uploaded
+
+
+def test_local_dataset_is_detected_when_present():
+    from app.config import BACKEND_ROOT
+
+    root = BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"
+    if not (root / "operational").is_dir() or not (root / "documents").is_dir():
+        pytest.skip("local dataset is not present in this environment")
+    scan = ExternalSyntheticCorpusAdapter(root=root).scan()
+    assert scan.ok, scan.issues
+    summary = scan.summary()
+    assert summary["operational_files"] >= 14
+    assert summary["document_files"] >= 1
+    assert summary["ground_truth_excluded"] is True
+    assert "cases.csv" in summary["schema_tables"]
+    assert not any(f.relative_path.startswith("ground_truth") for f in scan.accepted)
+    records = list(ExternalSyntheticCorpusAdapter(root=root).records_from_scan(scan))
+    assert records
+    assert all(r.case_number.startswith("FIR/") for r in records)
+    assert all(r.is_synthetic() for r in records)
+    assert {r.metadata.get("external_case_id") for r in records if r.metadata.get("external_case_id")}
+
+
+async def test_admin_synthetic_status_endpoint(client, admin_headers, container):
+    response = client.get("/api/v1/admin/synthetic/status", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert "root" in data
+    assert data["jurisdiction_id"] == "SYN-DEV"
+    assert "scan" in data
+    assert "busy" in data
+
+
+async def test_admin_status_requires_admin(client, viewer_headers):
+    response = client.get("/api/v1/admin/synthetic/status", headers=viewer_headers)
+    assert response.status_code == 403

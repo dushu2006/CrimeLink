@@ -236,6 +236,7 @@ class SyntheticIngestIn(BaseModel):
     seed: int | None = None
     persons: int | None = Field(default=None, ge=1, le=10000)
     cases: int | None = Field(default=None, ge=1, le=1000)
+    wait_seconds: float = Field(default=0, ge=0, le=3600)
     yes_i_am_sure: bool = False
 
 
@@ -257,6 +258,16 @@ async def synthetic_adapters(
         "synthetic_data_root": str(get_settings().resolved_synthetic_data_root),
         "items": items,
     }
+
+
+@router.get("/synthetic/status")
+async def synthetic_status(
+    principal: Principal = Depends(require_roles("ADMIN")),
+) -> dict:
+    """Live dataset detection and ingestion progress. Never invents counts."""
+    from app.synthetic_corpus.external import corpus_status
+
+    return await corpus_status(container=_container())
 
 
 @router.get("/synthetic/external/preview")
@@ -321,6 +332,12 @@ async def synthetic_ingest(
             )
         except (ExternalCorpusError, RuntimeError) as exc:
             raise ValidationFailedError(str(exc)) from exc
+        if payload.wait_seconds and report.uploaded:
+            from app.synthetic_corpus.external import await_pipeline_quiet
+
+            report.pipeline = await await_pipeline_quiet(
+                _container(), report, timeout_seconds=payload.wait_seconds
+            )
         return report.to_dict()
     if mode == "generate":
         from app.synthetic_corpus.generate import CorpusOptions, generate_corpus

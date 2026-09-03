@@ -18,8 +18,8 @@ Generation is explicit::
     python -m app.synthetic_corpus.generate --clear  # remove all synthetic records
     python -m app.synthetic_corpus.generate --seed 42
 
-An *external* corpus on disk (e.g. the sibling ``../CrimeLink_Synthetic_Corpus_v1``
-checkout) is ingested just as explicitly — see :mod:`app.synthetic_corpus.external`::
+An *external* corpus on disk (default ``backend/CrimeLink_Synthetic_Corpus_v1``)
+is ingested just as explicitly — see :mod:`app.synthetic_corpus.external`::
 
     python -m app.synthetic_corpus.external          # ingest CRIMELINK_SYNTHETIC_DATA_ROOT
     python -m app.synthetic_corpus.external --dry-run  # validate/classify only

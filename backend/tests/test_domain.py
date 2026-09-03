@@ -87,6 +87,8 @@ def test_plate_normalisation_is_uppercase_and_compact():
 def test_ifsc_and_account_normalisation():
     assert normalize_ifsc("sbin0001234") == "SBIN0001234"
     assert normalize_account("5010-0234-5678-90") == "50100234567890"
+    assert normalize_account("XX90857229") == "XX90857229"
+    assert normalize_account("short") is None
 
 
 @pytest.mark.parametrize(

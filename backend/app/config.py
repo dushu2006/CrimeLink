@@ -185,19 +185,21 @@ class Settings(BaseSettings):
 
     # ---------------------------------------------- external synthetic corpus
     # Where synthetic development data comes from:
-    #   "generate" -> the deterministic in-process generator (default);
-    #   "external" -> a corpus directory read from the filesystem (e.g.
-    #                 ../CrimeLink_Synthetic_Corpus_v1 as a sibling checkout).
+    #   "generate" -> the deterministic in-process generator;
+    #   "external" -> a corpus directory read from the filesystem.
+    # Development default is the local dataset at
+    # ``backend/CrimeLink_Synthetic_Corpus_v1``.  The in-process generator
+    # remains available via ``CRIMELINK_SYNTHETIC_DATA_MODE=generate``.
     # Nothing is ingested at startup either way; ingestion is always an
-    # explicit operator action (CLI or POST /api/v1/admin/synthetic/ingest).
-    synthetic_data_mode: Literal["generate", "external"] = "generate"
+    # explicit operator action (UI, CLI, or POST /api/v1/admin/synthetic/ingest).
+    synthetic_data_mode: Literal["generate", "external"] = "external"
     # Root of the external corpus. Absolute paths are honoured verbatim;
-    # relative paths resolve against the CrimeLink repository root, so the
-    # documented sibling layout works with `../CrimeLink_Synthetic_Corpus_v1`.
+    # relative paths resolve against the CrimeLink repository root.
+    # Default: backend/CrimeLink_Synthetic_Corpus_v1 (gitignored local dataset).
     # Only `operational/` and `documents/` under this root are ingestion
     # sources; `ground_truth/` and `metadata/` are never operational input.
     synthetic_data_root: Path = Field(
-        default=REPO_ROOT.parent / "CrimeLink_Synthetic_Corpus_v1"
+        default=BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"
     )
 
     # ------------------------------------------------------ entity resolution
@@ -299,10 +301,10 @@ class Settings(BaseSettings):
 
         Absolute ``synthetic_data_root`` values are honoured verbatim;
         relative values resolve against the repository root so that
-        ``../CrimeLink_Synthetic_Corpus_v1`` means "the sibling directory
-        of the CrimeLink checkout" regardless of the operator's cwd.  The
-        directory is *not* required to exist — the external-corpus adapter
-        reports a clear error when it is missing.
+        ``backend/CrimeLink_Synthetic_Corpus_v1`` is the local gitignored
+        dataset regardless of the operator's cwd.  The directory is *not*
+        required to exist — the external-corpus adapter reports a clear
+        error when it is missing.
         """
         root = Path(self.synthetic_data_root).expanduser()
         if not root.is_absolute():

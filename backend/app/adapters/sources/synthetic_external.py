@@ -1,8 +1,8 @@
 """External synthetic corpus — a filesystem dataset wrapped as a SourceAdapter.
 
 This adapter turns a checked-out *external* synthetic corpus (for example the
-``CrimeLink_Synthetic_Corpus_v1`` directory that lives next to the CrimeLink
-checkout) into :class:`SourceRecord` objects, so the dataset enters CrimeLink
+``CrimeLink_Synthetic_Corpus_v1`` directory under ``backend/``) into
+:class:`SourceRecord` objects, so the dataset enters CrimeLink
 through exactly the same six-stage ingestion pipeline as every other source:
 
     external corpus → source adapter → upload_document → six-stage pipeline
@@ -69,6 +69,25 @@ NEVER_INGEST_COMPONENTS = frozenset({"groundtruth", "metadata", "evaluation"})
 # these files are investigation records.
 IGNORED_ROOT_DOCUMENTS = frozenset({"readme", "schema", "license", "changelog"})
 
+# Relational tables that describe the corpus but are not themselves uploaded
+# as investigation documents.  They are used to create Case rows and to route
+# other files; ingesting them as FIR/CSV blobs would collapse 36 cases into
+# one document.
+REFERENCE_TABLES = frozenset(
+    {
+        "cases.csv",
+        "case_members.csv",
+        "documents.csv",
+        "person_organizations.csv",
+        "persons.csv",
+        "phones.csv",
+        "vehicles.csv",
+        "accounts.csv",
+        "locations.csv",
+        "organizations.csv",
+    }
+)
+
 CASE_GROUP_FALLBACK = "CORPUS"  # root name is used instead when it is known
 
 _TEXT_EXTENSIONS = {".txt", ".md", ".text"}
@@ -116,7 +135,7 @@ class DiscoveredFile:
     section: str | None           # "operational" | "documents" | None (ignored root file)
     size_bytes: int
     sha256: str | None            # None when the file could not be read
-    status: str                   # "accepted" | "unsupported" | "unreadable" | "excluded" | "ignored"
+    status: str                   # "accepted" | "unsupported" | "unreadable" | "excluded" | "ignored" | "reference"
     document_type: DocumentType | None = None
     case_key: str | None = None   # directory grouping used for case assignment
     reason: str | None = None
@@ -146,12 +165,34 @@ class CorpusScan:
         counts: dict[str, int] = {}
         for f in self.files:
             counts[f.status] = counts.get(f.status, 0) + 1
+        operational = [f for f in self.files if f.section == OPERATIONAL_DIR]
+        documents = [f for f in self.files if f.section == DOCUMENTS_DIR]
         return {
             "root": str(self.root),
+            "dataset_name": self.root.name,
             "ok": self.ok,
             "issues": list(self.issues),
             "warnings": list(self.warnings),
             "counts": counts,
+            "files_discovered": len(self.files),
+            "operational_files": len(operational),
+            "document_files": len(documents),
+            "accepted_files": len(self.accepted),
+            "reference_files": len(self.by_status("reference")),
+            "excluded_evaluation_files": len(self.by_status("excluded")),
+            "unsupported_files": len(self.by_status("unsupported"))
+            + len(self.by_status("unreadable")),
+            "ground_truth_excluded": any(
+                "ground_truth" in f.relative_path.replace("\\", "/")
+                for f in self.files
+            ),
+            "schema_tables": sorted(
+                {
+                    Path(f.relative_path).name
+                    for f in operational
+                    if f.path.suffix.lower() == ".csv"
+                }
+            ),
         }
 
 
@@ -188,6 +229,182 @@ def _sanitize_group(raw: str) -> str:
 
     cleaned = re.sub(r"[^A-Za-z0-9]+", "-", str(raw)).strip("-").upper()
     return (cleaned or CASE_GROUP_FALLBACK)[:100]
+
+
+def _is_crimelink_relational_corpus(scan: CorpusScan) -> bool:
+    """True when operational/ contains the documented cases + persons tables."""
+    names = {
+        Path(entry.relative_path).name.lower()
+        for entry in scan.files
+        if entry.section == OPERATIONAL_DIR
+    }
+    return "cases.csv" in names and "persons.csv" in names
+
+
+def _load_operational_tables(scan: CorpusScan) -> dict[str, list[dict[str, str]]]:
+    """Read every operational CSV, including reference tables."""
+    tables: dict[str, list[dict[str, str]]] = {}
+    for entry in scan.files:
+        if entry.section != OPERATIONAL_DIR:
+            continue
+        if entry.status in {"excluded", "unreadable"}:
+            continue
+        if entry.path.suffix.lower() != ".csv":
+            continue
+        try:
+            with entry.path.open(newline="", encoding="utf-8-sig") as handle:
+                tables[entry.path.name.lower()] = [
+                    {str(k): (v or "").strip() for k, v in row.items() if k}
+                    for row in csv.DictReader(handle)
+                ]
+        except (OSError, UnicodeError, csv.Error):
+            continue
+    return tables
+
+
+def _map_case_status(raw: str) -> str:
+    value = (raw or "OPEN").strip().upper().replace(" ", "_")
+    if value in {"OPEN", "UNDER_REVIEW", "CLOSED"}:
+        return value
+    return "OPEN"
+
+
+def _synthetic_case_title(row: dict[str, str]) -> str:
+    kind = (row.get("case_type") or "CASE").strip() or "CASE"
+    station = (row.get("police_station") or "").strip()
+    city = (row.get("city") or "").strip()
+    where = ", ".join(part for part in (station, city) if part)
+    label = f"{kind} — {where}" if where else kind
+    return f"[SYNTHETIC] {label}"
+
+
+def _document_type_from_manifest(raw: str) -> DocumentType:
+    value = (raw or "").strip().upper().replace("-", "_")
+    if value in {"INTEL", "INTELLIGENCE"}:
+        return DocumentType.INTEL
+    if value in {"CDR"}:
+        return DocumentType.CDR
+    if value in {"FINANCIAL", "BANK"}:
+        return DocumentType.FINANCIAL
+    if value in {"SURVEILLANCE"}:
+        return DocumentType.SURVEILLANCE
+    if value in {"CRIMINAL_HISTORY"}:
+        return DocumentType.CRIMINAL_HISTORY
+    return DocumentType.FIR
+
+
+def _person_history_rows(
+    case_row: dict[str, str],
+    members: list[dict[str, str]],
+    person_by_id: dict[str, dict[str, str]],
+    phones_by_person: dict[str, list[dict[str, str]]],
+    vehicles_by_person: dict[str, list[dict[str, str]]],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for member in members:
+        person = person_by_id.get(member.get("person_id", ""))
+        if not person or not person.get("full_name"):
+            continue
+        phones = phones_by_person.get(person["person_id"], [])
+        vehicles = vehicles_by_person.get(person["person_id"], [])
+        address = ", ".join(
+            part for part in (person.get("address"), person.get("city"), person.get("state")) if part
+        )
+        rows.append(
+            {
+                "name": person.get("full_name", ""),
+                "aliases": "",
+                "role": member.get("role") or person.get("status") or "",
+                "case_ref": case_row.get("case_number", ""),
+                "case_date": case_row.get("registered_date", ""),
+                "phone": phones[0].get("phone_number", "") if phones else "",
+                "plate": vehicles[0].get("registration_number", "") if vehicles else "",
+                "address": address,
+            }
+        )
+    return rows
+
+
+def _render_case_overview(
+    case_row: dict[str, str],
+    members: list[dict[str, str]],
+    person_by_id: dict[str, dict[str, str]],
+    phones_by_person: dict[str, list[dict[str, str]]],
+    vehicles_by_person: dict[str, list[dict[str, str]]],
+    orgs_by_person: dict[str, list[dict[str, str]]],
+    org_by_id: dict[str, dict[str, str]],
+) -> str:
+    lines = [
+        "[SYNTHETIC DEVELOPMENT RECORD]",
+        f"Case Number: {case_row.get('case_number', '')}",
+        f"Type: {case_row.get('case_type', '')}",
+        f"Police Station: {case_row.get('police_station', '')}",
+        f"City: {case_row.get('city', '')}",
+        f"Registered: {case_row.get('registered_date', '')}",
+        f"Status: {case_row.get('status', '')}",
+        "",
+        "Members:",
+    ]
+    if not members:
+        lines.append("- (none listed in case_members.csv)")
+    for member in members:
+        person = person_by_id.get(member.get("person_id", ""), {})
+        name = person.get("full_name") or member.get("person_id") or "unknown"
+        role = member.get("role") or ""
+        phones = phones_by_person.get(person.get("person_id", ""), [])
+        vehicles = vehicles_by_person.get(person.get("person_id", ""), [])
+        extras: list[str] = []
+        if phones:
+            extras.append(f"phone {phones[0].get('phone_number', '')}")
+        if vehicles:
+            extras.append(f"vehicle {vehicles[0].get('registration_number', '')}")
+        extra = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"- {name} ({role}){extra}")
+    org_lines: list[str] = []
+    for member in members:
+        pid = member.get("person_id", "")
+        person = person_by_id.get(pid, {})
+        name = person.get("full_name") or pid
+        for link in orgs_by_person.get(pid, []):
+            org = org_by_id.get(link.get("organization_id", ""), {})
+            org_name = org.get("name") or link.get("organization_id") or ""
+            if not org_name:
+                continue
+            role = link.get("role") or "MEMBER"
+            org_lines.append(f"- {name} is {role} at {org_name}")
+    if org_lines:
+        lines.extend(["", "Organizations:"])
+        lines.extend(org_lines)
+    lines.append("")
+    lines.append("This record is synthetic development data, not operational police data.")
+    return "\n".join(lines)
+
+
+def _render_intel(
+    rows: list[dict[str, str]],
+    person_by_id: dict[str, dict[str, str]],
+    location_by_id: dict[str, dict[str, str]],
+) -> str:
+    blocks: list[str] = ["[SYNTHETIC] Intelligence reports"]
+    for row in rows:
+        subject = person_by_id.get(row.get("subject_person_id", ""), {}).get("full_name") or row.get(
+            "subject_person_id", ""
+        )
+        location = location_by_id.get(row.get("location_id", ""), {}).get("name") or row.get(
+            "location_id", ""
+        )
+        blocks.append(
+            "\n".join(
+                [
+                    f"Report {row.get('report_id', '')} ({row.get('report_date', '')})",
+                    f"Subject: {subject}",
+                    f"Location: {location}",
+                    f"Source: {row.get('source_type', '')}",
+                    f"Summary: {row.get('summary', '')}",
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
 
 
 def _read_csv_headers(text: str) -> list[str]:
@@ -241,8 +458,6 @@ def _classify_csv(headers: list[str]) -> tuple[DocumentType | None, str]:
     for filename, expected in _DATASET_TABLE_HEADERS.items():
         normalized_expected = frozenset(re.sub(r"[^a-z0-9]+", "", h) for h in expected)
         if normalized_headers == normalized_expected:
-            if filename == "documents.csv":
-                return None, "operational/documents.csv is a manifest; referenced evidence files are imported from documents/"
             if filename == "cdr.csv":
                 return DocumentType.CDR, "matched CrimeLink corpus CDR table"
             if filename == "transactions.csv":
@@ -380,8 +595,8 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
     ``root`` resolution order: the ``root`` constructor/``iter_records``
     option wins; otherwise ``settings.synthetic_data_root`` is used (relative
-    paths resolve against the CrimeLink repository root, so the documented
-    sibling layout works out of the box).
+    paths resolve against the CrimeLink repository root, so
+    ``backend/CrimeLink_Synthetic_Corpus_v1`` works out of the box).
     """
 
     name: str = "synthetic_external"
@@ -418,7 +633,7 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             result.issues.append(
                 f"External synthetic corpus root does not exist: {resolved}. "
                 "Set CRIMELINK_SYNTHETIC_DATA_ROOT to the corpus directory "
-                "(e.g. ../CrimeLink_Synthetic_Corpus_v1 relative to the repo)."
+                "(e.g. backend/CrimeLink_Synthetic_Corpus_v1 relative to the repo)."
             )
             return result
         if not resolved.is_dir():
@@ -514,6 +729,15 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             )
         digest = hashlib.sha256(raw).hexdigest()
 
+        if file_path.name.lower() in REFERENCE_TABLES:
+            return self._entry(
+                file_path, relative, top, size, digest, "reference",
+                reason=(
+                    "CrimeLink corpus reference table; used to create cases and "
+                    "route records, not ingested as a document"
+                ),
+            )
+
         ext = file_path.suffix.lower()
         if ext not in _SUPPORTED_EXTENSIONS:
             return self._entry(
@@ -580,6 +804,9 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
     def records_from_scan(self, scan: CorpusScan) -> Iterator[SourceRecord]:
         """Yield one :class:`SourceRecord` per accepted file of a prior scan."""
+        if _is_crimelink_relational_corpus(scan):
+            yield from self._records_from_crimelink_corpus(scan)
+            return
         lookups = self._dataset_lookups(scan)
         for entry in scan.accepted:
             try:
@@ -616,11 +843,412 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                 },
             )
 
+    def _records_from_crimelink_corpus(self, scan: CorpusScan) -> Iterator[SourceRecord]:
+        """Map the documented relational corpus onto per-case pipeline documents.
+
+        Deterministic transformations (not invented data):
+
+        * ``cases.csv`` → one CrimeLink Case per row (case_number as written).
+        * ``documents/*.txt`` → uploaded to the case named in ``documents.csv``.
+        * Event tables (CDR, transactions, sightings, intel) are sliced by
+          ``case_id``. Rows with an empty ``case_id`` are attached to cases of
+          the related person (phone owner / account holder / vehicle owner /
+          subject) via ``case_members.csv``. Unmapped rows are skipped and
+          counted in warnings — they are not assigned to a fabricated case.
+        * ``persons.csv`` is sliced per case via ``case_members.csv`` and
+          joined with owned phones/vehicles so the criminal-history adapter
+          can emit ``USES_PHONE`` / ``OWNS_VEHICLE``.
+        """
+        tables = _load_operational_tables(scan)
+        cases = tables.get("cases.csv", [])
+        if not cases:
+            scan.warnings.append(
+                "CrimeLink corpus tables were detected but cases.csv has no data rows."
+            )
+            return
+
+        person_by_id = {r.get("person_id", ""): r for r in tables.get("persons.csv", []) if r.get("person_id")}
+        phone_by_id = {r.get("phone_id", ""): r for r in tables.get("phones.csv", []) if r.get("phone_id")}
+        account_by_id = {r.get("account_id", ""): r for r in tables.get("accounts.csv", []) if r.get("account_id")}
+        vehicle_by_id = {r.get("vehicle_id", ""): r for r in tables.get("vehicles.csv", []) if r.get("vehicle_id")}
+        location_by_id = {r.get("location_id", ""): r for r in tables.get("locations.csv", []) if r.get("location_id")}
+        org_by_id = {r.get("organization_id", ""): r for r in tables.get("organizations.csv", []) if r.get("organization_id")}
+
+        phones_by_person: dict[str, list[dict[str, str]]] = {}
+        for row in phone_by_id.values():
+            owner = row.get("owner_person_id", "")
+            if owner:
+                phones_by_person.setdefault(owner, []).append(row)
+        vehicles_by_person: dict[str, list[dict[str, str]]] = {}
+        for row in vehicle_by_id.values():
+            owner = row.get("owner_person_id", "")
+            if owner:
+                vehicles_by_person.setdefault(owner, []).append(row)
+        accounts_by_person: dict[str, list[dict[str, str]]] = {}
+        for row in account_by_id.values():
+            owner = row.get("holder_person_id", "")
+            if owner:
+                accounts_by_person.setdefault(owner, []).append(row)
+
+        members_by_case: dict[str, list[dict[str, str]]] = {}
+        members_by_person: dict[str, set[str]] = {}
+        for row in tables.get("case_members.csv", []):
+            cid, pid = row.get("case_id", ""), row.get("person_id", "")
+            if not cid or not pid:
+                continue
+            members_by_case.setdefault(cid, []).append(row)
+            members_by_person.setdefault(pid, set()).add(cid)
+
+        orgs_by_person: dict[str, list[dict[str, str]]] = {}
+        for row in tables.get("person_organizations.csv", []):
+            pid = row.get("person_id", "")
+            if pid:
+                orgs_by_person.setdefault(pid, []).append(row)
+
+        case_by_id: dict[str, dict[str, str]] = {}
+        for row in cases:
+            cid = row.get("case_id", "")
+            number = row.get("case_number", "")
+            if not cid or not number:
+                scan.warnings.append(
+                    f"Skipping cases.csv row with missing case_id/case_number: {row}"
+                )
+                continue
+            case_by_id[cid] = row
+
+        known_cases = set(case_by_id)
+
+        def cases_for_people(person_ids: list[str]) -> set[str]:
+            out: set[str] = set()
+            for pid in person_ids:
+                out.update(members_by_person.get(pid, ()))
+            return out & known_cases
+
+        def attach(row: dict[str, str], *person_ids: str) -> set[str]:
+            cid = (row.get("case_id") or "").strip()
+            if cid:
+                return {cid} if cid in known_cases else set()
+            return cases_for_people([p for p in person_ids if p])
+
+        unmapped = {"cdr": 0, "transactions": 0, "vehicle_sightings": 0, "intelligence_reports": 0}
+
+        cdr_by_case: dict[str, list[dict[str, str]]] = {}
+        for row in tables.get("cdr.csv", []):
+            owners = [
+                phone_by_id.get(row.get("from_phone_id", ""), {}).get("owner_person_id", ""),
+                phone_by_id.get(row.get("to_phone_id", ""), {}).get("owner_person_id", ""),
+            ]
+            targets = attach(row, *owners)
+            if not targets:
+                unmapped["cdr"] += 1
+                continue
+            for cid in targets:
+                cdr_by_case.setdefault(cid, []).append(row)
+
+        tx_by_case: dict[str, list[dict[str, str]]] = {}
+        for row in tables.get("transactions.csv", []):
+            holders = [
+                account_by_id.get(row.get("from_account_id", ""), {}).get("holder_person_id", ""),
+                account_by_id.get(row.get("to_account_id", ""), {}).get("holder_person_id", ""),
+            ]
+            targets = attach(row, *holders)
+            if not targets:
+                unmapped["transactions"] += 1
+                continue
+            for cid in targets:
+                tx_by_case.setdefault(cid, []).append(row)
+
+        sight_by_case: dict[str, list[dict[str, str]]] = {}
+        for row in tables.get("vehicle_sightings.csv", []):
+            owner = vehicle_by_id.get(row.get("vehicle_id", ""), {}).get("owner_person_id", "")
+            targets = attach(row, owner)
+            if not targets:
+                unmapped["vehicle_sightings"] += 1
+                continue
+            for cid in targets:
+                sight_by_case.setdefault(cid, []).append(row)
+
+        intel_by_case: dict[str, list[dict[str, str]]] = {}
+        for row in tables.get("intelligence_reports.csv", []):
+            targets = attach(row, row.get("subject_person_id", ""))
+            if not targets:
+                unmapped["intelligence_reports"] += 1
+                continue
+            for cid in targets:
+                intel_by_case.setdefault(cid, []).append(row)
+
+        for kind, count in unmapped.items():
+            if count:
+                scan.warnings.append(
+                    f"{count} {kind} row(s) had no resolvable case_id and were not imported."
+                )
+
+        doc_manifest = {
+            (r.get("file_path") or "").replace("\\", "/"): r
+            for r in tables.get("documents.csv", [])
+            if r.get("file_path")
+        }
+        doc_by_id = {
+            r.get("document_id", ""): r
+            for r in tables.get("documents.csv", [])
+            if r.get("document_id")
+        }
+
+        for cid, case_row in case_by_id.items():
+            number = case_row["case_number"]
+            title = _synthetic_case_title(case_row)
+            status = _map_case_status(case_row.get("status", ""))
+            meta_base = {
+                "synthetic": True,
+                "synthetic_data_mode": "external",
+                "corpus_root": scan.root.name,
+                "case_key": cid,
+                "case_title": title,
+                "case_status": status,
+                "case_type": case_row.get("case_type", ""),
+                "external_case_id": cid,
+            }
+
+            # Case overview rendered from structured columns — not invented.
+            overview = _render_case_overview(
+                case_row,
+                members_by_case.get(cid, []),
+                person_by_id,
+                phones_by_person,
+                vehicles_by_person,
+                orgs_by_person,
+                org_by_id,
+            )
+            yield self._corpus_record(
+                scan,
+                case_number=number,
+                filename=f"{cid}-case-record.txt",
+                document_type=DocumentType.FIR,
+                content=overview.encode("utf-8"),
+                content_type="text/plain",
+                relative_path=f"operational/cases.csv#{cid}",
+                extra={**meta_base, "row_count": 1, "classification": "cases.csv row rendered as case record"},
+            )
+
+            history_rows = _person_history_rows(
+                case_row,
+                members_by_case.get(cid, []),
+                person_by_id,
+                phones_by_person,
+                vehicles_by_person,
+            )
+            if history_rows:
+                fields = ["name", "aliases", "role", "case_ref", "case_date", "phone", "plate", "address"]
+                yield self._corpus_record(
+                    scan,
+                    case_number=number,
+                    filename=f"{cid}-persons.csv",
+                    document_type=DocumentType.CRIMINAL_HISTORY,
+                    content=self._csv_bytes(fields, history_rows),
+                    content_type="text/csv",
+                    relative_path=f"operational/persons.csv#{cid}",
+                    extra={**meta_base, "row_count": len(history_rows), "classification": "persons.csv sliced by case_members"},
+                )
+
+            cdr_rows = cdr_by_case.get(cid) or []
+            if cdr_rows:
+                fields = ["calling_number", "called_number", "timestamp", "duration_seconds", "direction", "imei"]
+                output = [
+                    row
+                    for row in (
+                        {
+                            "calling_number": phone_by_id.get(r.get("from_phone_id", ""), {}).get("phone_number", ""),
+                            "called_number": phone_by_id.get(r.get("to_phone_id", ""), {}).get("phone_number", ""),
+                            "timestamp": r.get("timestamp", ""),
+                            "duration_seconds": r.get("duration_seconds", ""),
+                            "direction": r.get("call_type", ""),
+                            "imei": "",
+                        }
+                        for r in cdr_rows
+                    )
+                    if row["calling_number"] and row["called_number"] and row["timestamp"]
+                ]
+                if output:
+                    yield self._corpus_record(
+                    scan,
+                    case_number=number,
+                    filename=f"{cid}-cdr.csv",
+                    document_type=DocumentType.CDR,
+                    content=self._csv_bytes(fields, output),
+                    content_type="text/csv",
+                    relative_path=f"operational/cdr.csv#{cid}",
+                    extra={**meta_base, "row_count": len(output), "classification": "cdr.csv sliced by case"},
+                )
+
+            tx_rows = tx_by_case.get(cid) or []
+            if tx_rows:
+                fields = ["transaction_id", "date", "from_account", "to_account", "amount", "channel", "reference"]
+                output = [
+                    row
+                    for row in (
+                        {
+                            "transaction_id": r.get("transaction_id", ""),
+                            "date": r.get("timestamp", ""),
+                            "from_account": account_by_id.get(r.get("from_account_id", ""), {}).get("account_number", ""),
+                            "to_account": account_by_id.get(r.get("to_account_id", ""), {}).get("account_number", ""),
+                            "amount": r.get("amount_inr", ""),
+                            "channel": r.get("transaction_type", ""),
+                            "reference": r.get("transaction_id", ""),
+                        }
+                        for r in tx_rows
+                    )
+                    if row["from_account"] and row["to_account"] and row["amount"]
+                ]
+                if output:
+                    yield self._corpus_record(
+                    scan,
+                    case_number=number,
+                    filename=f"{cid}-transactions.csv",
+                    document_type=DocumentType.FINANCIAL,
+                    content=self._csv_bytes(fields, output),
+                    content_type="text/csv",
+                    relative_path=f"operational/transactions.csv#{cid}",
+                    extra={**meta_base, "row_count": len(output), "classification": "transactions.csv sliced by case"},
+                )
+
+            sight_rows = sight_by_case.get(cid) or []
+            if sight_rows:
+                fields = ["subject", "observed_at", "location", "vehicle", "remarks"]
+                output = [
+                    row
+                    for row in (
+                        {
+                            "subject": person_by_id.get(
+                                vehicle_by_id.get(r.get("vehicle_id", ""), {}).get("owner_person_id", ""),
+                                {},
+                            ).get("full_name", ""),
+                            "observed_at": r.get("timestamp", ""),
+                            "location": location_by_id.get(r.get("location_id", ""), {}).get("name", ""),
+                            "vehicle": vehicle_by_id.get(r.get("vehicle_id", ""), {}).get("registration_number", ""),
+                            "remarks": r.get("source", ""),
+                        }
+                        for r in sight_rows
+                    )
+                    if row["subject"] and row["observed_at"]
+                ]
+                if not output:
+                    continue
+                yield self._corpus_record(
+                    scan,
+                    case_number=number,
+                    filename=f"{cid}-vehicle-sightings.csv",
+                    document_type=DocumentType.SURVEILLANCE,
+                    content=self._csv_bytes(fields, output),
+                    content_type="text/csv",
+                    relative_path=f"operational/vehicle_sightings.csv#{cid}",
+                    extra={**meta_base, "row_count": len(output), "classification": "vehicle_sightings.csv sliced by case"},
+                )
+
+            intel_rows = intel_by_case.get(cid) or []
+            if intel_rows:
+                text = _render_intel(intel_rows, person_by_id, location_by_id)
+                yield self._corpus_record(
+                    scan,
+                    case_number=number,
+                    filename=f"{cid}-intelligence.txt",
+                    document_type=DocumentType.INTEL,
+                    content=text.encode("utf-8"),
+                    content_type="text/plain",
+                    relative_path=f"operational/intelligence_reports.csv#{cid}",
+                    extra={**meta_base, "row_count": len(intel_rows), "classification": "intelligence_reports.csv sliced by case"},
+                )
+
+        unmatched_docs = 0
+        for entry in scan.accepted:
+            if entry.section != DOCUMENTS_DIR:
+                continue
+            manifest = doc_manifest.get(entry.relative_path) or doc_by_id.get(entry.path.stem)
+            if manifest is None:
+                unmatched_docs += 1
+                continue
+            cid = manifest.get("case_id", "")
+            case_row = case_by_id.get(cid)
+            if case_row is None:
+                unmatched_docs += 1
+                continue
+            try:
+                raw = entry.path.read_bytes()
+            except OSError as exc:
+                raise ExternalCorpusError(
+                    f"Corpus file became unreadable during ingestion: {entry.path} ({exc})"
+                ) from exc
+            dtype = _document_type_from_manifest(manifest.get("document_type", ""))
+            yield self._corpus_record(
+                scan,
+                case_number=case_row["case_number"],
+                filename=entry.path.name,
+                document_type=dtype,
+                content=raw,
+                content_type=_CONTENT_TYPES.get(entry.path.suffix.lower(), "text/plain"),
+                relative_path=entry.relative_path,
+                extra={
+                    "synthetic": True,
+                    "synthetic_data_mode": "external",
+                    "corpus_root": scan.root.name,
+                    "case_key": cid,
+                    "case_title": _synthetic_case_title(case_row),
+                    "case_status": _map_case_status(case_row.get("status", "")),
+                    "case_type": case_row.get("case_type", ""),
+                    "external_case_id": cid,
+                    "sha256": entry.sha256,
+                    "row_count": 1,
+                    "classification": entry.reason or "free-text investigation document",
+                    "language": manifest.get("language") or "en",
+                },
+                language=manifest.get("language") or "en",
+            )
+        if unmatched_docs:
+            scan.warnings.append(
+                f"{unmatched_docs} document file(s) were not listed in documents.csv "
+                "with a valid case_id and were not imported."
+            )
+
+    def _corpus_record(
+        self,
+        scan: CorpusScan,
+        *,
+        case_number: str,
+        filename: str,
+        document_type: DocumentType,
+        content: bytes,
+        content_type: str,
+        relative_path: str,
+        extra: dict[str, Any],
+        language: str = "en",
+    ) -> SourceRecord:
+        digest = hashlib.sha256(content).hexdigest()
+        external_id = hashlib.sha256(f"{relative_path}|{digest}".encode()).hexdigest()[:24]
+        metadata = dict(extra)
+        metadata.setdefault("relative_path", relative_path)
+        metadata.setdefault("section", relative_path.split("/", 1)[0] if "/" in relative_path else OPERATIONAL_DIR)
+        metadata.setdefault("sha256", digest)
+        return SourceRecord(
+            external_id=f"synthetic-external:{external_id}",
+            case_number=case_number,
+            document_type=document_type,
+            filename=filename,
+            content_type=content_type,
+            content=content,
+            source_environment="synthetic",
+            source_confidence=SourceConfidence.SYNTHETIC,
+            language=language,
+            metadata=metadata,
+        )
+
     @staticmethod
     def _dataset_lookups(scan: CorpusScan) -> dict[str, dict[str, str]]:
         """Load reference tables used to normalize the corpus's ID columns."""
         result: dict[str, dict[str, str]] = {}
-        for entry in scan.accepted:
+        for entry in scan.files:
+            if entry.section != OPERATIONAL_DIR:
+                continue
+            if entry.status in {"excluded", "unreadable"}:
+                continue
             if entry.path.suffix.lower() != ".csv":
                 continue
             try:
@@ -653,6 +1281,12 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
         if name not in _DATASET_TABLE_HEADERS:
             return raw, _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
         text = raw.decode("utf-8-sig", errors="replace")
+        headers = _read_csv_headers(text)
+        expected = _DATASET_TABLE_HEADERS[name]
+        normalized_headers = frozenset(re.sub(r"[^a-z0-9]+", "", h.lower()) for h in headers)
+        normalized_expected = frozenset(re.sub(r"[^a-z0-9]+", "", h) for h in expected)
+        if normalized_headers != normalized_expected:
+            return raw, _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
         rows = list(csv.DictReader(io.StringIO(text)))
         person = lookups.get("person", {})
         phone = lookups.get("phone", {})
