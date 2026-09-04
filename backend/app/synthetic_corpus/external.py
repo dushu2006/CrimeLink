@@ -281,6 +281,21 @@ async def ingest_external_corpus(
     container = container or get_container()
     user_id = await _ensure_system_user()
 
+    # Restart safety: a previous run may have died with documents left PENDING,
+    # PROCESSING or mid-retry FAILED.  Re-running the ingest is idempotent for
+    # the upload half (case+hash uniqueness skips duplicates) but the pipeline
+    # half needs an explicit nudge, so every ingest run first re-queues stale
+    # documents through the current process's broker before uploading anything.
+    from app.services.documents import requeue_stale_documents
+
+    requeued = await requeue_stale_documents(container=container)
+    if requeued["requeued_count"]:
+        log.info(
+            "synthetic.external.resumed_stale",
+            count=requeued["requeued_count"],
+            skipped_running=requeued["skipped_running"],
+        )
+
     # Rows the adapter could read but could not attach to a case are recorded
     # before any document is uploaded, so a run that is interrupted still
     # leaves an auditable account of what was skipped and why.
@@ -469,13 +484,14 @@ async def corpus_status(container: Any | None = None) -> dict[str, Any]:
 
     Counts come from the application database and graph — never hardcoded.
     """
-    from sqlalchemy import func, select
+    from sqlalchemy import and_, func, or_, select
 
     from app.adapters.sources import get_source_adapter
     from app.container import get_container
-    from app.db.models import Case, CaseDocument, DetectedPattern, EntityResolutionItem
+    from app.db.models import Case, CaseDocument, DetectedPattern, EntityResolutionItem, IngestionJob
     from app.db.session import async_session
-    from app.domain.enums import IngestionStatus, PatternStatus, ResolutionStatus
+    from app.domain.enums import IngestionStatus, JobStatus, PatternStatus, ResolutionStatus
+    from app.pipeline.orchestrator import MAX_RETRIES as PIPELINE_MAX_RETRIES
 
     settings = get_settings()
     container = container or get_container()
@@ -531,14 +547,51 @@ async def corpus_status(container: Any | None = None) -> dict[str, Any]:
             ).scalar()
             or 0
         )
-
-    busy_docs = sum(
-        documents_by_status.get(name, 0)
-        for name in (
-            IngestionStatus.PENDING.value,
-            IngestionStatus.PROCESSING.value,
+        # Stale-but-resumable documents, mirroring the predicate used by
+        # ``documents.requeue_stale_documents``: PENDING or PROCESSING, or
+        # FAILED while retry budget remains, never quarantined/deleted.  A
+        # QUEUED/RUNNING job row only proves liveness while this process's
+        # broker is actually tracking queued/running work; once the broker is
+        # provably idle (a crash/restart), those rows are orphans of the dead
+        # process and their documents are resumable.
+        scheduled_job_doc_ids = select(IngestionJob.doc_id).where(
+            IngestionJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING])
         )
-    )
+        stale_where = [
+            Case.jurisdiction_id == JURISDICTION_ID,
+            CaseDocument.is_deleted.is_(False),
+            CaseDocument.quarantined.is_(False),
+            or_(
+                CaseDocument.ingestion_status.in_(
+                    [
+                        IngestionStatus.PENDING.value,
+                        IngestionStatus.PROCESSING.value,
+                    ]
+                ),
+                and_(
+                    CaseDocument.ingestion_status == IngestionStatus.FAILED.value,
+                    or_(
+                        CaseDocument.retry_count.is_(None),
+                        CaseDocument.retry_count < PIPELINE_MAX_RETRIES,
+                    ),
+                ),
+            ),
+        ]
+        if pending_jobs != 0:
+            # Broker live (or liveness unattestable): a document that still has
+            # a QUEUED/RUNNING job is genuinely scheduled — not stale.
+            stale_where.append(CaseDocument.id.not_in(scheduled_job_doc_ids))
+        stale_documents = int(
+            (
+                await session.execute(
+                    select(func.count(CaseDocument.id))
+                    .join(Case, Case.id == CaseDocument.case_id)
+                    .where(*stale_where)
+                )
+            ).scalar()
+            or 0
+        )
+
     graph: dict[str, Any] = {}
     try:
         graph = container.graph_store.stats()
@@ -546,11 +599,30 @@ async def corpus_status(container: Any | None = None) -> dict[str, Any]:
         graph = {"error": str(exc)}
 
     stage_hint = "Idle"
-    if pending_jobs or busy_docs:
+    if pending_jobs:
         if documents_by_status.get(IngestionStatus.PROCESSING.value):
             stage_hint = "Importing documents / resolving entities / updating graph"
         else:
             stage_hint = "Importing structured data"
+
+    # ``busy`` means work is actually moving: jobs are queued/running in this
+    # process.  A process crash leaves documents PENDING or PROCESSING with an
+    # empty job queue — nothing is moving and nothing ever will until an
+    # operator resumes.  A PROCESSING *document* is not proof of movement (its
+    # job executor died with the process); only the broker's own queued/running
+    # count is.  Surface the crash as ``interrupted`` so the UI can offer
+    # "Resume interrupted processing" instead of spinning forever.
+    active = bool(pending_jobs)
+    # Only resumable work counts as "interrupted".  FAILED documents whose
+    # retry budget is exhausted are terminal (the pipeline quarantines them),
+    # so they are reported as documents_by_status rather than as a run to
+    # resume — resuming would never make progress on them.
+    interrupted = (not active) and stale_documents > 0
+    if interrupted:
+        stage_hint = (
+            f"Interrupted: {stale_documents} document(s) were left unprocessed by a "
+            "previous run — use Resume to continue where it stopped."
+        )
 
     return {
         "mode": settings.synthetic_data_mode,
@@ -566,7 +638,9 @@ async def corpus_status(container: Any | None = None) -> dict[str, Any]:
         "pending_matches": pending_matches,
         "new_patterns": new_patterns,
         "graph": graph,
-        "busy": bool(pending_jobs) or busy_docs > 0,
+        "busy": active,
+        "interrupted": interrupted,
+        "stale_documents": stale_documents,
         "stage_hint": stage_hint,
     }
 

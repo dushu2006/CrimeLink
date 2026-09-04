@@ -52,21 +52,27 @@ export default function Review() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  // Fetch only the data the visible tab renders.  Loading both lists on every
+  // mount made a single Review visit issue two requests (four in dev under
+  // StrictMode) and helped exhaust the server rate limiter; the hidden tab's
+  // list is fetched lazily when the investigator switches to it.
   const load = useCallback(() => {
     setError(null);
-    Promise.all([
+    if (tab === "identity") {
       api<{ items: MatchItem[]; sla: { breached?: number; total?: number } }>(
         `/resolution?case_id=${caseId}&limit=200`,
-      ),
-      api<{ items: PatternItem[] }>(`/patterns?case_id=${caseId}&limit=200`),
-    ])
-      .then(([matchData, patternData]) => {
-        setMatches(matchData.items);
-        setSla(matchData.sla ?? null);
-        setPatterns(patternData.items);
-      })
-      .catch((err: Error) => setError(err.message));
-  }, [caseId]);
+      )
+        .then((matchData) => {
+          setMatches(matchData.items);
+          setSla(matchData.sla ?? null);
+        })
+        .catch((err: Error) => setError(err.message));
+    } else {
+      api<{ items: PatternItem[] }>(`/patterns?case_id=${caseId}&limit=200`)
+        .then((patternData) => setPatterns(patternData.items))
+        .catch((err: Error) => setError(err.message));
+    }
+  }, [caseId, tab]);
 
   useEffect(load, [load]);
 
@@ -89,7 +95,10 @@ export default function Review() {
     }
   }
 
-  if (error && !matches) return <ErrorState message={error} onRetry={load} />;
+  if (error) {
+    if (tab === "identity" && !matches) return <ErrorState message={error} onRetry={load} />;
+    if (tab === "patterns" && !patterns) return <ErrorState message={error} onRetry={load} />;
+  }
 
   return (
     <div className="page">

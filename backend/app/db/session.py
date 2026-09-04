@@ -7,11 +7,13 @@ Both point at the same database and the same models, and both are created from
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -189,9 +191,146 @@ async def init_db() -> None:
     engine = get_async_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if settings.effective_relational_backend == "sqlite":
+            # ``create_all`` creates missing *tables* but never adds a column
+            # to a table that already exists.  A database created by an earlier
+            # build therefore drifts whenever a model gains a column (PR #7
+            # added ``case_documents.source_metadata``), and every full-entity
+            # SELECT then fails with "no such column".  Mirror the Alembic
+            # migrations the production profile runs so an embedded database
+            # is brought up to date without losing its data.
+            added = await conn.run_sync(sync_sqlite_columns, Base.metadata)
+            for table_name, column_name in added:
+                log.warning(
+                    "db.sqlite_column_added",
+                    table=table_name,
+                    column=column_name,
+                    reason="model is newer than the existing SQLite schema",
+                )
     if settings.effective_relational_backend == "postgres":
         await _bootstrap_postgres(engine)
     log.info("db.ready", backend=settings.effective_relational_backend, url=_redact(async_url()))
+
+
+# --------------------------------------------------------------------------- #
+# Embedded-profile schema upkeep
+# --------------------------------------------------------------------------- #
+
+_SQLITE_DIALECT = sqlite_dialect.dialect()
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _scalar_default_literal(column: Any) -> str | None:
+    """SQL literal for a static column default, when one exists.
+
+    Only *static* defaults can be expressed in ``ALTER TABLE ... ADD COLUMN``:
+    a ``server_default`` of raw SQL text (e.g. ``sa.text("'{}'")``) or a plain
+    Python scalar.  Callable defaults (``datetime``/``uuid`` factories, ``dict``)
+    cannot be evaluated here; the caller falls back to a nullable add plus a
+    Python-side backfill.
+    """
+    server_default = column.server_default
+    if server_default is not None:
+        arg = server_default.arg
+        if isinstance(arg, bool):
+            return "1" if arg else "0"
+        if isinstance(arg, (int, float)):
+            return repr(arg)
+        if isinstance(arg, str):
+            # Raw SQL already carries its own quoting (``sa.text("'{}'")``).
+            return arg
+        return None
+
+    default = column.default
+    if default is None or getattr(default, "is_callable", False):
+        return None
+    arg = default.arg
+    if isinstance(arg, bool):
+        return "1" if arg else "0"
+    if isinstance(arg, (int, float)):
+        return repr(arg)
+    if isinstance(arg, str):
+        return "'" + arg.replace("'", "''") + "'"
+    return None
+
+
+def _backfill_value(column: Any) -> Any:
+    """Python-side default for rows that predate the new column, else None.
+
+    SQLAlchemy wraps plain callables (``dict``, ``datetime`` factories) in a
+    context-taking lambda; the original callable is preserved on ``__wrapped__``,
+    so evaluating it reproduces exactly what an ORM insert would store.
+    """
+    default = column.default
+    if default is None:
+        return None
+    if getattr(default, "is_callable", False):
+        callable_default = getattr(default.arg, "__wrapped__", default.arg)
+        try:
+            return callable_default()
+        except Exception:  # noqa: BLE001 - a retrofit must never fail on default evaluation
+            return None
+    return default.arg
+
+
+def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]:
+    """Add model columns missing from existing SQLite tables.
+
+    Returns the ``(table, column)`` pairs that were added.  Additions are
+    strictly additive and never drop or rewrite data.  New tables created by
+    ``create_all`` are skipped because they already carry every column.
+
+    SQLite cannot add a ``NOT NULL`` column to a populated table without a
+    static default, so a retrofit column whose default is Python-side is added
+    nullable and then backfilled — the same choice the ``source_metadata``
+    Alembic migration makes (``nullable=True`` + ``UPDATE ... SET '{}'``).  The
+    ORM always supplies a value for new rows, so reads and writes behave
+    identically either way.
+    """
+    inspector = inspect(connection)
+    existing_tables = set(inspector.get_table_names())
+    added: list[tuple[str, str]] = []
+
+    for table in metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        existing_columns = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing_columns:
+                continue
+
+            column_type = column.type.compile(dialect=_SQLITE_DIALECT)
+            default_sql = _scalar_default_literal(column)
+            # SQLite rejects NOT NULL additions without a static default and a
+            # NOT NULL retrofit would also fail on populated tables, so retrofit
+            # columns stay nullable at the storage layer (see module docstring).
+            ddl = (
+                f"ALTER TABLE {_quote_ident(table.name)} ADD COLUMN "
+                f"{_quote_ident(column.name)} {column_type}"
+            )
+            if default_sql is not None:
+                ddl += f" DEFAULT {default_sql}"
+            connection.execute(text(ddl))
+
+            backfill = _backfill_value(column)
+            if backfill is not None:
+                if isinstance(backfill, bool):
+                    backfill = 1 if backfill else 0
+                elif isinstance(backfill, (dict, list)):
+                    backfill = json.dumps(backfill)
+                if isinstance(backfill, (str, int, float)):
+                    connection.execute(
+                        text(
+                            f"UPDATE {_quote_ident(table.name)} "
+                            f"SET {_quote_ident(column.name)} = :value"
+                        ),
+                        {"value": backfill},
+                    )
+            added.append((table.name, column.name))
+    return added
 
 
 async def _bootstrap_postgres(engine: AsyncEngine) -> None:
