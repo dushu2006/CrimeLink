@@ -75,6 +75,8 @@ class AggregatedCandidate:
     staging: bool = False
     extractor: str = "deterministic"
     mentions: int = 0
+    #: Origin coordinates of the first mention that produced this candidate.
+    origin: Any | None = None
 
     @property
     def label(self) -> str:
@@ -172,6 +174,7 @@ class EntityResolver:
                     attributes=dict(entity.attributes),
                     confidence=entity.confidence,
                     text_span=entity.text_span,
+                    origin=entity.origin,
                     staging=entity.staging,
                     extractor=entity.extractor,
                     mentions=1,
@@ -184,6 +187,8 @@ class EntityResolver:
                 existing.display_value = entity.display_value
             if existing.text_span == (0, 0):
                 existing.text_span = entity.text_span
+            if existing.origin is None:
+                existing.origin = entity.origin
             self._merge_attributes(existing.attributes, entity.attributes)
             if entity.extractor == "deterministic":
                 existing.extractor = "deterministic"
@@ -259,6 +264,7 @@ class EntityResolver:
             "source_types": [doc.doc_type.lower()],
             "language": doc.language,
             "text_span": list(candidate.text_span),
+            "origin": candidate.origin.to_dict() if candidate.origin else None,
             "extractor": candidate.extractor,
             "mentions": candidate.mentions,
             "staging": bool(candidate.staging),
@@ -376,6 +382,7 @@ class EntityResolver:
                 "source_doc_ids": [doc.doc_id],
                 "confidence": round(float(relation.confidence), 3),
                 "text_span": list(relation.text_span),
+                "origin": relation.origin.to_dict() if relation.origin else None,
                 "extractor": relation.extractor,
                 "staging": bool(relation.staging),
             }

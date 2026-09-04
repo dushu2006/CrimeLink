@@ -20,7 +20,14 @@ from app.domain.models import Block, NormalizedDocument
 from app.domain.normalize import normalize_account, normalize_ifsc, parse_amount
 from app.errors import PipelineError
 from app.logging import get_logger
-from app.pipeline.adapters.protocol import DocumentMeta, detect_language, pick_column, to_ist_iso
+from app.pipeline.adapters.protocol import (
+    DocumentMeta,
+    detect_language,
+    pick_column,
+    pop_origin,
+    strip_origin_column,
+    to_ist_iso,
+)
 
 log = get_logger("crimelink.adapter.financial")
 
@@ -56,7 +63,7 @@ class FinancialAdapter:
         except csv.Error:
             pass
         reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
-        headers = [h for h in (reader.fieldnames or []) if h]
+        headers = strip_origin_column([h for h in (reader.fieldnames or []) if h])
         if not headers:
             raise PipelineError("The financial file has no header row.")
 
@@ -77,6 +84,7 @@ class FinancialAdapter:
 
         rows = list(reader)
         for index, row in enumerate(rows, start=1):
+            origin = pop_origin(row)
             record = self._record_from_row(row, mapping)
             if record is None:
                 bad_rows += 1
@@ -89,7 +97,7 @@ class FinancialAdapter:
             )
             blocks.append(
                 Block(kind="record", text=rendered, offset=cursor,
-                      data={"kind": "transfer", **record})
+                      data={"kind": "transfer", **record}, origin=origin)
             )
             rendered_rows.append(rendered)
             cursor += len(rendered) + 1

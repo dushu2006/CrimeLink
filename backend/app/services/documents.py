@@ -50,6 +50,7 @@ async def upload_document(
     source_confidence: SourceConfidence = SourceConfidence.UNVERIFIED,
     mime_type: str = "application/octet-stream",
     language_hint: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
 ) -> tuple[CaseDocument, IngestionJob]:
     """Persist the original, record metadata, and enqueue the pipeline."""
     container = container or get_container()
@@ -103,6 +104,7 @@ async def upload_document(
         ingestion_status=IngestionStatus.PENDING,
         source_confidence=source_confidence,
         uploaded_by=principal.id,
+        source_metadata=dict(source_metadata or {}),
     )
     session.add(document)
 

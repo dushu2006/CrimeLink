@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from app.domain.enums import DocumentType, SourceConfidence
+from app.domain.models import ORIGIN_COLUMN, OriginRef
 from app.logging import get_logger
 
 from .protocol import SourceAdapter, SourceRecord
@@ -87,6 +88,11 @@ REFERENCE_TABLES = frozenset(
         "organizations.csv",
     }
 )
+
+# Loader-injected bookkeeping keys.  Prefixed so they can never collide with a
+# real corpus column, and stripped before any row is rendered.
+ROW_NUMBER_KEY = "__crimelink_row__"
+SOURCE_FILE_KEY = "__crimelink_file__"
 
 CASE_GROUP_FALLBACK = "CORPUS"  # root name is used instead when it is known
 
@@ -149,6 +155,10 @@ class CorpusScan:
     issues: list[str] = field(default_factory=list)   # fatal problems
     warnings: list[str] = field(default_factory=list)
     files: list[DiscoveredFile] = field(default_factory=list)
+    #: Rows that were read and understood but could not be attached to a case.
+    #: Kept as data rather than a warning count so the quarantine view can open
+    #: the original record.
+    quarantined: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -253,13 +263,39 @@ def _load_operational_tables(scan: CorpusScan) -> dict[str, list[dict[str, str]]
             continue
         try:
             with entry.path.open(newline="", encoding="utf-8-sig") as handle:
+                # ``index`` starts at 2: line 1 is the header, so the number
+                # recorded here is the line an investigator sees in an editor.
                 tables[entry.path.name.lower()] = [
-                    {str(k): (v or "").strip() for k, v in row.items() if k}
-                    for row in csv.DictReader(handle)
+                    {
+                        **{str(k): (v or "").strip() for k, v in row.items() if k},
+                        ROW_NUMBER_KEY: index,
+                        SOURCE_FILE_KEY: entry.relative_path,
+                    }
+                    for index, row in enumerate(csv.DictReader(handle), start=2)
                 ]
         except (OSError, UnicodeError, csv.Error):
             continue
     return tables
+
+
+def _encode_origin(origin: "OriginRef | None") -> str:
+    return origin.encode() if origin is not None else ""
+
+
+def _origin_for(
+    row: dict[str, str], *, record_id_field: str, fields: list[str]
+) -> OriginRef | None:
+    """Build an :class:`OriginRef` from a corpus row annotated by the loader."""
+    source_file = row.get(SOURCE_FILE_KEY)
+    if not source_file:
+        return None
+    return OriginRef(
+        file=str(source_file),
+        row=row.get(ROW_NUMBER_KEY),
+        record_id=row.get(record_id_field) or None,
+        fields=[f for f in fields if row.get(f)],
+        values={f: row.get(f, "") for f in fields if row.get(f)},
+    )
 
 
 def _map_case_status(raw: str) -> str:
@@ -320,6 +356,15 @@ def _person_history_rows(
                 "phone": phones[0].get("phone_number", "") if phones else "",
                 "plate": vehicles[0].get("registration_number", "") if vehicles else "",
                 "address": address,
+                # The authoritative origin of a person row is persons.csv, not
+                # the case_members join row that selected it.
+                ORIGIN_COLUMN: _encode_origin(
+                    _origin_for(
+                        person,
+                        record_id_field="person_id",
+                        fields=["full_name", "gender", "city", "state", "status"],
+                    )
+                ),
             }
         )
     return rows
@@ -384,8 +429,17 @@ def _render_intel(
     rows: list[dict[str, str]],
     person_by_id: dict[str, dict[str, str]],
     location_by_id: dict[str, dict[str, str]],
-) -> str:
+) -> tuple[str, list[dict[str, Any]]]:
+    """Render intel rows to text, plus the line range each row occupies.
+
+    Free text cannot carry a reserved column, so the origin of each report is
+    returned alongside as ``{line_start, line_end, origin}``.  Line numbers are
+    1-based and inclusive, matching what the source viewer displays.
+    """
+    line_origins: list[dict[str, Any]] = []
     blocks: list[str] = ["[SYNTHETIC] Intelligence reports"]
+    # Block 0 is the header line; blocks are later joined with a blank line.
+    cursor = 1
     for row in rows:
         subject = person_by_id.get(row.get("subject_person_id", ""), {}).get("full_name") or row.get(
             "subject_person_id", ""
@@ -393,18 +447,31 @@ def _render_intel(
         location = location_by_id.get(row.get("location_id", ""), {}).get("name") or row.get(
             "location_id", ""
         )
-        blocks.append(
-            "\n".join(
-                [
-                    f"Report {row.get('report_id', '')} ({row.get('report_date', '')})",
-                    f"Subject: {subject}",
-                    f"Location: {location}",
-                    f"Source: {row.get('source_type', '')}",
-                    f"Summary: {row.get('summary', '')}",
-                ]
-            )
+        rendered = "\n".join(
+            [
+                f"Report {row.get('report_id', '')} ({row.get('report_date', '')})",
+                f"Subject: {subject}",
+                f"Location: {location}",
+                f"Source: {row.get('source_type', '')}",
+                f"Summary: {row.get('summary', '')}",
+            ]
         )
-    return "\n\n".join(blocks)
+        blocks.append(rendered)
+        height = rendered.count("\n") + 1
+        # +1 for the blank separator line that precedes every block after the
+        # header, so `start` is the real line number in the joined document.
+        start = cursor + 1
+        origin = _origin_for(
+            row,
+            record_id_field="report_id",
+            fields=["report_date", "subject_person_id", "location_id", "source_type", "summary"],
+        )
+        if origin is not None:
+            line_origins.append(
+                {"line_start": start, "line_end": start + height - 1, "origin": origin.to_dict()}
+            )
+        cursor = start + height - 1
+    return "\n\n".join(blocks), line_origins
 
 
 def _read_csv_headers(text: str) -> list[str]:
@@ -932,6 +999,62 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
         unmapped = {"cdr": 0, "transactions": 0, "vehicle_sightings": 0, "intelligence_reports": 0}
 
+        def quarantine(
+            row: dict[str, str],
+            *,
+            source_type: str,
+            record_id_field: str,
+            person_ids: tuple[str, ...],
+            subject_field: str,
+        ) -> None:
+            """Record *why* a row could not be routed, instead of dropping it.
+
+            Two very different situations reach here and an investigator needs
+            to tell them apart: a row whose subject is simply not party to any
+            case (ordinary background population in this corpus), and a row
+            whose subject could not be looked up at all (a referential gap that
+            would be a genuine data-quality defect).
+            """
+            unmapped[source_type] = unmapped.get(source_type, 0) + 1
+
+            declared = (row.get("case_id") or "").strip()
+            if declared:
+                reason_code = "unknown_case_id"
+                reason = (
+                    f"Row names case_id {declared!r}, which does not exist in "
+                    "operational/cases.csv."
+                )
+            elif not any(person_ids):
+                reason_code = "unresolvable_subject"
+                reason = (
+                    f"No {subject_field} could be resolved for this row, so it "
+                    "cannot be attached to a case through case membership."
+                )
+            else:
+                reason_code = "subject_in_no_case"
+                reason = (
+                    "The row's subject is known but is not a member of any case "
+                    "in operational/case_members.csv, so it belongs to the "
+                    "background population rather than to an investigation."
+                )
+
+            scan.quarantined.append(
+                {
+                    "origin_file": row.get(SOURCE_FILE_KEY) or f"operational/{source_type}.csv",
+                    "row_number": row.get(ROW_NUMBER_KEY),
+                    "record_id": row.get(record_id_field) or None,
+                    "source_type": source_type,
+                    "reason_code": reason_code,
+                    "reason": reason,
+                    "unresolved_case_id": declared or None,
+                    "field_values": {
+                        k: v
+                        for k, v in row.items()
+                        if not k.startswith("__crimelink")
+                    },
+                }
+            )
+
         cdr_by_case: dict[str, list[dict[str, str]]] = {}
         for row in tables.get("cdr.csv", []):
             owners = [
@@ -940,7 +1063,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             ]
             targets = attach(row, *owners)
             if not targets:
-                unmapped["cdr"] += 1
+                quarantine(
+                    row,
+                    source_type="cdr",
+                    record_id_field="cdr_id",
+                    person_ids=tuple(owners),
+                    subject_field="phone owner",
+                )
                 continue
             for cid in targets:
                 cdr_by_case.setdefault(cid, []).append(row)
@@ -953,7 +1082,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             ]
             targets = attach(row, *holders)
             if not targets:
-                unmapped["transactions"] += 1
+                quarantine(
+                    row,
+                    source_type="transactions",
+                    record_id_field="transaction_id",
+                    person_ids=tuple(holders),
+                    subject_field="account holder",
+                )
                 continue
             for cid in targets:
                 tx_by_case.setdefault(cid, []).append(row)
@@ -963,7 +1098,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
             owner = vehicle_by_id.get(row.get("vehicle_id", ""), {}).get("owner_person_id", "")
             targets = attach(row, owner)
             if not targets:
-                unmapped["vehicle_sightings"] += 1
+                quarantine(
+                    row,
+                    source_type="vehicle_sightings",
+                    record_id_field="sighting_id",
+                    person_ids=(owner,),
+                    subject_field="vehicle owner",
+                )
                 continue
             for cid in targets:
                 sight_by_case.setdefault(cid, []).append(row)
@@ -972,7 +1113,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
         for row in tables.get("intelligence_reports.csv", []):
             targets = attach(row, row.get("subject_person_id", ""))
             if not targets:
-                unmapped["intelligence_reports"] += 1
+                quarantine(
+                    row,
+                    source_type="intelligence_reports",
+                    record_id_field="report_id",
+                    person_ids=(row.get("subject_person_id", ""),),
+                    subject_field="subject person",
+                )
                 continue
             for cid in targets:
                 intel_by_case.setdefault(cid, []).append(row)
@@ -980,7 +1127,8 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
         for kind, count in unmapped.items():
             if count:
                 scan.warnings.append(
-                    f"{count} {kind} row(s) had no resolvable case_id and were not imported."
+                    f"{count} {kind} row(s) could not be attached to a case and were "
+                    "quarantined for review rather than imported."
                 )
 
         doc_manifest = {
@@ -1027,7 +1175,19 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                 content=overview.encode("utf-8"),
                 content_type="text/plain",
                 relative_path=f"operational/cases.csv#{cid}",
-                extra={**meta_base, "row_count": 1, "classification": "cases.csv row rendered as case record"},
+                extra={
+                    **meta_base,
+                    "row_count": 1,
+                    "classification": "cases.csv row rendered as case record",
+                    "document_origin": (
+                        _origin_for(
+                            case_row,
+                            record_id_field="case_id",
+                            fields=["case_number", "registered_date", "case_type", "police_station", "city", "status"],
+                        )
+                        or OriginRef(file="operational/cases.csv")
+                    ).to_dict(),
+                },
             )
 
             history_rows = _person_history_rows(
@@ -1063,6 +1223,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                             "duration_seconds": r.get("duration_seconds", ""),
                             "direction": r.get("call_type", ""),
                             "imei": "",
+                            ORIGIN_COLUMN: _encode_origin(
+                                _origin_for(
+                                    r,
+                                    record_id_field="cdr_id",
+                                    fields=["from_phone_id", "to_phone_id", "timestamp", "duration_seconds", "call_type"],
+                                )
+                            ),
                         }
                         for r in cdr_rows
                     )
@@ -1094,6 +1261,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                             "amount": r.get("amount_inr", ""),
                             "channel": r.get("transaction_type", ""),
                             "reference": r.get("transaction_id", ""),
+                            ORIGIN_COLUMN: _encode_origin(
+                                _origin_for(
+                                    r,
+                                    record_id_field="transaction_id",
+                                    fields=["from_account_id", "to_account_id", "amount_inr", "timestamp", "transaction_type"],
+                                )
+                            ),
                         }
                         for r in tx_rows
                     )
@@ -1126,6 +1300,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                             "location": location_by_id.get(r.get("location_id", ""), {}).get("name", ""),
                             "vehicle": vehicle_by_id.get(r.get("vehicle_id", ""), {}).get("registration_number", ""),
                             "remarks": r.get("source", ""),
+                            ORIGIN_COLUMN: _encode_origin(
+                                _origin_for(
+                                    r,
+                                    record_id_field="sighting_id",
+                                    fields=["vehicle_id", "location_id", "timestamp", "source"],
+                                )
+                            ),
                         }
                         for r in sight_rows
                     )
@@ -1146,7 +1327,9 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
             intel_rows = intel_by_case.get(cid) or []
             if intel_rows:
-                text = _render_intel(intel_rows, person_by_id, location_by_id)
+                text, intel_line_origins = _render_intel(
+                    intel_rows, person_by_id, location_by_id
+                )
                 yield self._corpus_record(
                     scan,
                     case_number=number,
@@ -1155,7 +1338,12 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                     content=text.encode("utf-8"),
                     content_type="text/plain",
                     relative_path=f"operational/intelligence_reports.csv#{cid}",
-                    extra={**meta_base, "row_count": len(intel_rows), "classification": "intelligence_reports.csv sliced by case"},
+                    extra={
+                        **meta_base,
+                        "row_count": len(intel_rows),
+                        "classification": "intelligence_reports.csv sliced by case",
+                        "line_origins": intel_line_origins,
+                    },
                 )
 
         unmatched_docs = 0
@@ -1199,6 +1387,12 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                     "row_count": 1,
                     "classification": entry.reason or "free-text investigation document",
                     "language": manifest.get("language") or "en",
+                    # Ingested byte-for-byte, so the document *is* the origin.
+                    "document_origin": OriginRef(
+                        file=entry.relative_path,
+                        record_id=manifest.get("document_id") or entry.path.stem,
+                    ).to_dict(),
+                    "verbatim": True,
                 },
                 language=manifest.get("language") or "en",
             )
@@ -1343,8 +1537,17 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
 
     @staticmethod
     def _csv_bytes(fields: list[str], rows: list[dict[str, str]]) -> bytes:
+        """Render derived rows, carrying each row's origin in a reserved column.
+
+        The origin column is emitted only when at least one row actually has an
+        origin, so unrelated callers/tests see byte-identical output to before.
+        Pipeline adapters strip ``ORIGIN_COLUMN`` before column matching, so it
+        never participates in schema detection.
+        """
+        has_origin = any(row.get(ORIGIN_COLUMN) for row in rows)
+        columns = [*fields, ORIGIN_COLUMN] if has_origin else list(fields)
         output = io.StringIO(newline="")
-        writer = csv.DictWriter(output, fieldnames=fields)
+        writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
         return output.getvalue().encode("utf-8")

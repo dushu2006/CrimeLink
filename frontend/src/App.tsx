@@ -7,6 +7,12 @@ import CaseDetail from "./pages/CaseDetail";
 import GraphPage from "./pages/GraphPage";
 import Review from "./pages/Review";
 import Admin from "./pages/Admin";
+import Documents from "./pages/Documents";
+import DocumentDetail from "./pages/DocumentDetail";
+import Entities from "./pages/Entities";
+import EntityDetail from "./pages/EntityDetail";
+import Relationships from "./pages/Relationships";
+import SourceBrowser from "./pages/SourceBrowser";
 import { setUnauthorizedHandler } from "./api/client";
 import { useAuth } from "./store/auth";
 
@@ -35,7 +41,20 @@ export default function App() {
           <Route path="/cases/:caseId/graph" element={<GraphPage />} />
           <Route path="/cases/:caseId/review" element={<Review />} />
           <Route path="/review" element={<Review />} />
+
+          {/* Every resource has its own address, so findings can be linked,
+              bookmarked and reached with browser back/forward. */}
+          <Route path="/documents" element={<Documents />} />
+          <Route path="/documents/:docId" element={<DocumentDetail />} />
+          <Route path="/entities" element={<Entities />} />
+          <Route path="/entities/:entityKey" element={<EntityDetail />} />
+          <Route path="/relationships" element={<Relationships />} />
+          <Route path="/sources" element={<SourceBrowser />} />
+
+          {/* Administration sections are routes, not local tab state. */}
           <Route path="/admin" element={<Admin />} />
+          <Route path="/admin/:section" element={<Admin />} />
+
           <Route path="*" element={<Navigate to="/cases" replace />} />
         </Route>
       </Routes>

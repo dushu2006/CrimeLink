@@ -117,7 +117,9 @@ export default function Login() {
               required
             />
 
-            <button className="btn btn-primary" type="submit" disabled={busy || mode === "loading"}>
+            {/* This block only renders once `mode` is known, so the former
+                `mode === "loading"` guard here was unreachable. */}
+            <button className="btn btn-primary" type="submit" disabled={busy}>
               {busy
                 ? t("state.loading", lang)
                 : setup

@@ -52,6 +52,45 @@ class SourceAdapter(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Origin coordinates carried by derived CSVs
+# ---------------------------------------------------------------------------
+
+
+def strip_origin_column(headers: list[str]) -> list[str]:
+    """Remove the reserved origin column from a header row.
+
+    Schema detection and column-alias matching must never see this column: it
+    is CrimeLink bookkeeping, not operational data.
+    """
+    from app.domain.models import ORIGIN_COLUMN
+
+    return [h for h in headers if h != ORIGIN_COLUMN]
+
+
+def pop_origin(row: dict[str, Any]) -> "OriginRefT | None":
+    """Extract and remove the origin reference from a parsed CSV row.
+
+    Returns ``None`` for ordinary uploads, which carry no origin column — those
+    documents are ingested verbatim and are their own origin.
+    """
+    from app.domain.models import ORIGIN_COLUMN, OriginRef
+
+    raw = row.pop(ORIGIN_COLUMN, None)
+    if not raw:
+        return None
+    return OriginRef.decode(str(raw))
+
+
+if True:  # pragma: no cover - typing alias kept local to avoid an import cycle
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from app.domain.models import OriginRef as OriginRefT
+    else:
+        OriginRefT = Any
+
+
+# ---------------------------------------------------------------------------
 # Language detection
 # ---------------------------------------------------------------------------
 
@@ -97,7 +136,12 @@ def detect_language(text: str, hint: str | None = None) -> str:
 
 
 def text_blocks_from_text(text: str, *, page: int | None = None) -> list[Block]:
-    """Split plain text into paragraph blocks with accurate character offsets."""
+    """Split plain text into paragraph blocks with accurate character offsets.
+
+    Each block also records the 1-based line on which it starts, so a source
+    viewer can open the paragraph in the original file rather than only
+    highlighting a character range in the derived rendering.
+    """
     blocks: list[Block] = []
     cursor = 0
     for paragraph in re.split(r"\n\s*\n", text):
@@ -110,6 +154,9 @@ def text_blocks_from_text(text: str, *, page: int | None = None) -> list[Block]:
                 text=paragraph.strip(),
                 offset=start,
                 page=page,
+                # Counting newlines before the paragraph is what makes this the
+                # line number an investigator sees in an editor.
+                line=text.count("\n", 0, start) + 1,
             )
         )
         cursor = start + len(paragraph)

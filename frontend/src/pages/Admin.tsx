@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../store/auth";
 import { t } from "../i18n";
@@ -339,9 +340,20 @@ function DatasetPanel({ jurisdictionId }: { jurisdictionId?: string }) {
   );
 }
 
+type AdminTab = (typeof TABS)[number];
+
+function isAdminTab(value: string | undefined): value is AdminTab {
+  return !!value && (TABS as readonly string[]).includes(value);
+}
+
 export default function Admin() {
   const session = useAuth((state) => state.session);
-  const [tab, setTab] = useState<(typeof TABS)[number]>("dataset");
+  // The section lives in the URL, not in component state, so every
+  // Administration item is deep-linkable and browser back/forward work.
+  const { section } = useParams<{ section?: string }>();
+  const navigate = useNavigate();
+  const tab: AdminTab = isAdminTab(section) ? section : "dataset";
+  const setTab = (name: AdminTab) => navigate(`/admin/${name}`);
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [audit, setAudit] = useState<AuditRow[] | null>(null);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
@@ -424,7 +436,12 @@ export default function Admin() {
 
       <div className="tabs">
         {TABS.map((name) => (
-          <button key={name} className={tab === name ? "tab tab-on" : "tab"} onClick={() => setTab(name)}>
+          <button
+            key={name}
+            className={tab === name ? "tab tab-on" : "tab"}
+            onClick={() => setTab(name)}
+            aria-current={tab === name ? "page" : undefined}
+          >
             {t(`admin.${name}`)}
           </button>
         ))}
@@ -441,25 +458,28 @@ export default function Admin() {
             {overview &&
               (
                 [
-                  ["users", overview.users],
-                  ["cases", overview.cases],
-                  ["documents", overview.documents],
-                  ["pending matches", overview.pending_matches],
-                  ["new patterns", overview.new_patterns],
+                  ["users", overview.users, "/admin/users"],
+                  ["cases", overview.cases, "/cases"],
+                  ["documents", overview.documents, "/documents"],
+                  ["pending matches", overview.pending_matches, "/review"],
+                  ["new patterns", overview.new_patterns, "/review"],
                 ] as const
-              ).map(([label, value]) => (
-                <div className="card" key={label}>
+              ).map(([label, value, href]) => (
+                /* Every count is a way in to the records behind it, so a
+                   number on the dashboard is never a dead end. */
+                <Link className="card card-link" key={label} to={href}>
                   <span className="card-value">{value}</span>
                   <span className="card-label">{label}</span>
-                </div>
+                </Link>
               ))}
           </div>
           {overview && (
             <section className="panel">
               <h2>Graph</h2>
               <p className="hint">
-                {overview.graph.backend} · {overview.graph.nodes} nodes · {overview.graph.edges}{" "}
-                relationships · version {overview.graph.version}
+                {overview.graph.backend} · <Link to="/entities">{overview.graph.nodes} nodes</Link>{" "}
+                · <Link to="/relationships">{overview.graph.edges} relationships</Link> · version{" "}
+                {overview.graph.version}
               </p>
               <h3>Audit chain head</h3>
               <code>{overview.audit_head}</code>

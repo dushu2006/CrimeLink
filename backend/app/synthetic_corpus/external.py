@@ -74,6 +74,11 @@ class ExternalIngestReport:
     warnings: list[str] = field(default_factory=list)
     cases: dict[str, str] = field(default_factory=dict)   # case_number -> case id
     records_processed: int = 0
+    #: Rows read from the corpus that could not be attached to any case.  Kept
+    #: as data, not just a count, so the operator sees which rows were skipped.
+    quarantined_rows: list[dict[str, Any]] = field(default_factory=list)
+    quarantined_new: int = 0
+    import_run_id: str = field(default_factory=lambda: __import__("uuid").uuid4().hex[:16])
     elapsed_seconds: float = 0.0
     pipeline: dict[str, Any] = field(default_factory=dict)  # filled when CLI waits
 
@@ -187,6 +192,24 @@ async def _ensure_external_cases(
     return mapping
 
 
+def _dataset_version(root: Path) -> str | None:
+    """Read the corpus's own declared version, rather than inventing one.
+
+    Quarantined rows outlive the run that produced them, so recording which
+    dataset they came from is what lets a later import tell "still unresolved"
+    apart from "belongs to an older corpus".
+    """
+    import json
+
+    config = Path(root) / "metadata" / "generation_config.json"
+    try:
+        payload = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    version = payload.get("dataset_version")
+    return str(version) if version is not None else None
+
+
 async def ingest_external_corpus(
     *,
     root: str | Path | None = None,
@@ -247,6 +270,7 @@ async def ingest_external_corpus(
 
     accepted = [r for r in adapter.records_from_scan(scan)]
     report.warnings.extend(scan.warnings)
+    report.quarantined_rows = list(scan.quarantined)
     report.records_processed = sum(int(r.metadata.get("row_count") or 1) for r in accepted)
     if not accepted:
         report.elapsed_seconds = time.time() - started
@@ -256,6 +280,21 @@ async def ingest_external_corpus(
     await init_db()                      # idempotent; never drops anything
     container = container or get_container()
     user_id = await _ensure_system_user()
+
+    # Rows the adapter could read but could not attach to a case are recorded
+    # before any document is uploaded, so a run that is interrupted still
+    # leaves an auditable account of what was skipped and why.
+    if scan.quarantined:
+        from app.services.quarantine import persist_quarantined_records
+
+        async with async_session() as q_session:
+            report.quarantined_new = await persist_quarantined_records(
+                q_session,
+                scan.quarantined,
+                dataset_version=_dataset_version(resolved),
+                import_run_id=report.import_run_id,
+            )
+            await q_session.commit()
 
     case_specs: dict[str, dict[str, str]] = {}
     for record in accepted:
@@ -309,6 +348,11 @@ async def ingest_external_corpus(
                     source_confidence=record.source_confidence,
                     mime_type=record.content_type,
                     language_hint=record.language,
+                    source_metadata={
+                        key: record.metadata[key]
+                        for key in ("document_origin", "line_origins", "relative_path", "verbatim")
+                        if record.metadata.get(key) is not None
+                    },
                 )
             except ConflictError as exc:
                 await session.rollback()

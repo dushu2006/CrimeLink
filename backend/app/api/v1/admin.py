@@ -99,6 +99,75 @@ async def quarantine_list(
     }
 
 
+@router.get("/quarantine/records")
+async def quarantine_records(
+    source_type: str | None = None,
+    reason_code: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    principal: Principal = Depends(require_roles("ADMIN")),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Corpus rows that were read but could not be attached to any case.
+
+    Distinct from ``/quarantine``, which lists *documents* that failed
+    processing.  These rows never became documents, so they would otherwise be
+    invisible -- the condition that let 3,244 rows be dropped silently.
+    """
+    from sqlalchemy import func, select
+
+    from app.db.models import QuarantinedRecord
+    from app.services.quarantine import quarantine_summary
+
+    query = select(QuarantinedRecord).where(QuarantinedRecord.resolved.is_(False))
+    if source_type:
+        query = query.where(QuarantinedRecord.source_type == source_type)
+    if reason_code:
+        query = query.where(QuarantinedRecord.reason_code == reason_code)
+
+    total = (
+        await session.execute(
+            select(func.count()).select_from(query.subquery())
+        )
+    ).scalar_one()
+
+    rows = list(
+        (
+            await session.execute(
+                query.order_by(
+                    QuarantinedRecord.origin_file, QuarantinedRecord.row_number
+                )
+                .limit(limit)
+                .offset(offset)
+            )
+        ).scalars()
+    )
+
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "origin_file": r.origin_file,
+                "row_number": r.row_number,
+                "record_id": r.record_id,
+                "source_type": r.source_type,
+                "reason_code": r.reason_code,
+                "reason": r.reason,
+                "unresolved_case_id": r.unresolved_case_id,
+                "field_values": r.field_values,
+                "dataset_version": r.dataset_version,
+                "import_run_id": r.import_run_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+        "summary": await quarantine_summary(session),
+    }
+
+
 @router.post("/quarantine/{doc_id}/release")
 @audited(
     "QUARANTINE_RELEASE",
