@@ -77,13 +77,15 @@ def build_nlp_provider(settings: Settings | None = None) -> ResilientNLPProvider
     choice = settings.nlp_provider
 
     if choice in ("auto", "nim"):
-        if settings.nim_api_key:
-            try:
-                from app.adapters.nlp.nim import NIMNLPProvider
+        # The provider itself resolves the key (CRIMELINK_NIM_API_KEY, then the
+        # legacy NVIDIA_API_KEY), so "a key is configured" is answered there —
+        # never guess from the settings field alone.
+        try:
+            from app.adapters.nlp.nim import NIMNLPProvider
 
-                return ResilientNLPProvider(NIMNLPProvider(settings), fallback, settings)
-            except Exception as exc:
-                log.warning("nlp.nim_unavailable", error=str(exc))
+            return ResilientNLPProvider(NIMNLPProvider(settings), fallback, settings)
+        except Exception as exc:
+            log.warning("nlp.nim_unavailable", error=str(exc))
         if choice == "nim":
             log.warning("nlp.nim_requested_but_unavailable")
 

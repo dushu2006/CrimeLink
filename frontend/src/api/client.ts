@@ -26,6 +26,24 @@ const ACCESS_KEY = "crimelink.access";
 const REFRESH_KEY = "crimelink.refresh";
 const USER_KEY = "crimelink.user";
 
+// ---------------------------------------------------------------------------
+// In-flight GET deduplication
+//
+// Pages fetch the resources they need once per mount — and under React
+// StrictMode in development an effect runs twice, so without this one page
+// view can issue two identical requests.  Several pages back-to-back (Admin
+// alone used to fire eleven endpoints per visit) easily burned through the
+// server-side per-user limit (CRIMELINK_RATE_LIMIT_PER_MINUTE) and produced
+// the 429 storm seen in the console.  Concurrent identical GETs therefore
+// share a single network request; every caller still gets its own promise.
+// ---------------------------------------------------------------------------
+const inflight = new Map<string, Promise<unknown>>();
+
+function dedupeKey(path: string, init: RequestInit): string | null {
+  const method = (init.method ?? "GET").toUpperCase();
+  return method === "GET" ? `GET ${path}` : null;
+}
+
 let onUnauthorized: (() => void) | null = null;
 
 export function setUnauthorizedHandler(handler: () => void) {
@@ -118,7 +136,7 @@ async function refreshSession(): Promise<boolean> {
   }
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function apiInner<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response = await raw(path, init);
   if (response.status === 401 && tokenStore.refresh) {
     const renewed = await refreshSession();
@@ -136,6 +154,25 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(response.status, code, message, fields);
   }
   return payload as T;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const key = dedupeKey(path, init);
+  if (key) {
+    const existing = inflight.get(key);
+    if (existing) return existing as Promise<T>;
+  }
+  const request = apiInner<T>(path, init);
+  if (key) {
+    inflight.set(key, request);
+    // Clear the slot when the request settles.  The extra .catch keeps the
+    // cleanup promise from surfacing as an unhandled rejection — callers of
+    // `request` still receive the original error.
+    request
+      .finally(() => inflight.delete(key))
+      .catch(() => undefined);
+  }
+  return request;
 }
 
 /**

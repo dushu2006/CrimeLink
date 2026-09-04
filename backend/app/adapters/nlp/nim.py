@@ -78,17 +78,29 @@ class NIMNLPProvider:
     name = "nim"
     supports_languages = frozenset({"en", "hi", "mr", "ta", "te", "bn", "unknown"})
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, *, api_key: str | None = None
+    ) -> None:
         self.settings = settings or get_settings()
-        if not self.settings.nim_api_key:
+        # ``CRIMELINK_NIM_API_KEY`` is the canonical setting, but the operator
+        # docs also accept the legacy ``NVIDIA_API_KEY`` for NIM (the AI
+        # gateway already honours it via ``role_config``).  Resolve the same
+        # fallback here so a key alone really does enable NIM extraction.
+        resolved_key = api_key or self.settings.nim_api_key
+        if not resolved_key:
+            import os
+
+            resolved_key = os.environ.get("NVIDIA_API_KEY")
+        if not resolved_key:
             raise DependencyUnavailableError("NIM provider selected but no API key configured")
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
             raise DependencyUnavailableError("openai client is not installed") from exc
+        self.api_key = resolved_key
         self._client = OpenAI(
             base_url=self.settings.nim_base_url,
-            api_key=self.settings.nim_api_key,
+            api_key=resolved_key,
             timeout=self.settings.nim_timeout_s,
         )
 

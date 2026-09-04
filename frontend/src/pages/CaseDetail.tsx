@@ -56,7 +56,7 @@ const DOC_TYPES = [
   "CRIMINAL_HISTORY",
   "INTEL",
 ];
-const CONFIDENCE = ["VERIFIED", "UNVERIFIED", "ANONYMOUS_TIP"];
+const CONFIDENCE = ["VERIFIED", "UNVERIFIED", "ANONYMOUS_TIP", "SYNTHETIC"];
 
 export default function CaseDetail() {
   const { caseId = "" } = useParams();
@@ -67,7 +67,7 @@ export default function CaseDetail() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [docType, setDocType] = useState("FIR");
-  const [confidence, setConfidence] = useState("OFFICIAL");
+  const [confidence, setConfidence] = useState("UNVERIFIED");
   const [question, setQuestion] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<Record<string, unknown> | null>(null);

@@ -366,6 +366,33 @@ async def synthetic_external_preview(
     return payload
 
 
+@router.post("/synthetic/resume")
+@audited(
+    "CONFIG_CHANGE",
+    target=lambda result, **kw: "synthetic:resume",
+    details=lambda result, **kw: {
+        "requeued": result.get("requeued_count"),
+        "skipped_running": result.get("skipped_running"),
+    },
+)
+async def synthetic_resume(
+    principal: Principal = Depends(require_roles("ADMIN")),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Re-dispatch documents left unprocessed by an interrupted run.
+
+    The embedded profile runs pipeline jobs inside the API process, so a
+    restart strands any document that was PENDING, PROCESSING or mid-retry at
+    the moment the process stopped.  This re-queues exactly those documents
+    through the current process's broker; documents with a live RUNNING job are
+    left untouched.  Idempotent — calling it when nothing is stale does
+    nothing.
+    """
+    from app.services.documents import requeue_stale_documents
+
+    return await requeue_stale_documents(container=_container())
+
+
 @router.post("/synthetic/ingest")
 @audited(
     "CONFIG_CHANGE",

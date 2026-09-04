@@ -292,6 +292,173 @@ async def quarantine_list(session: AsyncSession, case_id: str | None = None) -> 
     return list((await session.execute(stmt.order_by(CaseDocument.created_at.desc()))).scalars().all())
 
 
+async def requeue_stale_documents(
+    *,
+    container: Container | None = None,
+) -> dict[str, Any]:
+    """Re-dispatch documents whose pipeline died with the previous process.
+
+    The embedded profile's job executor is in-process, so when the API process
+    stops, every in-flight or queued job stops with it.  A restart then leaves
+    documents stuck in ``PENDING`` (killed before the job ran), ``PROCESSING``
+    (killed mid-pipeline) or ``FAILED`` with retry budget left (killed between
+    a transient failure and its scheduled retry).  This is the recovery half of
+    restart-safe ingestion: it re-queues exactly those documents and re-dispatches
+    them through the *current* process's broker.
+
+    Every stage of the pipeline is safe to re-run: source-reference persistence
+    is an upsert keyed on the source position, and graph injection is keyed on
+    provenance keys, so a re-run converges instead of duplicating.
+
+    A job row left in ``QUEUED`` or ``RUNNING`` by the crashed process is *not*
+    proof that work is still happening — the job executor lives in the same
+    process that died.  So liveness is taken from the current process's broker:
+    if the broker reports queued/running work, documents that still carry
+    ``QUEUED``/``RUNNING`` job rows are genuinely scheduled and are left alone
+    (this is what keeps an accidental concurrent invocation harmless); if the
+    broker is provably idle, those rows are orphans of the dead process and the
+    documents are re-queued.
+
+    Idempotent: calling it twice when nothing is stale re-queues nothing.
+
+    Operational note: recovery assumes one importer at a time (the embedded
+    profile is a single SQLite database; two importers contend for the write
+    lock anyway).  Do not start a second ingest or press Resume while another
+    import process is actively draining — start the replacement *after* the
+    previous process has exited, which is exactly the restart this recovers.
+    """
+    from app.pipeline.orchestrator import MAX_RETRIES as PIPELINE_MAX_RETRIES
+
+    container = container or get_container()
+    from app.db.session import async_session
+
+    stale_statuses = [IngestionStatus.PENDING.value, IngestionStatus.PROCESSING.value]
+    # A transient pipeline failure marks the document FAILED before its retry is
+    # re-dispatched; if the process dies in that gap the document needs a nudge
+    # too — but only while it still has retry budget (else it would have been
+    # quarantined by the pipeline itself).
+    stale_statuses.append(IngestionStatus.FAILED.value)
+
+    # Broker liveness: ``pending_jobs`` is the number of queued+running jobs the
+    # *current* process's executor is tracking.  ``None`` means the broker cannot
+    # attest (e.g. the Celery adapter reports worker stats instead), in which
+    # case RUNNING rows are treated as live work.
+    try:
+        pending_jobs = container.broker.health().get("pending_jobs")
+    except Exception:  # noqa: BLE001 - a dead broker must not block recovery
+        pending_jobs = None
+    broker_provably_idle = pending_jobs == 0
+
+    requeued: list[str] = []
+    skipped_running = 0
+    skipped_quarantined = 0
+
+    async with async_session() as session:
+        docs = list(
+            (
+                await session.execute(
+                    select(CaseDocument).where(
+                        CaseDocument.is_deleted.is_(False),
+                        CaseDocument.quarantined.is_(False),
+                        CaseDocument.ingestion_status.in_(stale_statuses),
+                    )
+                )
+            ).scalars()
+        )
+        live_job_doc_ids: set[str] = set()
+        orphan_jobs: list[IngestionJob] = []
+        if broker_provably_idle:
+            # Every QUEUED/RUNNING row is an orphan of the dead process; they
+            # will be marked superseded once their document is re-queued.
+            orphan_jobs = list(
+                (
+                    await session.execute(
+                        select(IngestionJob).where(
+                            IngestionJob.status.in_(
+                                [JobStatus.QUEUED, JobStatus.RUNNING]
+                            )
+                        )
+                    )
+                ).scalars()
+            )
+        else:
+            live_job_doc_ids = set(
+                (
+                    await session.execute(
+                        select(IngestionJob.doc_id).where(
+                            IngestionJob.status.in_(
+                                [JobStatus.QUEUED, JobStatus.RUNNING]
+                            )
+                        )
+                    )
+                ).scalars()
+            )
+
+        orphan_by_doc: dict[str, list[IngestionJob]] = {}
+        for job in orphan_jobs:
+            orphan_by_doc.setdefault(job.doc_id, []).append(job)
+
+        jobs: list[IngestionJob] = []
+        for doc in docs:
+            if not broker_provably_idle and doc.id in live_job_doc_ids:
+                skipped_running += 1
+                continue
+            if doc.ingestion_status == IngestionStatus.FAILED and int(
+                doc.retry_count or 0
+            ) >= PIPELINE_MAX_RETRIES:
+                # The pipeline would have quarantined this after its final retry;
+                # treat it as terminal rather than looping forever.
+                skipped_quarantined += 1
+                continue
+            for orphan in orphan_by_doc.get(doc.id, []):
+                orphan.status = JobStatus.FAILED
+                orphan.error = (
+                    "Superseded by requeue_stale_documents: the process that "
+                    "owned this job died before it completed."
+                )
+            doc.ingestion_status = IngestionStatus.PENDING
+            doc.ingestion_stage = 0
+            doc.failure_reason = None
+            job = IngestionJob(
+                id=new_uuid(),
+                case_id=doc.case_id,
+                doc_id=doc.id,
+                status=JobStatus.QUEUED,
+                trace_id=new_trace_id(),
+                requested_by=doc.uploaded_by,
+            )
+            session.add(job)
+            jobs.append(job)
+            requeued.append(doc.id)
+        # Commit the PENDING reset and QUEUED job rows before dispatching so a
+        # worker thread always observes committed state.
+        await session.commit()
+
+        for job in jobs:
+            container.broker.dispatch_document_pipeline(
+                job_id=job.id,
+                doc_id=job.doc_id,
+                case_id=job.case_id,
+                trace_id=job.trace_id or "",
+                user_id=job.requested_by or "",
+            )
+            log.info(
+                "documents.requeued_stale",
+                doc_id=job.doc_id,
+                job_id=job.id,
+                case_id=job.case_id,
+            )
+
+    return {
+        "requeued": requeued,
+        "requeued_count": len(requeued),
+        "skipped_running": skipped_running,
+        "skipped_terminal_failed": skipped_quarantined,
+        "orphans_superseded": sum(len(v) for v in orphan_by_doc.values()),
+        "broker_idle": broker_provably_idle,
+    }
+
+
 async def release_from_quarantine(session: AsyncSession, document: CaseDocument) -> CaseDocument:
     """ADMIN action: put a quarantined document back into the pipeline."""
     document.quarantined = False

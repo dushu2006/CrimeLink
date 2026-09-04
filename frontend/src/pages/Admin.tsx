@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../store/auth";
 import { t } from "../i18n";
-import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
+import { Badge, Empty, Spinner } from "../components/Status";
 
 interface AuditRow {
   id: string;
@@ -73,6 +73,29 @@ interface EdgeRow { key: string; source: string; target: string; rel_type: strin
 interface CaseRow { id: string; case_number: string; title: string; jurisdiction_id: string; status: string; created_at?: string }
 interface DocRow { id: string; case_id: string; document_type: string; filename: string; size_bytes: number; ingestion_status: string; quarantined: boolean; created_at?: string }
 
+interface QuarantineRecordRow {
+  id: string;
+  origin_file: string;
+  row_number: number | null;
+  record_id: string | null;
+  source_type: string;
+  reason_code: string;
+  reason: string;
+  unresolved_case_id: string | null;
+  field_values: Record<string, string>;
+  dataset_version: string | null;
+  import_run_id: string | null;
+  created_at: string | null;
+}
+
+interface QuarantineRecordsResponse {
+  items: QuarantineRecordRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: { total: number; by_reason: Record<string, number>; by_source_type: Record<string, number> };
+}
+
 const TABS = ["dataset", "overview", "database", "cases", "documents", "entities", "relationships", "ai", "health", "audit", "users", "thresholds", "quarantine"] as const;
 
 interface DatasetScan {
@@ -113,6 +136,7 @@ interface DatasetStatus {
   new_patterns: number;
   graph: { nodes?: number; edges?: number; error?: string; backend?: string };
   busy: boolean;
+  interrupted: boolean;
   stage_hint: string;
 }
 
@@ -121,7 +145,7 @@ function DatasetPanel({ jurisdictionId }: { jurisdictionId?: string }) {
   const [preview, setPreview] = useState<DatasetScan | null>(null);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<"validate" | "import" | null>(null);
+  const [busyAction, setBusyAction] = useState<"validate" | "import" | "resume" | null>(null);
 
   const loadStatus = useCallback(() => {
     api<DatasetStatus>("/admin/synthetic/status")
@@ -139,6 +163,29 @@ function DatasetPanel({ jurisdictionId }: { jurisdictionId?: string }) {
     const timer = window.setInterval(loadStatus, 2000);
     return () => window.clearInterval(timer);
   }, [status?.busy, loadStatus]);
+
+  const [resumeNotice, setResumeNotice] = useState<string | null>(null);
+
+  async function resume() {
+    setBusyAction("resume");
+    setError(null);
+    setResumeNotice(null);
+    try {
+      const data = await api<{ requeued_count: number }>("/admin/synthetic/resume", {
+        method: "POST",
+      });
+      setResumeNotice(
+        data.requeued_count > 0
+          ? `${data.requeued_count} document(s) re-queued from the interrupted run.`
+          : "Nothing to resume — no stale documents found.",
+      );
+      loadStatus();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   async function validate() {
     setBusyAction("validate");
@@ -207,7 +254,22 @@ function DatasetPanel({ jurisdictionId }: { jurisdictionId?: string }) {
         >
           {busyAction === "import" ? t("state.loading") : t("dataset.import")}
         </button>
+        {status?.interrupted && (
+          <button
+            className="btn"
+            onClick={() => void resume()}
+            disabled={busyAction !== null}
+            title="Re-queue documents left unprocessed by a previous run"
+          >
+            {busyAction === "resume" ? t("state.loading") : "Resume interrupted processing"}
+          </button>
+        )}
       </div>
+      {resumeNotice && (
+        <div className="alert alert-ok" role="status">
+          {resumeNotice}
+        </div>
+      )}
 
       {!status && !error && <Spinner />}
       {status && (
@@ -246,7 +308,9 @@ function DatasetPanel({ jurisdictionId }: { jurisdictionId?: string }) {
           <p className="hint">
             {status.busy
               ? `${status.stage_hint}${status.pending_jobs ? ` · ${status.pending_jobs} job(s) pending` : ""}`
-              : t("dataset.idle")}
+              : status.interrupted
+                ? status.stage_hint
+                : t("dataset.idle")}
           </p>
 
           {Object.keys(status.documents_by_status).length > 0 && (
@@ -362,6 +426,11 @@ export default function Admin() {
   const [quarantine, setQuarantine] = useState<{ id: string; filename: string; failure_reason: string | null }[] | null>(
     null,
   );
+  const [quarantineRecords, setQuarantineRecords] = useState<QuarantineRecordsResponse | null>(null);
+  const [quarantineReason, setQuarantineReason] = useState("");
+  const [quarantineSource, setQuarantineSource] = useState("");
+  const [quarantineOffset, setQuarantineOffset] = useState(0);
+  const QUARANTINE_PAGE = 50;
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [newBadge, setNewBadge] = useState("");
@@ -380,40 +449,153 @@ export default function Admin() {
   const [entitiesTotal, setEntitiesTotal] = useState(0);
   const [relsTotal, setRelsTotal] = useState(0);
 
-  const load = useCallback(() => {
+  // Each Administration section fetches *only* the data its tab renders.
+  // Loading everything on every Admin visit — regardless of the section being
+  // viewed — was what made a single page view fire eleven requests at once
+  // (twenty-two in dev, where StrictMode runs effects twice) and trip the
+  // server rate limiter.  Per-tab loading also means one failing endpoint
+  // (e.g. quarantine) can no longer blank the whole page and turn every
+  // "Retry" into another eleven-request burst.
+  const loadOverview = useCallback(() => {
     setError(null);
+    setOverview(null);
+    api<OverviewStats>("/admin/overview")
+      .then(setOverview)
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadAudit = useCallback(() => {
+    setError(null);
+    setAudit(null);
+    api<{ items: AuditRow[] }>("/admin/audit/search?limit=100")
+      .then((data) => setAudit(data.items))
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadUsers = useCallback(() => {
+    setError(null);
+    setUsers(null);
+    api<{ items: UserRow[] }>("/admin/users")
+      .then((data) => setUsers(data.items))
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadThresholds = useCallback(() => {
+    setError(null);
+    setThresholds(null);
+    api<{ items: ThresholdRow[] }>("/admin/thresholds")
+      .then((data) => setThresholds(data.items))
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadQuarantine = useCallback(() => {
+    setError(null);
+    setQuarantine(null);
+    setQuarantineRecords(null);
+    const query = new URLSearchParams({
+      limit: String(QUARANTINE_PAGE),
+      offset: String(quarantineOffset),
+    });
+    if (quarantineReason) query.set("reason_code", quarantineReason);
+    if (quarantineSource) query.set("source_type", quarantineSource);
+    // Two real, distinct quarantine concepts share this section:
+    //  * /admin/quarantine — documents that failed *processing*;
+    //  * /admin/quarantine/records — corpus rows that could not be attached to
+    //    any case (they never became documents and would otherwise be lost).
     Promise.all([
-      api<OverviewStats>("/admin/overview"),
-      api<{ items: AuditRow[] }>("/admin/audit/search?limit=100"),
-      api<{ items: UserRow[] }>("/admin/users"),
-      api<{ items: ThresholdRow[] }>("/admin/thresholds"),
       api<{ items: { id: string; filename: string; failure_reason: string | null }[] }>("/admin/quarantine"),
-      api<DatabaseSummary>("/admin/database/summary"),
-      api<HealthInfo>("/admin/database/health"),
-      api<{ items: CaseRow[]; total: number }>("/admin/database/cases?limit=50"),
-      api<{ items: DocRow[]; total: number }>("/admin/database/documents?limit=50"),
-      api<{ items: NodeRow[]; total: number }>("/admin/database/entities?limit=50"),
-      api<{ items: EdgeRow[]; total: number }>("/admin/database/relationships?limit=50"),
+      api<QuarantineRecordsResponse>(`/admin/quarantine/records?${query.toString()}`),
     ])
-      .then(([o, a, u, th, q, ds, h, c, d, e, r]) => {
-        setOverview(o);
-        setAudit(a.items);
-        setUsers(u.items);
-        setThresholds(th.items);
-        setQuarantine(q.items);
-        setDbSummary(ds);
-        setHealth(h);
-        setCases(c.items);
-        setDocs(d.items);
-        setEntities(e.items);
-        setEntitiesTotal(e.total);
-        setRels(r.items);
-        setRelsTotal(r.total);
+      .then(([docs, records]) => {
+        setQuarantine(docs.items);
+        setQuarantineRecords(records);
+      })
+      .catch((err: Error) => setError(err.message));
+  }, [quarantineReason, quarantineSource, quarantineOffset]);
+
+  const loadDbSummary = useCallback(() => {
+    setError(null);
+    setDbSummary(null);
+    api<DatabaseSummary>("/admin/database/summary")
+      .then(setDbSummary)
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadHealth = useCallback(() => {
+    setError(null);
+    setHealth(null);
+    api<HealthInfo>("/admin/database/health")
+      .then(setHealth)
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadCases = useCallback(() => {
+    setError(null);
+    setCases(null);
+    api<{ items: CaseRow[]; total: number }>("/admin/database/cases?limit=50")
+      .then((data) => setCases(data.items))
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadDocs = useCallback(() => {
+    setError(null);
+    setDocs(null);
+    api<{ items: DocRow[]; total: number }>("/admin/database/documents?limit=50")
+      .then((data) => setDocs(data.items))
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const loadEntities = useCallback(() => {
+    setError(null);
+    setEntities(null);
+    api<{ items: NodeRow[]; total: number }>("/admin/database/entities?limit=50")
+      .then((data) => {
+        setEntities(data.items);
+        setEntitiesTotal(data.total);
       })
       .catch((err: Error) => setError(err.message));
   }, []);
 
-  useEffect(load, [load]);
+  const loadRels = useCallback(() => {
+    setError(null);
+    setRels(null);
+    api<{ items: EdgeRow[]; total: number }>("/admin/database/relationships?limit=50")
+      .then((data) => {
+        setRels(data.items);
+        setRelsTotal(data.total);
+      })
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  const TAB_LOADERS: Record<AdminTab, (() => void) | null> = {
+    dataset: null, // DatasetPanel owns /admin/synthetic/status itself
+    overview: loadOverview,
+    database: loadDbSummary,
+    cases: loadCases,
+    documents: loadDocs,
+    entities: loadEntities,
+    relationships: loadRels,
+    ai: loadHealth,
+    health: loadHealth,
+    audit: loadAudit,
+    users: loadUsers,
+    thresholds: loadThresholds,
+    quarantine: null, // handled below — it carries its own filter state
+  };
+
+  useEffect(() => {
+    setError(null);
+    TAB_LOADERS[tab]?.();
+    // The loaders are stable useCallback(.., []) values; only the active tab
+    // should decide when a fetch happens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  // The quarantine loader depends on its filters, so it re-fires when the
+  // tab is opened and whenever a filter or the page offset changes.
+  useEffect(() => {
+    if (tab === "quarantine") loadQuarantine();
+  }, [tab, loadQuarantine]);
 
   // The server enforces this too; the guard only avoids a screen of 403s.
   if (session?.role !== "ADMIN") {
@@ -425,8 +607,6 @@ export default function Admin() {
       </div>
     );
   }
-
-  if (error) return <ErrorState message={error} onRetry={load} />;
 
   return (
     <div className="page">
@@ -448,6 +628,16 @@ export default function Admin() {
       </div>
 
       {message && <div className="alert">{message}</div>}
+      {error && (
+        <div className="alert" role="alert">
+          {error}{" "}
+          {tab !== "dataset" && (
+            <button className="btn btn-small" onClick={() => TAB_LOADERS[tab]?.()}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
 
       {tab === "dataset" && <DatasetPanel jurisdictionId={session?.jurisdiction_id} />}
 
@@ -488,7 +678,7 @@ export default function Admin() {
         </>
       )}
 
-      {tab === "database" && dbSummary && (
+      {tab === "database" && (dbSummary ? (
         <section className="panel">
           <h2>Database overview (live)</h2>
           <div className="cards">
@@ -523,9 +713,11 @@ export default function Admin() {
             </tbody>
           </table>
         </section>
-      )}
+      ) : (
+        <Spinner />
+      ))}
 
-      {tab === "health" && health && (
+      {tab === "health" && (health ? (
         <section className="panel">
           <h2>System health</h2>
           <table className="table">
@@ -548,7 +740,9 @@ export default function Admin() {
             </tbody>
           </table>
         </section>
-      )}
+      ) : (
+        <Spinner />
+      ))}
 
       {tab === "cases" && (
         <section className="panel">
@@ -629,6 +823,7 @@ export default function Admin() {
             (e.g. PERSON_023 instead of real names) and the trusted backend retains
             the mapping only for authorized de-pseudonymization.
           </p>
+          {!health && <Spinner />}
           {health && (
             <ul>
               {Object.entries(health.ai_roles).map(([role, on]) => (
@@ -725,7 +920,7 @@ export default function Admin() {
                   setNewPassword("");
                   setNewStation("");
                   setNewJurisdiction("");
-                  load();
+                  loadUsers();
                 })
                 .catch((err: Error) => setMessage(err.message))
                 .finally(() => setCreating(false));
@@ -848,44 +1043,201 @@ export default function Admin() {
       )}
 
       {tab === "quarantine" && (
-        <section className="panel">
-          {!quarantine && <Spinner />}
-          {quarantine && quarantine.length === 0 && <Empty />}
-          {quarantine && quarantine.length > 0 && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>{t("doc.file")}</th>
-                  <th>Reason</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {quarantine.map((doc) => (
-                  <tr key={doc.id}>
-                    <td>{doc.filename}</td>
-                    <td className="hint">{doc.failure_reason ?? "—"}</td>
-                    <td>
-                      <button
-                        className="btn btn-small"
-                        onClick={() =>
-                          api(`/admin/quarantine/${doc.id}/release`, { method: "POST" })
-                            .then(() => {
-                              setMessage(`${doc.filename} released and re-queued.`);
-                              load();
-                            })
-                            .catch((err: Error) => setMessage(err.message))
-                        }
-                      >
-                        Release
-                      </button>
-                    </td>
+        <>
+          <section className="panel">
+            <h2>Quarantined documents</h2>
+            <p className="hint">
+              Documents that failed processing. Release re-queues them through the pipeline;
+              nothing is ever deleted.
+            </p>
+            {!quarantine && <Spinner />}
+            {quarantine && quarantine.length === 0 && <Empty />}
+            {quarantine && quarantine.length > 0 && (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("doc.file")}</th>
+                    <th>Reason</th>
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+                </thead>
+                <tbody>
+                  {quarantine.map((doc) => (
+                    <tr key={doc.id}>
+                      <td>{doc.filename}</td>
+                      <td className="hint">{doc.failure_reason ?? "—"}</td>
+                      <td>
+                        <button
+                          className="btn btn-small"
+                          onClick={() =>
+                            api(`/admin/quarantine/${doc.id}/release`, { method: "POST" })
+                              .then(() => {
+                                setMessage(`${doc.filename} released and re-queued.`);
+                                loadQuarantine();
+                              })
+                              .catch((err: Error) => setMessage(err.message))
+                          }
+                        >
+                          Release
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Unattached corpus records</h2>
+            <p className="hint">
+              Corpus rows that were read but could not be attached to any case, so they never
+              became documents. Each row keeps its origin file, 1-based row number, primary key
+              and the unresolved case id, so the original record can be reopened rather than
+              merely counted.
+            </p>
+            {!quarantineRecords && <Spinner />}
+            {quarantineRecords && (
+              <>
+                {quarantineRecords.summary.total > 0 && (
+                  <div className="cards" style={{ marginTop: 8 }}>
+                    <div className="card">
+                      <span className="card-value">{quarantineRecords.summary.total}</span>
+                      <span className="card-label">unattached rows</span>
+                    </div>
+                    {Object.entries(quarantineRecords.summary.by_reason).map(([reason, count]) => (
+                      <div className="card" key={reason}>
+                        <span className="card-value">{count}</span>
+                        <span className="card-label">{reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="toolbar">
+                  <select
+                    value={quarantineReason}
+                    onChange={(e) => {
+                      setQuarantineReason(e.target.value);
+                      setQuarantineOffset(0);
+                    }}
+                  >
+                    <option value="">All reasons</option>
+                    {Object.keys(quarantineRecords.summary.by_reason).map((reason) => (
+                      <option key={reason} value={reason}>
+                        {reason} ({quarantineRecords.summary.by_reason[reason]})
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={quarantineSource}
+                    onChange={(e) => {
+                      setQuarantineSource(e.target.value);
+                      setQuarantineOffset(0);
+                    }}
+                  >
+                    <option value="">All source types</option>
+                    {Object.keys(quarantineRecords.summary.by_source_type).map((sourceType) => (
+                      <option key={sourceType} value={sourceType}>
+                        {sourceType} ({quarantineRecords.summary.by_source_type[sourceType]})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn btn-small"
+                    onClick={() => {
+                      setQuarantineReason("");
+                      setQuarantineSource("");
+                      setQuarantineOffset(0);
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                  <span className="muted">
+                    Showing {quarantineRecords.items.length} of {quarantineRecords.total}
+                  </span>
+                </div>
+                {quarantineRecords.items.length === 0 && <Empty />}
+                {quarantineRecords.items.length > 0 && (
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Source file</th>
+                        <th className="num">Row</th>
+                        <th>Primary key</th>
+                        <th>Reason</th>
+                        <th>Unresolved case</th>
+                        <th>Fields</th>
+                        <th>Import</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quarantineRecords.items.map((record) => (
+                        <tr key={record.id}>
+                          <td>
+                            <code>{record.origin_file}</code>
+                          </td>
+                          <td className="num">{record.row_number ?? "—"}</td>
+                          <td>
+                            <code>{record.record_id ?? "—"}</code>
+                          </td>
+                          <td>
+                            <Badge value={record.reason_code} />{" "}
+                            <span className="hint">{record.reason}</span>
+                          </td>
+                          <td>
+                            <code>{record.unresolved_case_id ?? "—"}</code>
+                          </td>
+                          <td>
+                            <details>
+                              <summary className="muted">values</summary>
+                              <ul className="compact">
+                                {Object.entries(record.field_values).map(([field, value]) => (
+                                  <li key={field}>
+                                    <code>{field}</code>: {String(value)}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          </td>
+                          <td className="hint">
+                            {record.dataset_version ?? "—"}
+                            <br />
+                            <code>{String(record.import_run_id ?? "").slice(0, 12)}</code>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {(quarantineRecords.offset > 0 ||
+                  quarantineRecords.offset + quarantineRecords.items.length <
+                    quarantineRecords.total) && (
+                  <div className="row-actions">
+                    <button
+                      className="btn btn-small"
+                      disabled={quarantineRecords.offset === 0}
+                      onClick={() =>
+                        setQuarantineOffset(Math.max(0, quarantineRecords.offset - QUARANTINE_PAGE))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      className="btn btn-small"
+                      disabled={
+                        quarantineRecords.offset + quarantineRecords.items.length >=
+                        quarantineRecords.total
+                      }
+                      onClick={() => setQuarantineOffset(quarantineRecords.offset + QUARANTINE_PAGE)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </>
       )}
     </div>
   );

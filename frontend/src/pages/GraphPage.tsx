@@ -5,6 +5,10 @@ import fcose from "cytoscape-fcose";
 import { api } from "../api/client";
 import { t } from "../i18n";
 import { Empty, ErrorState, Spinner } from "../components/Status";
+import {
+  EvidencePointer,
+  EvidencePointerLink,
+} from "../components/EvidenceLink";
 
 cytoscape.use(fcose);
 
@@ -27,6 +31,8 @@ interface ApiEdge {
   confidence: number;
   staging: boolean;
   source_doc_ids: string[];
+  source_doc_id?: string | null;
+  evidence?: EvidencePointer | null;
   properties: Record<string, unknown>;
 }
 
@@ -79,15 +85,19 @@ export default function GraphPage() {
   const { caseId = "" } = useParams();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
+  const extraEdgesRef = useRef<ApiEdge[]>([]);
   const [graph, setGraph] = useState<CaseGraph | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ApiNode | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<ApiEdge | null>(null);
   const [influence, setInfluence] = useState<Influence | null>(null);
   const [includeStaging, setIncludeStaging] = useState(false);
   const [pathFrom, setPathFrom] = useState("");
   const [pathTo, setPathTo] = useState("");
   const [paths, setPaths] = useState<unknown[] | null>(null);
   const [evidence, setEvidence] = useState<Evidence | null>(null);
+  const [filterRelType, setFilterRelType] = useState("");
+  const [expandedCount, setExpandedCount] = useState(0);
 
   const load = useCallback(() => {
     setError(null);
@@ -111,6 +121,7 @@ export default function GraphPage() {
       },
     }));
     const edges: ElementDefinition[] = graph.edges
+      .filter((edge) => !filterRelType || edge.rel_type === filterRelType)
       .filter((edge) => graph.nodes.some((n) => n.provenance_key === edge.source))
       .map((edge) => ({
         data: {
@@ -123,10 +134,14 @@ export default function GraphPage() {
         },
       }));
     return [...nodes, ...edges];
-  }, [graph]);
+  }, [graph, filterRelType]);
 
   useEffect(() => {
     if (!containerRef.current || elements.length === 0) return;
+    // The canvas is being rebuilt from the case snapshot, so any previously
+    // expanded elements are gone — clear the expanded-element state too.
+    extraEdgesRef.current = [];
+    setExpandedCount(0);
     const cy = cytoscape({
       container: containerRef.current,
       elements,
@@ -178,12 +193,28 @@ export default function GraphPage() {
       const key = String(event.target.id());
       const node = graph?.nodes.find((n) => n.provenance_key === key) ?? null;
       setSelected(node);
+      setSelectedEdge(null);
       setInfluence(null);
       if (node) {
-        api<Influence>(`/graph/nodes/${key}/influence`)
+        api<Influence>(`/graph/nodes/${encodeURIComponent(key)}/influence`)
           .then(setInfluence)
           .catch(() => setInfluence(null));
       }
+    });
+    // Clicking a relationship must explain it: the relationship type, its
+    // confidence, and the evidence pointer that justifies it — which opens the
+    // original source record (file + row) through the audited source viewer.
+    cy.on("tap", "edge", (event) => {
+      const id = String(event.target.id());
+      const edge =
+        graph?.edges.find((e) => e.key === id || `${e.source}-${e.rel_type}-${e.target}` === id) ??
+        extraEdgesRef.current.find(
+          (e) => e.key === id || `${e.source}-${e.rel_type}-${e.target}` === id,
+        ) ??
+        null;
+      setSelectedEdge(edge);
+      setSelected(null);
+      setInfluence(null);
     });
     cyRef.current = cy;
     return () => {
@@ -192,7 +223,132 @@ export default function GraphPage() {
     };
   }, [elements, graph]);
 
-  if (error) return <ErrorState message={error} onRetry={load} />;
+  const nameOf = useMemo(
+    () => new Map((graph?.nodes ?? []).map((n) => [n.provenance_key, n.name])),
+    [graph],
+  );
+
+  function openEvidence(docId: string, span?: number[] | null) {
+    api<Evidence>(`/evidence/${docId}${span ? `?span=${span[0]},${span[1]}` : ""}`)
+      .then(setEvidence)
+      .catch(() => setEvidence(null));
+  }
+
+  /** Normalise a wire element ({data:{...}} or flat) into a graph edge row. */
+  function edgeFromWire(item: unknown): ApiEdge | null {
+    const maybe = (item as { data?: Record<string, unknown> }).data ?? (item as Record<string, unknown>);
+    const source = String(maybe.source ?? maybe.source_key ?? "");
+    const target = String(maybe.target ?? maybe.target_key ?? "");
+    if (!source || !target) return null;
+    const rel_type = String(maybe.rel_type ?? maybe.type ?? "RELATED");
+    const key = String(maybe.key ?? maybe.id ?? "") || `${source}-${rel_type}-${target}`;
+    const origin = (maybe.origin as EvidencePointer["origin"]) ?? null;
+    const textSpan = Array.isArray(maybe.text_span)
+      ? (maybe.text_span as number[]).map(Number)
+      : null;
+    const sourceDocId = maybe.source_doc_id ? String(maybe.source_doc_id) : null;
+    return {
+      key,
+      source,
+      target,
+      rel_type,
+      confidence: Number(maybe.confidence ?? 1) || 1,
+      staging: Boolean(maybe.staging),
+      source_doc_ids: Array.isArray(maybe.source_doc_ids)
+        ? maybe.source_doc_ids.map(String)
+        : [],
+      source_doc_id: sourceDocId,
+      evidence:
+        origin || textSpan || sourceDocId
+          ? { source_doc_id: sourceDocId, text_span: textSpan, origin }
+          : null,
+      properties: {},
+    };
+  }
+
+  /** Normalise a wire element ({data:{...}} or flat) into a graph node row. */
+  function nodeFromWire(item: unknown): ApiNode | null {
+    const maybe = (item as { data?: Record<string, unknown> }).data ?? (item as Record<string, unknown>);
+    const provenanceKey = String(maybe.provenance_key ?? maybe.id ?? maybe.key ?? "");
+    if (!provenanceKey) return null;
+    return {
+      provenance_key: provenanceKey,
+      label: String(maybe.label ?? "PERSON"),
+      name: String(maybe.name ?? provenanceKey),
+      confidence: Number(maybe.confidence ?? 1) || 1,
+      staging: Boolean(maybe.staging),
+      aliases: Array.isArray(maybe.aliases) ? maybe.aliases.map(String) : [],
+      source_doc_ids: Array.isArray(maybe.source_doc_ids)
+        ? maybe.source_doc_ids.map(String)
+        : [],
+      properties: {},
+    };
+  }
+
+  // Expand one hop around a node through the audited /graph/nodes/{pk}/expand
+  // endpoint and merge the new elements into the live canvas. Expanded edges
+  // stay tappable and explainable just like in-case edges.
+  const expandNeighbours = useCallback(async (key: string) => {
+    setError(null);
+    try {
+      const data = await api<{ nodes: unknown[]; edges: unknown[] }>(
+        `/graph/nodes/${encodeURIComponent(key)}/expand?depth=1&limit=300`,
+      );
+      const cy = cyRef.current;
+      if (!cy) return;
+      const existingNodes = new Set(cy.nodes().map((n) => n.id()));
+      const existingEdges = new Set(cy.edges().map((e) => e.id()));
+      const fresh: ElementDefinition[] = [];
+      const freshEdges: ApiEdge[] = [];
+      for (const item of data.nodes) {
+        const node = nodeFromWire(item);
+        if (!node || existingNodes.has(node.provenance_key)) continue;
+        existingNodes.add(node.provenance_key);
+        fresh.push({
+          data: {
+            id: node.provenance_key,
+            name: node.name,
+            label: node.label,
+            confidence: node.confidence,
+            staging: node.staging,
+            aliases: node.aliases.join(", "),
+          },
+        });
+      }
+      for (const item of data.edges) {
+        const edge = edgeFromWire(item);
+        if (
+          !edge ||
+          existingEdges.has(edge.key) ||
+          !existingNodes.has(edge.source) ||
+          !existingNodes.has(edge.target)
+        )
+          continue;
+        existingEdges.add(edge.key);
+        freshEdges.push(edge);
+        fresh.push({
+          data: {
+            id: edge.key,
+            source: edge.source,
+            target: edge.target,
+            rel: edge.rel_type,
+            confidence: edge.confidence,
+            staging: edge.staging,
+          },
+        });
+      }
+      if (fresh.length) {
+        cy.add(fresh);
+        extraEdgesRef.current = [...extraEdgesRef.current, ...freshEdges];
+        setExpandedCount((count) => count + fresh.length);
+        cy.layout({ name: "fcose", animate: true, nodeRepulsion: 8000, idealEdgeLength: 110 } as never).run();
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }, []);
+
+  if (error && !graph) return <ErrorState message={error} onRetry={load} />;
 
   return (
     <div className="graph-layout">
@@ -206,8 +362,26 @@ export default function GraphPage() {
             />
             {t("graph.staging")}
           </label>
+          {graph && (
+            <select
+              value={filterRelType}
+              onChange={(e) => setFilterRelType(e.target.value)}
+              title="Filter relationships shown on the canvas"
+            >
+              <option value="">All relationship types</option>
+              {Object.entries(graph.counts.by_rel_type).map(([relType, count]) => (
+                <option key={relType} value={relType}>
+                  {relType} ({count})
+                </option>
+              ))}
+            </select>
+          )}
           <span className="muted">
-            {graph ? `${graph.counts.nodes} nodes · ${graph.counts.edges} relationships` : null}
+            {graph
+              ? `${graph.counts.nodes} nodes · ${graph.counts.edges} relationships${
+                  expandedCount ? ` · +${expandedCount} expanded` : ""
+                }`
+              : null}
           </span>
           <button className="btn btn-small" onClick={() => cyRef.current?.layout({ name: "fcose", animate: true } as never).run()}>
             Re-layout
@@ -223,10 +397,13 @@ export default function GraphPage() {
 
       <aside className="graph-side">
         {!graph && <Spinner />}
-        {graph && !selected && (
+        {graph && !selected && !selectedEdge && (
           <div className="panel">
             <h2>{t("graph.title")}</h2>
-            <p className="hint">Select a node to see its influence score and the evidence behind it.</p>
+            <p className="hint">
+              Select a node to see its influence score and its evidence, or select a
+              relationship to see why it exists and which source record produced it.
+            </p>
             <div className="legend">
               {Object.entries(LABEL_COLOR).map(([label, color]) => (
                 <div key={label} className="legend-item">
@@ -245,6 +422,16 @@ export default function GraphPage() {
               {selected.label} · {(selected.confidence * 100).toFixed(0)}% extraction confidence
             </p>
             {selected.aliases.length > 0 && <p className="hint">Aliases: {selected.aliases.join(", ")}</p>}
+
+            <div className="row-actions">
+              <button
+                className="btn btn-small"
+                onClick={() => void expandNeighbours(selected.provenance_key)}
+                title="Add the immediate neighbours of this entity to the canvas"
+              >
+                Expand neighbours (1 hop)
+              </button>
+            </div>
 
             <h3>{t("graph.influence")}</h3>
             {!influence && <Spinner />}
@@ -285,9 +472,7 @@ export default function GraphPage() {
                         href="#"
                         onClick={(event) => {
                           event.preventDefault();
-                          api<Evidence>(`/evidence/${doc}`)
-                            .then(setEvidence)
-                            .catch(() => setEvidence(null));
+                          openEvidence(doc);
                         }}
                       >
                         <code>{doc.slice(0, 12)}…</code>
@@ -315,6 +500,72 @@ export default function GraphPage() {
                 )}
                 <p className="hint">{influence.explanation.method}</p>
               </>
+            )}
+          </div>
+        )}
+
+        {selectedEdge && (
+          <div className="panel">
+            <h2>Relationship: {selectedEdge.rel_type}</h2>
+            <p className="muted">
+              {nameOf.get(selectedEdge.source) ?? selectedEdge.source} →{" "}
+              {nameOf.get(selectedEdge.target) ?? selectedEdge.target}
+            </p>
+            <dl className="kv">
+              <dt>Type</dt>
+              <dd>{selectedEdge.rel_type}</dd>
+              <dt>Confidence</dt>
+              <dd>{(selectedEdge.confidence * 100).toFixed(0)}%</dd>
+              <dt>Staging</dt>
+              <dd>{selectedEdge.staging ? "yes (anonymous tip)" : "no"}</dd>
+              <dt>Supporting documents</dt>
+              <dd>{selectedEdge.source_doc_ids.length}</dd>
+            </dl>
+
+            <h3>Why this relationship exists</h3>
+            <EvidencePointerLink
+              pointer={selectedEdge.evidence}
+              emptyMessage="This edge carries no exact source position — check the supporting documents below."
+            />
+
+            {selectedEdge.source_doc_ids.length > 0 && (
+              <>
+                <h3>Supporting documents</h3>
+                <ul className="compact">
+                  {selectedEdge.source_doc_ids.map((doc) => (
+                    <li key={doc}>
+                      <a
+                        href="#"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openEvidence(doc, selectedEdge.evidence?.text_span ?? null);
+                        }}
+                      >
+                        <code>{doc.slice(0, 12)}…</code>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {evidence && (
+              <div className="evidence">
+                <strong>{evidence.filename}</strong>{" "}
+                <span className="muted">
+                  {evidence.document_type} · {evidence.content_hash.slice(0, 16)}…
+                </span>
+                {evidence.snippet ? (
+                  <blockquote>{evidence.snippet}</blockquote>
+                ) : (
+                  <p className="hint">No text span recorded for this pointer.</p>
+                )}
+                {evidence.signed_url && (
+                  <a href={evidence.signed_url} target="_blank" rel="noreferrer">
+                    Open document
+                  </a>
+                )}
+              </div>
             )}
           </div>
         )}
