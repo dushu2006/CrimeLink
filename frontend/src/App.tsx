@@ -5,6 +5,7 @@ import Login from "./pages/Login";
 import Cases from "./pages/Cases";
 import CaseDetail from "./pages/CaseDetail";
 import GraphPage from "./pages/GraphPage";
+import InvestigationPage from "./pages/InvestigationPage";
 import Review from "./pages/Review";
 import Admin from "./pages/Admin";
 import Documents from "./pages/Documents";
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/cases" element={<Cases />} />
           <Route path="/cases/:caseId" element={<CaseDetail />} />
           <Route path="/cases/:caseId/graph" element={<GraphPage />} />
+          <Route path="/cases/:caseId/investigation" element={<InvestigationPage />} />
           <Route path="/cases/:caseId/review" element={<Review />} />
           <Route path="/review" element={<Review />} />
 

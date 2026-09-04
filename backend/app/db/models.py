@@ -436,6 +436,65 @@ class PatternConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
 
 
+class InvestigationStageRun(Base):
+    """Per-case investigation workflow stage state.
+
+    One row per (case, stage): the workflow is a state machine the
+    investigator drives — a stage may only run when its prerequisites are
+    COMPLETED, and every row records what the stage ACTUALLY produced (real
+    counts, real errors), not a progress animation.
+    """
+
+    __tablename__ = "investigation_stage_runs"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    stage: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+
+
+class InvestigationFinding(Base):
+    """A consolidated, evidence-backed investigation finding.
+
+    Produced by the findings stage from REAL analysis results (graph edges,
+    pattern detections, AI responses when configured).  Every finding carries
+    the entity keys and source document ids it is based on, so an
+    investigator can trace it back to evidence.  Language is deliberately
+    neutral: a graph connection is a lead, never an accusation.
+    """
+
+    __tablename__ = "investigation_findings"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    finding_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    narrative: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence_band: Mapped[str] = mapped_column(String(8), nullable=False, default="LOW")
+    method: Mapped[str] = mapped_column(String(24), nullable=False, default="deterministic")
+    entity_keys: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="NEW")
+    # Actor identity, AuditLog-style: a plain reference, no hard FK — reviews
+    # may be recorded by batch tools or transferred officers as well.
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+
+
 class JurisdictionAccessRequest(Base):
     """Cross-jurisdiction access, always time-boxed (PRD 12.4)."""
 

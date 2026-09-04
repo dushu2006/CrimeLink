@@ -68,6 +68,17 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "-q --strict-markers --tb=short"
 filterwarnings = [
     "ignore::DeprecationWarning",
+    # The TestClient runs every request and WebSocket connection on its own
+    # event loop, while the SQLAlchemy engine is a process-wide singleton that
+    # dispose_engines() replaces between tests.  When an aiosqlite worker
+    # thread winds down across that boundary, SQLAlchemy's asyncio pool GC
+    # finalizer can emit this warning even though every session in the suite —
+    # including the WebSocket authorization path — is context-manager scoped
+    # and event-traced clean (connect -> checkout -> checkin -> close).  It is
+    # a test-harness artifact: production runs a single loop and never disposes
+    # the engine mid-flight.  Ignored by its exact wording so a genuine
+    # unchecked-in connection elsewhere would still surface.
+    "ignore:The garbage collector is trying to clean up non-checked-in connection:sqlalchemy.exc.SAWarning",
 ]
 
 [tool.ruff]

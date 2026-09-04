@@ -165,11 +165,32 @@ class Language(str, Enum):
 
 NODE_LABELS: frozenset[str] = frozenset(e.value for e in EntityType) | {"Case"}
 
+# Canonical, wire-format labels.  EntityType values are title-case ("Person",
+# "BankAccount") because they double as Neo4j labels; the API and the console
+# speak SCREAMING_CASE ("PERSON", "BANK_ACCOUNT").  One map, used at the API
+# boundary, so every surface agrees and colour/size styling can key on it.
+CANONICAL_LABELS: dict[str, str] = {
+    "Person": "PERSON",
+    "Phone": "PHONE",
+    "Vehicle": "VEHICLE",
+    "Location": "LOCATION",
+    "Organization": "ORGANIZATION",
+    "BankAccount": "BANK_ACCOUNT",
+    "Event": "EVENT",
+    "Case": "CASE",
+}
+
+
+def canonical_label(label: str) -> str:
+    """The SCREAMING_CASE wire label for a stored node label."""
+    return CANONICAL_LABELS.get(label, label.upper())
+
 REL_TYPES: frozenset[str] = frozenset(
     {
         "PARTICIPATED_IN",
         "OWNS_VEHICLE",
         "USES_PHONE",
+        "OWNS_ACCOUNT",
         "CALLED",
         "MEMBER_OF",
         # Person-to-person relations inferred by the probabilistic stage.  They

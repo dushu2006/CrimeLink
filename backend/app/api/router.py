@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    investigation,
     access,
     admin,
     ai,
@@ -47,5 +48,6 @@ api_router.include_router(access.router)
 api_router.include_router(admin.router)
 api_router.include_router(database.router)
 api_router.include_router(ai.router)
+api_router.include_router(investigation.router)
 
 __all__ = ["api_router"]

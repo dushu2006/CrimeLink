@@ -127,6 +127,12 @@ class Settings(BaseSettings):
     # values can be configured per role.  When a role's key is empty the system
     # either falls back to heuristic processing (extraction/classification) or
     # returns a structured "insufficient evidence" result (reasoning/explanation).
+    #
+    # Availability is decided ONLY from these resolved settings — role key
+    # first, then this global key.  ``run.py`` maps the legacy
+    # ``NVIDIA_API_KEY`` onto ``CRIMELINK_AI_API_KEY`` explicitly, so a bare
+    # legacy variable can never flip a role to "available" behind an
+    # operator's back.
     ai_provider: str = "nvidia"
     ai_api_key: str | None = None
     ai_base_url: str = "https://integrate.api.nvidia.com/v1"
@@ -301,8 +307,9 @@ class Settings(BaseSettings):
 
         Absolute ``synthetic_data_root`` values are honoured verbatim;
         relative values resolve against the repository root so that
-        ``backend/CrimeLink_Synthetic_Corpus_v1`` is the local gitignored
-        dataset regardless of the operator's cwd.  The directory is *not*
+        ``backend/CrimeLink_Synthetic_Corpus_v1`` is the local synthetic
+        corpus regardless of the operator's cwd.  The corpus is fully
+        synthetic and tracked in the repository.  The directory is *not*
         required to exist — the external-corpus adapter reports a clear
         error when it is missing.
         """
@@ -313,16 +320,20 @@ class Settings(BaseSettings):
 
     # ---- AI role resolution (provider "default" falls back to global) ------
     def role_config(self, role: str) -> dict[str, Any]:
-        """Return base_url / api_key / model for a given AI model role."""
+        """Return base_url / api_key / model for a given AI model role.
+
+        Availability is decided **only** from resolved settings: the role key
+        (``CRIMELINK_AI_<ROLE>_API_KEY``) or the global key
+        (``CRIMELINK_AI_API_KEY``, which ``run.py`` populates from the legacy
+        ``NVIDIA_API_KEY`` when present).  A role with no key is reported
+        unavailable, and the gateway returns a structured "unavailable"
+        result — no provider invocation is attempted for it.
+        """
         prefix = f"ai_{role}"
         model = getattr(self, f"{prefix}_model", "")
         provider = getattr(self, f"{prefix}_provider", "default")
         api_key = getattr(self, f"{prefix}_api_key", None) or self.ai_api_key
         base_url = getattr(self, f"{prefix}_base_url", None) or self.ai_base_url
-        if not api_key:
-            # fall back to NVIDIA_API_KEY for convenience
-            import os
-            api_key = os.environ.get("NVIDIA_API_KEY")
         return {
             "role": role,
             "provider": provider if provider != "default" else self.ai_provider,

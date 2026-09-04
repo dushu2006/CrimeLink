@@ -335,7 +335,17 @@ def _person_history_rows(
     person_by_id: dict[str, dict[str, str]],
     phones_by_person: dict[str, list[dict[str, str]]],
     vehicles_by_person: dict[str, list[dict[str, str]]],
+    accounts_by_person: dict[str, list[dict[str, str]]] | None = None,
 ) -> list[dict[str, str]]:
+    """Render case members as criminal-history rows.
+
+    Phones, vehicles and bank accounts are joined from the corpus ownership
+    columns (``phones.owner_person_id``, ``vehicles.owner_person_id``,
+    ``accounts.holder_person_id``) so the criminal-history extractor can emit
+    USES_PHONE / OWNS_VEHICLE / OWNS_ACCOUNT edges that the source data
+    actually establishes.  Nothing here is inferred — a person with no owned
+    account in the corpus simply gets an empty ``accounts`` field.
+    """
     rows: list[dict[str, str]] = []
     for member in members:
         person = person_by_id.get(member.get("person_id", ""))
@@ -343,6 +353,7 @@ def _person_history_rows(
             continue
         phones = phones_by_person.get(person["person_id"], [])
         vehicles = vehicles_by_person.get(person["person_id"], [])
+        accounts = (accounts_by_person or {}).get(person["person_id"], [])
         address = ", ".join(
             part for part in (person.get("address"), person.get("city"), person.get("state")) if part
         )
@@ -355,6 +366,8 @@ def _person_history_rows(
                 "case_date": case_row.get("registered_date", ""),
                 "phone": phones[0].get("phone_number", "") if phones else "",
                 "plate": vehicles[0].get("registration_number", "") if vehicles else "",
+                "account": accounts[0].get("account_number", "") if accounts else "",
+                "bank_code": accounts[0].get("bank_code", "") if accounts else "",
                 "address": address,
                 # The authoritative origin of a person row is persons.csv, not
                 # the case_members join row that selected it.
@@ -1196,9 +1209,13 @@ class ExternalSyntheticCorpusAdapter(SourceAdapter):
                 person_by_id,
                 phones_by_person,
                 vehicles_by_person,
+                accounts_by_person,
             )
             if history_rows:
-                fields = ["name", "aliases", "role", "case_ref", "case_date", "phone", "plate", "address"]
+                fields = [
+                    "name", "aliases", "role", "case_ref", "case_date",
+                    "phone", "plate", "account", "bank_code", "address",
+                ]
                 yield self._corpus_record(
                     scan,
                     case_number=number,

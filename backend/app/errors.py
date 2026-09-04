@@ -102,6 +102,13 @@ class ConflictError(CrimeLinkError):
     public_message = "The resource already exists."
 
 
+class ServiceUnavailableError(CrimeLinkError):
+    """A backing service (graph database, object store) is unreachable."""
+
+    code = "service_unavailable"
+    http_status = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
 class RateLimitError(CrimeLinkError):
     code = "rate_limited"
     http_status = status.HTTP_429_TOO_MANY_REQUESTS

@@ -20,7 +20,12 @@ import json
 
 from app.domain.enums import DocumentType, SourceConfidence
 from app.domain.models import ORIGIN_COLUMN, Block, NormalizedDocument
-from app.domain.normalize import normalize_name, normalize_phone, normalize_plate
+from app.domain.normalize import (
+    normalize_account,
+    normalize_name,
+    normalize_phone,
+    normalize_plate,
+)
 from app.errors import PipelineError
 from app.logging import get_logger
 from app.pipeline.adapters.protocol import (
@@ -40,6 +45,8 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "role": ("role", "status", "accused_status", "category"),
     "plate": ("vehicle", "vehicle_no", "plate", "vehicle_registration", "vehicle_plate"),
     "phone": ("phone", "mobile", "mobile_no", "contact_no", "contact"),
+    "account": ("account", "account_no", "account_number", "bank_account", "bank_account_no"),
+    "bank_code": ("bank_code", "bank", "bank_name", "bank_branch"),
     "address": ("address", "residence", "permanent_address"),
     "ipc_sections": ("ipc_sections", "sections", "ipc", "sections_invoked"),
     "case_ref": ("case_ref", "fir_no", "fir_number", "case_number", "case_no"),
@@ -71,6 +78,7 @@ class CriminalHistoryAdapter:
             sections = self._split_sections(row.get("ipc_sections"))
             plate = normalize_plate(str(row.get("plate") or ""))
             phone = normalize_phone(str(row.get("phone") or ""))
+            account = normalize_account(str(row.get("account") or ""))
             record = {
                 "kind": "person_record",
                 "name": name,
@@ -89,6 +97,9 @@ class CriminalHistoryAdapter:
                 record["phone"] = phone
                 record["first_seen"] = record["case_date"]
                 record["last_seen"] = record["case_date"]
+            if account:
+                record["account"] = account
+                record["bank_code"] = row.get("bank_code")
 
             text = (
                 f"Criminal history: {name}"
@@ -96,6 +107,7 @@ class CriminalHistoryAdapter:
                 + (f", IPC {', '.join(sections)}" if sections else "")
                 + (f", vehicle {plate}" if plate else "")
                 + (f", phone {phone}" if phone else "")
+                + (f", account {account}" if account else "")
                 + (f", case {record['case_ref']}" if record["case_ref"] else "")
             )
             blocks.append(
