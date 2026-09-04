@@ -58,6 +58,40 @@ const DOC_TYPES = [
 ];
 const CONFIDENCE = ["VERIFIED", "UNVERIFIED", "ANONYMOUS_TIP", "SYNTHETIC"];
 
+/**
+ * A clear, honest explanation for an unavailable AI role, derived from the
+ * gateway's machine-readable fallback_reason — never a raw error class name.
+ *
+ * The backend decides whether a key is missing or a real provider call
+ * failed; this only presents that verdict in investigator language.
+ */
+function aiUnavailableMessage(fallbackReason: unknown): string {
+  const reason = String(fallbackReason ?? "");
+  if (reason.startsWith("no_api_key_for_role_")) {
+    const aiRole = reason.slice("no_api_key_for_role_".length) || "model";
+    return (
+      `No API key is configured for the ${aiRole} model. ` +
+      `Configure CRIMELINK_AI_${aiRole.toUpperCase()}_API_KEY to enable this feature.`
+    );
+  }
+  if (reason.startsWith("invocation_failed:")) {
+    return (
+      `The configured AI provider call failed (${reason.slice("invocation_failed:".length).trim()}). ` +
+      "Check the provider, model and key configured for this role."
+    );
+  }
+  if (reason.startsWith("gateway_error:")) {
+    return (
+      `AI processing failed (${reason.slice("gateway_error:".length).trim()}). ` +
+      "An investigator must review this case manually."
+    );
+  }
+  if (reason === "openai_client_unavailable") {
+    return "The AI client library is not installed on the server.";
+  }
+  return reason ? `AI is currently unavailable (${reason}).` : "AI is currently unavailable.";
+}
+
 export default function CaseDetail() {
   const { caseId = "" } = useParams();
   const [caseRow, setCaseRow] = useState<CaseRow | null>(null);
@@ -135,6 +169,9 @@ export default function CaseDetail() {
             <p className="muted">{caseRow.title}</p>
           </div>
           <div className="row-actions">
+            <Link className="btn" to={`/cases/${caseId}/investigation`}>
+              {t("investigation.workspaceLink")}
+            </Link>
             <Link className="btn" to={`/cases/${caseId}/graph`}>
               {t("case.openGraph")}
             </Link>
@@ -281,10 +318,10 @@ export default function CaseDetail() {
         )}
         {aiResult && (
           <div className="evidence">
-            <p>
-              {aiResult.available ? "Model response" : "AI unavailable"}{" "}
-              {aiResult.fallback_reason ? `— ${String(aiResult.fallback_reason)}` : ""}
-            </p>
+            <p>{aiResult.available ? "Model response" : "AI unavailable"}</p>
+            {!aiResult.available && (
+              <p className="muted">{aiUnavailableMessage(aiResult.fallback_reason)}</p>
+            )}
             <blockquote>
               {String(
                 (aiResult.finding as { summary?: string } | undefined)?.summary ??

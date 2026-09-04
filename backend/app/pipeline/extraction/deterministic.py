@@ -484,6 +484,38 @@ def _extract_from_record(
                     extractor="deterministic",
                 )
             )
+        account = normalize_account(str(data.get("account") or ""))
+        if account:
+            entities.append(
+                _ent(
+                    EntityType.BANK_ACCOUNT,
+                    account,
+                    account,
+                    {"number": account, "bank_code": data.get("bank_code")},
+                )
+            )
+            relations.append(
+                RelationCandidate(
+                    source_type=EntityType.PERSON,
+                    source_value=normalize_name(name),
+                    target_type=EntityType.BANK_ACCOUNT,
+                    target_value=account,
+                    # The source record names this person as the account
+                    # holder, so the honest predicate is OWNS_ACCOUNT — the
+                    # same claim the corpus column (holder_person_id) makes.
+                    # "Controls" is reserved for third-party control alleged
+                    # in intelligence reports, which is a weaker, different
+                    # assertion.
+                    rel_type="OWNS_ACCOUNT",
+                    confidence=confidence,
+                    attributes={"bank_code": data.get("bank_code")},
+                    source_doc_id=doc.doc_id,
+                    case_id=doc.case_id,
+                    text_span=block.span,
+                    origin=block.origin,
+                    extractor="deterministic",
+                )
+            )
         sections = data.get("ipc_sections") or []
         if sections:
             relations.append(

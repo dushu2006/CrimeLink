@@ -89,6 +89,52 @@ CONTEXT_BUILDERS = {
     "embedding": "RetrievalContext",
 }
 
+# Settings field name of every AI role, used in operator-facing messages:
+# role "reasoning" -> CRIMELINK_AI_REASONING_API_KEY, and so on.
+ROLE_ENV_KEYS = {
+    "extraction": "CRIMELINK_AI_EXTRACTION_API_KEY",
+    "reasoning": "CRIMELINK_AI_REASONING_API_KEY",
+    "explanation": "CRIMELINK_AI_EXPLANATION_API_KEY",
+    "classification": "CRIMELINK_AI_CLASSIFICATION_API_KEY",
+    "embedding": "CRIMELINK_AI_EMBEDDING_API_KEY",
+}
+
+
+def unavailable_summary(role: str, reason: str | None) -> str:
+    """An honest, operator-actionable explanation for an unavailable AI role.
+
+    The wording must reflect the *actual* reason: a missing API key and a
+    failed provider invocation are different situations, and telling an
+    investigator "no API key is configured" when a configured provider call
+    just failed is exactly the kind of dishonesty this module exists to
+    prevent.
+    """
+    role_label = f"AI {role}"
+    env_key = ROLE_ENV_KEYS.get(role, f"CRIMELINK_AI_{role.upper()}_API_KEY")
+    reason = reason or "unknown_reason"
+
+    if reason.startswith("no_api_key_for_role_"):
+        return (
+            f"{role_label} is unavailable because no API key is configured for "
+            f"the {role} model. Configure {env_key} to enable this feature."
+        )
+    if reason == "openai_client_unavailable":
+        return (
+            f"{role_label} is unavailable because the OpenAI-compatible client "
+            "library is not installed on the server. Install the 'openai' "
+            "package to enable this feature."
+        )
+    if reason.startswith("invocation_failed:"):
+        detail = reason.split(":", 1)[1].strip()
+        return (
+            f"{role_label} is unavailable because the configured provider call "
+            f"failed ({detail}). The provider, model or key configured for the "
+            f"{role} role may be wrong — check {env_key} and the role's "
+            "base_url/model settings. An investigator must review this case "
+            "manually."
+        )
+    return f"{role_label} is currently unavailable ({reason})."
+
 
 class AIGateway:
     def __init__(self, settings: Settings | None = None, router: AIModelRouter | None = None):
@@ -135,17 +181,7 @@ class AIGateway:
                 user_prompt=context,
             )
             if not result.get("available"):
-                finding = FindingResult(
-                    finding_type="GENERAL",
-                    summary=(
-                        "AI reasoning is unavailable because no API key is configured "
-                        "for the reasoning model. Configure AI_REASONING_API_KEY to "
-                        "enable this feature."
-                    ),
-                    confidence=0.0,
-                    evidence_level="UNKNOWN",
-                    recommended_review=False,
-                )
+                finding = self._unavailable_finding("reasoning", result.get("reason"))
                 await self._audit(
                     query_id=query_id, case_id=case_id,
                     user_id=principal_id or user_id, role="reasoning",
@@ -218,6 +254,23 @@ class AIGateway:
                 available=False,
                 fallback_reason=f"gateway_error: {type(exc).__name__}",
             )
+
+    # ------------------------------------------------- structured unavailability
+
+    @staticmethod
+    def _unavailable_finding(role: str, reason: str | None) -> FindingResult:
+        """Build the structured "AI unavailable" finding from the real reason."""
+        reason = reason or "unknown_reason"
+        # A configured provider that actually failed needs human review; a
+        # role that was never configured is a no-op, not an incident.
+        needs_review = reason.startswith("invocation_failed:")
+        return FindingResult(
+            finding_type="GENERAL",
+            summary=unavailable_summary(role, reason),
+            confidence=0.0,
+            evidence_level="UNKNOWN",
+            recommended_review=needs_review,
+        )
 
     # ----------------------------------------------------- retrieval / context
 

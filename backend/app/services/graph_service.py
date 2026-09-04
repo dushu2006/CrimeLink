@@ -23,6 +23,7 @@ from app.analytics.temporal import find_temporal_paths
 from app.config import Settings, get_settings
 from app.container import Container, get_container
 from app.db.models import Case
+from app.domain.enums import canonical_label
 from app.domain.models import GraphNode
 from app.errors import NotFoundError
 from app.logging import get_logger
@@ -34,6 +35,11 @@ log = get_logger("crimelink.services.graph")
 # version changes on every graph write.
 _centrality_cache: dict[tuple[str, int], CentralityResult] = {}
 _CACHE_LIMIT = 32
+
+
+def canonical_person(node: GraphNode) -> bool:
+    """True when the node is a person under either label convention."""
+    return node.label in ("PERSON", "Person")
 
 
 class GraphService:
@@ -234,6 +240,142 @@ class GraphService:
             "edges": [_edge_row(e) for e in edges],
         }
 
+    # --------------------------------------------------- person-centric view
+    async def person_targets(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        case_id: str,
+        *,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        """The persons of a case — the selectable investigation targets."""
+        from app.services.cases import require_case
+
+        await require_case(session, scope, case_id)
+        snapshot = self.container.graph_store.snapshot(case_id, include_staging=False)
+        degree: dict[str, int] = {}
+        for edge in snapshot.edges:
+            degree[edge.source_key] = degree.get(edge.source_key, 0) + 1
+            degree[edge.target_key] = degree.get(edge.target_key, 0) + 1
+        persons = [
+            node
+            for node in snapshot.nodes.values()
+            if canonical_person(node)
+        ]
+        persons.sort(key=lambda n: (-degree.get(n.provenance_key, 0), n.name))
+        items = [
+            {
+                "provenance_key": node.provenance_key,
+                "name": node.name,
+                "aliases": list(node.properties.get("aliases") or []),
+                "connections": degree.get(node.provenance_key, 0),
+                "source_doc_ids": list(node.properties.get("source_doc_ids") or []),
+            }
+            for node in persons[:limit]
+        ]
+        return {"case_id": case_id, "total_persons": len(persons), "items": items}
+
+    async def person_centric_network(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        case_id: str,
+        person_key: str,
+        *,
+        depth: int = 1,
+        limit: int = 400,
+    ) -> dict[str, Any]:
+        """Target person + typed neighbourhood to ``depth`` hops.
+
+        This is the answer to "how is this person connected to the rest of the
+        network" — not a dump of every entity in the case.  Traversal is a
+        plain BFS over the backend-independent snapshot, so the behaviour is
+        identical on the embedded store and on Neo4j.  When the hop budget is
+        exhausted, edges that directly involve a PERSON are kept in preference
+        to entity-to-entity edges, because person-to-person and
+        person-to-asset links are what an investigator expands first.
+        """
+        from app.services.cases import require_case
+
+        await require_case(session, scope, case_id)
+        await self._assert_node_in_scope(session, scope, person_key)
+        snapshot = self.container.graph_store.snapshot(case_id, include_staging=False)
+        if person_key not in snapshot.nodes:
+            raise NotFoundError("That person is not part of this case graph.")
+
+        depth = max(1, min(int(depth), 3))
+        adjacency: dict[str, list[tuple[str, Any]]] = {}
+        for edge in snapshot.edges:
+            adjacency.setdefault(edge.source_key, []).append((edge.target_key, edge))
+            adjacency.setdefault(edge.target_key, []).append((edge.source_key, edge))
+
+        def edge_priority(edge) -> int:
+            # Person-involving relations first when we must drop something.
+            person_rels = {
+                "USES_PHONE", "OWNS_VEHICLE", "OWNS_ACCOUNT", "CALLED",
+                "ASSOCIATE_OF", "RELATIVE_OF", "ARRESTED_WITH",
+                "NAMED_ACCOMPLICE_OF", "MEMBER_OF", "LOCATED_AT",
+                "ACCUSED_IN", "PARTICIPATED_IN", "TRANSFER_TO",
+            }
+            return 0 if edge.rel_type in person_rels else 1
+
+        layer_of: dict[str, int] = {person_key: 0}
+        frontier = {person_key}
+        kept_edges: list[Any] = []
+        truncated = False
+        for current_depth in range(1, depth + 1):
+            next_frontier: set[str] = set()
+            for node_key in sorted(frontier):
+                candidates = sorted(
+                    adjacency.get(node_key, []),
+                    key=lambda item: (
+                        edge_priority(item[1]),
+                        item[0],
+                    ),
+                )
+                for neighbour, edge in candidates:
+                    if len(layer_of) >= limit and neighbour not in layer_of:
+                        truncated = True
+                        continue
+                    kept_edges.append(edge)
+                    if neighbour not in layer_of:
+                        layer_of[neighbour] = current_depth
+                        next_frontier.add(neighbour)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        keys = set(layer_of)
+        nodes = [snapshot.nodes[k] for k in keys if k in snapshot.nodes]
+        # De-duplicate edges (a visited pair may be reached from both sides).
+        unique_edges: dict[str, Any] = {}
+        for edge in kept_edges:
+            if edge.source_key in keys and edge.target_key in keys:
+                unique_edges[getattr(edge, "key", "") or f"{edge.source_key}|{edge.rel_type}|{edge.target_key}"] = edge
+
+        by_label = dict(Counter(canonical_label(n.label) for n in nodes))
+        by_rel = dict(Counter(e.rel_type for e in unique_edges.values()))
+        return {
+            "case_id": case_id,
+            "target": _node_row(snapshot.nodes[person_key]),
+            "depth": depth,
+            "truncated": truncated,
+            "layers": {
+                "1": sum(1 for v in layer_of.values() if v == 1),
+                "2": sum(1 for v in layer_of.values() if v == 2),
+                "3": sum(1 for v in layer_of.values() if v == 3),
+            },
+            "counts": {
+                "nodes": len(nodes),
+                "edges": len(unique_edges),
+                "by_label": by_label,
+                "by_rel_type": by_rel,
+            },
+            "nodes": [_node_row(n) for n in nodes],
+            "edges": [_edge_row(e) for e in unique_edges.values()],
+        }
+
     # ---------------------------------------------------------------- timeline
     async def timeline(
         self,
@@ -329,9 +471,11 @@ def _evidence_pointer(properties: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _node_row(node: GraphNode) -> dict[str, Any]:
+    from app.domain.enums import canonical_label
+
     return {
         "provenance_key": node.provenance_key,
-        "label": node.label,
+        "label": canonical_label(node.label),
         "name": node.name,
         "confidence": float(node.properties.get("confidence", 1.0) or 1.0),
         "case_ids": list(node.properties.get("case_ids") or []),

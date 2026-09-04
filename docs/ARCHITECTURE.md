@@ -205,11 +205,12 @@ corpora. Changing entity counts requires no source code changes.
 ## 7a. External Synthetic Corpus (filesystem dataset)
 
 `CRIMELINK_SYNTHETIC_DATA_MODE=external` (the development default) reads a
-corpus directory on disk. The local dataset lives at
-`backend/CrimeLink_Synthetic_Corpus_v1/` (gitignored). Relative
+corpus directory on disk. The local synthetic corpus lives at
+`backend/CrimeLink_Synthetic_Corpus_v1/`. The corpus is fully synthetic and
+is tracked in the repository. Relative
 `CRIMELINK_SYNTHETIC_DATA_ROOT` values resolve against the repo root;
-absolute paths are honoured verbatim. Nothing is copied into Git and nothing
-is ingested at startup. Use **Administration → Dataset → Validate / Import**.
+absolute paths are honoured verbatim. Nothing is ingested at startup. Use
+**Administration → Dataset → Validate / Import**.
 
 The **ExternalSyntheticCorpusAdapter** implements the same `SourceAdapter`
 boundary as the generator and feeds the same pipeline

@@ -89,30 +89,48 @@ class InlineBroker:
 
 
 class InProcessEventBus:
-    """Async fan-out used by the WebSocket status channel (PRD 10)."""
+    """Async fan-out used by the WebSocket status channel (PRD 10).
+
+    Publishers are the pipeline worker **threads** (InlineBroker), while
+    subscribers live on the API's event loop.  ``asyncio.Queue.put_nowait``
+    from a foreign thread enqueues the message but never wakes a loop that is
+    asleep in ``select`` — the subscriber would hang forever.  Each
+    subscription therefore remembers its loop and delivery goes through
+    ``loop.call_soon_threadsafe``, which is the one cross-thread-safe way to
+    both schedule and wake.
+    """
 
     backend_name = "inprocess"
 
     def __init__(self) -> None:
-        self._subscribers: dict[str, list[asyncio.Queue]] = {}
+        self._subscribers: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]]] = {}
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _deliver(queue: asyncio.Queue, message: dict[str, Any]) -> None:
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:  # pragma: no cover - bounded queues
+            pass
 
     def publish(self, channel: str, message: dict[str, Any]) -> None:
         with self._lock:
-            queues = list(self._subscribers.get(channel, []))
-        for queue in queues:
+            targets = list(self._subscribers.get(channel, []))
+        for loop, queue in targets:
             try:
-                queue.put_nowait(message)
-            except asyncio.QueueFull:  # pragma: no cover - bounded queues
+                loop.call_soon_threadsafe(self._deliver, queue, message)
+            except RuntimeError:  # pragma: no cover - loop already closed
                 pass
 
     async def subscribe(self, channel: str):
         queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        loop = asyncio.get_running_loop()
+        entry = (loop, queue)
         with self._lock:
-            self._subscribers.setdefault(channel, []).append(queue)
+            self._subscribers.setdefault(channel, []).append(entry)
         try:
             while True:
                 yield await queue.get()
         finally:
             with self._lock:
-                self._subscribers.get(channel, []).remove(queue)
+                self._subscribers.get(channel, []).remove(entry)

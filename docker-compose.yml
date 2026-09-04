@@ -15,7 +15,7 @@
 # an internal mirror on NIC-MeghRaj with no registry access.
 #
 # Quick start:
-#   cp .env.example .env      # then set CRIMELINK_SECRET_KEY and NVIDIA_API_KEY
+#   cp .env.example .env      # then set CRIMELINK_SECRET_KEY and CRIMELINK_AI_API_KEY
 #   docker compose up -d --build
 #   Open the console and create the first administrator account.
 
