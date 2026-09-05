@@ -23,6 +23,11 @@ Design summary (see PRD §4–§13):
 * **Ground truth** (identity groups, bridges, intended scenarios) is written
   to a separate JSON file — never to the operational graph/DB and never
   exposed to the investigator UI.
+* **Two populations**, mirroring ``build_external.py``: a *case population*
+  whose people/phones/vehicles/accounts belong to named cases, and a smaller
+  *background population* (``subject_in_no_case``) of structurally valid,
+  unrelated people who phone and pay each other but are never attached to a
+  case, a case document or the operational graph.
 * Safety: refuses to run against a non-empty production database unless an
   explicit ``--yes-i-am-sure`` flag is given; all records are tagged
   ``source_environment="synthetic"``.
@@ -34,6 +39,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
+import io
 import json
 import random
 import sys
@@ -73,6 +80,20 @@ log = get_logger("crimelink.synthetic")
 
 SOURCE_ENV = "synthetic"
 
+# Sighting *sources* are a property of an observation (which system saw it), not
+# the observation's identity: two CCTV sightings are two distinct events.  The
+# list mirrors build_external.py's SIGHTING_SOURCES so both corpora use the same
+# vocabulary.
+SIGHTING_SOURCES = ["CCTV", "PATROL", "ANPR", "INTELLIGENCE"]
+
+# Transaction channels mirror build_external.py's TX_TYPES so the bank-statement
+# documents of both corpora carry the same channel semantics.
+TRANSACTION_CHANNELS = ["IMPS", "NEFT", "RTGS", "UPI", "CASH_DEPOSIT"]
+
+# Case roles for the criminal-history record of each case member — the same
+# subject vocabulary the external corpus uses for its case members.
+CASE_ROLES = ["SUSPECT", "ACCOMPLICE"]
+
 
 # ---------------------------------------------------------------------------
 # Options
@@ -99,6 +120,14 @@ class CorpusOptions:
     duplicate_rate: float = 0.08
     name_variation_rate: float = 0.15
     time_window_days: int = 120
+    #: How many of ``person_count`` belong to the *unrelated* background
+    #: population (the coherent negative class, ``subject_in_no_case``).  They
+    #: are structurally valid — name, address, phone, sometimes a vehicle or
+    #: account — but are attached to no case and appear in no case document.
+    #: The dataclass default is 0 so direct ``CorpusOptions(...)`` construction
+    #: (used by tests) keeps the historical all-case behaviour; the production
+    #: default comes from ``Settings.synthetic_background_person_count``.
+    background_person_count: int = 0
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "CorpusOptions":
@@ -121,6 +150,7 @@ class CorpusOptions:
             missing_field_rate=s.synthetic_missing_field_rate,
             duplicate_rate=s.synthetic_duplicate_rate,
             name_variation_rate=s.synthetic_name_variation_rate,
+            background_person_count=s.synthetic_background_person_count,
         )
 
 
@@ -150,6 +180,12 @@ class SynthPerson:
     organization_ids: list[str] = field(default_factory=list)
     network: int | None = None
     is_bridge: bool = False
+    #: True when this person belongs to the *unrelated* background population —
+    #: the coherent negative class.  The name mirrors the external adapter's
+    #: ``subject_in_no_case`` quarantine reason so both corpora speak the same
+    #: language.  Background people are never attached to a case or a case
+    #: document.
+    subject_in_no_case: bool = False
 
 
 @dataclass
@@ -225,7 +261,25 @@ class SynthTransaction:
     dst_account: str
     amount: float
     ts: datetime
-    remarks: str = ""
+    channel: str = ""
+
+
+@dataclass
+class SynthSighting:
+    """One observed vehicle/location event — its own identity, never merged.
+
+    ``id`` is the event's own identity; ``(person_id, ts)`` is its natural key.
+    ``source`` is *which* system saw it (CCTV/PATROL/ANPR/INTELLIGENCE) and is a
+    property of the event, not its identity — two CCTV sightings are two events.
+    """
+
+    id: str
+    person_id: str
+    vehicle_id: str
+    location_id: str
+    ts: datetime
+    source: str
+    case_id: str
 
 
 @dataclass
@@ -246,27 +300,52 @@ class SyntheticCorpus:
     cases: list[SynthCase] = field(default_factory=list)
     calls: list[SynthCall] = field(default_factory=list)
     transactions: list[SynthTransaction] = field(default_factory=list)
+    sightings: list[SynthSighting] = field(default_factory=list)
+    #: Coherent *unrelated* activity — background people phone and pay each
+    #: other, but these never enter a case document and therefore never reach
+    #: the operational graph.  Recorded in ground truth only.
+    background_calls: list[SynthCall] = field(default_factory=list)
+    background_transactions: list[SynthTransaction] = field(default_factory=list)
     documents: list[dict] = field(default_factory=list)
     ground_truth: dict[str, Any] = field(default_factory=dict)
     rng: random.Random = field(default_factory=lambda: random.Random(0))
+    #: Frozen at build() start so every generated timestamp is strictly past.
+    _now: datetime = field(default_factory=utcnow)
 
     # ------------------------------------------------------------ generation
 
     def build(self) -> None:
         self.rng = random.Random(self.opts.seed)
+        self._now = utcnow()
         self._locations()
         self._organizations()
         self._persons()
         self._phones()
         self._vehicles()
         self._accounts()
+        self._mark_background_population()
         self._networks_and_bridges()
+        self._assign_background_assets()
         self._cases()
         self._assign_entities_to_cases()
         self._calls()
         self._transactions()
+        self._sightings()
+        self._background_activity()
         self._build_ground_truth()
         self._documents()
+
+    def validate(self) -> list[str]:
+        """Run the shared corpus invariants over this corpus.
+
+        Returns a list of human-readable problems; an empty list means the
+        corpus is semantically valid (referential integrity, event identity,
+        background isolation, meaningful ownership, transaction traceability,
+        valid timestamps).
+        """
+        from app.synthetic_corpus.validation import validate_generated
+
+        return validate_generated(self)
 
     # ----------------------------------------------------- entity factories
 
@@ -403,15 +482,43 @@ class SyntheticCorpus:
                 )
             )
 
+    # ------------------------------------------------------- population split
+
+    def _background_count(self) -> int:
+        """Number of persons reserved for the unrelated background population."""
+        total = len(self.persons)
+        return min(max(0, self.opts.background_person_count), max(0, total - 1))
+
+    def _mark_background_population(self) -> None:
+        """Reserve the trailing persons as the ``subject_in_no_case`` population.
+
+        Background people are structurally complete but belong to no case.  They
+        are kept out of every network, every case and every case document.
+        """
+        bg = self._background_count()
+        for p in self.persons[-bg:] if bg else []:
+            p.subject_in_no_case = True
+
+    def _window_ts(
+        self, center: datetime, *, before_days: int, after_days: int
+    ) -> datetime:
+        """A timestamp within ``[center - before_days, center + after_days]``,
+        never in the future."""
+        lo = center - timedelta(days=before_days)
+        hi = min(center + timedelta(days=after_days), self._now)
+        span = max(1, int((hi - lo).total_seconds()))
+        return lo + timedelta(seconds=self.rng.randint(0, span))
+
     # ------------------------------------------------------- network assembly
 
     def _networks_and_bridges(self) -> None:
         n_nets = max(1, self.opts.network_count)
         nets: list[list[int]] = [[] for _ in range(n_nets)]
-        # assign core members per network
-        person_idxs = list(range(len(self.persons)))
+        # assign core members per network — background people are excluded here
+        # (and everywhere else): they never join a network or a case.
+        person_idxs = [i for i in range(len(self.persons)) if not self.persons[i].subject_in_no_case]
         self.rng.shuffle(person_idxs)
-        core_per_net = max(3, self.opts.person_count // (n_nets * 3))
+        core_per_net = max(3, len(person_idxs) // (n_nets * 3))
         pos = 0
         for n in range(n_nets):
             for _ in range(core_per_net):
@@ -483,13 +590,22 @@ class SyntheticCorpus:
                     if p.id not in org.member_ids:
                         org.member_ids.append(p.id)
 
-        # Some phones are "burner": very few owners and later used heavily for
-        # a short burst
-        burner_count = max(2, self.opts.phone_count // 20)
-        for ph in self.rng.sample(self.phones, burner_count):
+        # Some phones are "burner": owned, but used heavily for a short burst.
+        # Only *owned* phones can be burners, so a burner always belongs to a
+        # case person (consistent with the reference corpus, where every phone
+        # names an owner).
+        owned_phones = [ph for ph in self.phones if ph.owner_ids]
+        burner_count = min(max(2, self.opts.phone_count // 20), len(owned_phones))
+        for ph in self.rng.sample(owned_phones, burner_count):
             ph.is_burner = True
-            ph.activated_at = utcnow() - timedelta(days=self.rng.randint(7, 60))
-            ph.deactivated_at = ph.activated_at + timedelta(days=self.rng.randint(5, 21))
+            ph.activated_at = self._now - timedelta(days=self.rng.randint(7, 60))
+            # A burner is already out of service, so its deactivation must be
+            # strictly in the past — otherwise its fanout calls would land in
+            # the future.
+            ph.deactivated_at = min(
+                ph.activated_at + timedelta(days=self.rng.randint(5, 21)),
+                self._now - timedelta(days=1),
+            )
 
         self.ground_truth["networks"] = [
             {"network": n, "person_ids": [self.persons[i].id for i in members]}
@@ -497,10 +613,68 @@ class SyntheticCorpus:
         ]
         self.ground_truth["bridge_person_ids"] = [self.persons[i].id for i in bridges]
 
+    def _assign_background_assets(self) -> None:
+        """Give every background person exclusive, self-contained assets.
+
+        Mirrors ``build_external.build_background``: every background person
+        owns a phone, about half own a vehicle and most own an account.  Assets
+        are created *fresh* (never drawn from the case pools), so a background
+        person can never share an asset — and therefore never share a graph
+        edge — with a case person.
+        """
+        bg_persons = [p for p in self.persons if p.subject_in_no_case]
+        if not bg_persons:
+            return
+        phone_numbers = {ph.number for ph in self.phones}
+        plates = {v.plate for v in self.vehicles}
+        account_keys = {(a.ifsc, a.number) for a in self.accounts}
+        for i, p in enumerate(bg_persons):
+            while True:
+                number = "+919" + "".join(str(self.rng.randint(0, 9)) for _ in range(9))
+                if number not in phone_numbers:
+                    phone_numbers.add(number)
+                    break
+            phone = SynthPhone(
+                id=f"PHONE_BG_{i + 1:03d}", number=number, owner_ids=[p.id]
+            )
+            self.phones.append(phone)
+            p.phone_ids.append(phone.id)
+            if self.rng.random() < 0.5:
+                while True:
+                    rto = self.rng.choice(RTO_CODES)
+                    letters = "".join(chr(self.rng.randint(65, 90)) for _ in range(2))
+                    digits = self.rng.randint(1, 9999)
+                    plate = f"{rto}{letters}{digits:04d}"
+                    if plate not in plates:
+                        plates.add(plate)
+                        break
+                vehicle = SynthVehicle(
+                    id=f"VEHICLE_BG_{i + 1:03d}", plate=plate, rto=rto, owner_ids=[p.id]
+                )
+                self.vehicles.append(vehicle)
+                p.vehicle_ids.append(vehicle.id)
+            if self.rng.random() < 0.7:
+                ifsc = self.rng.choice(BANK_IFSC_PREFIXES) + "0" + str(self.rng.randint(10000, 99999))
+                while True:
+                    number = str(self.rng.randint(1000000000, 999999999999))
+                    key = (ifsc, number)
+                    if key not in account_keys:
+                        account_keys.add(key)
+                        break
+                account = SynthAccount(
+                    id=f"ACCOUNT_BG_{i + 1:03d}",
+                    number=number,
+                    ifsc=ifsc,
+                    bank=self.rng.choice(BANK_NAMES),
+                    controller_ids=[p.id],
+                )
+                self.accounts.append(account)
+                p.account_ids.append(account.id)
+
     # ---------------------------------------------------------------- cases
 
     def _cases(self) -> None:
-        base_ts = utcnow() - timedelta(days=self.opts.time_window_days)
+        base_ts = self._now - timedelta(days=self.opts.time_window_days)
         for i in range(self.opts.case_count):
             state_code, state_name = self.rng.choice(INDIAN_STATES)
             district = self.rng.choice(DISTRICTS)
@@ -528,16 +702,20 @@ class SyntheticCorpus:
         """Cross-case assignment: overlap entities so cross-case analytics fires."""
         # shuffle persons/phones/vehicles/accounts/locations across cases
         for c in self.cases:
-            # choose a core network
+            # choose a core network — background people are never case members
             net = self.rng.randrange(max(1, self.opts.network_count))
-            members = [p for p in self.persons if p.network == net]
+            members = [p for p in self.persons if p.network == net and not p.subject_in_no_case]
             if not members:
-                members = self.persons
+                members = [p for p in self.persons if not p.subject_in_no_case]
             selected_persons = self.rng.sample(
                 members, k=min(self.rng.randint(4, 8), len(members))
             )
             # sprinkle some cross-case people (the bridges and others)
-            bridges = [p for p in self.persons if p.is_bridge and p not in selected_persons]
+            bridges = [
+                p
+                for p in self.persons
+                if p.is_bridge and not p.subject_in_no_case and p not in selected_persons
+            ]
             if bridges and self.rng.random() > 0.4:
                 selected_persons.append(self.rng.choice(bridges))
             c.person_ids = [p.id for p in selected_persons]
@@ -561,7 +739,6 @@ class SyntheticCorpus:
     # ----------------------------------------------------- calls & transfers
 
     def _calls(self) -> None:
-        base_ts = utcnow() - timedelta(days=self.opts.time_window_days)
         # For each case, generate calls between phones mentioned in that case,
         # plus cross-network calls via bridge phones (the hidden connection).
         phone_by_id = {p.id: p for p in self.phones}
@@ -572,17 +749,10 @@ class SyntheticCorpus:
             n_case_calls = self.opts.call_count // self.opts.case_count
             for _ in range(n_case_calls):
                 src, dst = self.rng.sample(phones, 2)
-                ts = c.incident_date + timedelta(
-                    days=self.rng.randint(-20, 5),
-                    hours=self.rng.randint(0, 23),
-                    minutes=self.rng.randint(0, 59),
-                )
+                ts = self._window_ts(c.incident_date, before_days=20, after_days=5)
                 # clusters of rapid contact before/after incident
                 if self.rng.random() < 0.25:
-                    ts = c.incident_date + timedelta(
-                        hours=self.rng.randint(-48, 48),
-                        minutes=self.rng.randint(0, 59),
-                    )
+                    ts = self._window_ts(c.incident_date, before_days=2, after_days=2)
                 self.calls.append(
                     SynthCall(
                         src_phone=src.id,
@@ -591,10 +761,15 @@ class SyntheticCorpus:
                         duration_s=self.rng.randint(10, 900),
                     )
                 )
-        # Burner fanout calls
+        # Burner fanout calls — only to other *owned case* phones, never to an
+        # un-owned spare and never into the unrelated background population.
+        bg_phone_ids = {
+            pid for p in self.persons if p.subject_in_no_case for pid in p.phone_ids
+        }
+        case_owned_phones = [p for p in self.phones if p.owner_ids and p.id not in bg_phone_ids]
         for ph in self.phones:
             if ph.is_burner and ph.activated_at and ph.deactivated_at:
-                others = [p for p in self.phones if p.id != ph.id]
+                others = [p for p in case_owned_phones if p.id != ph.id]
                 if not others:
                     continue
                 fanout = self.rng.randint(15, 30)
@@ -611,19 +786,27 @@ class SyntheticCorpus:
                     )
 
     def _transactions(self) -> None:
-        account_by_id = {a.id: a for a in self.accounts}
+        # Only accounts held by case people participate in case transfers, so a
+        # background account can never be pulled into an investigation.
+        case_person_ids = {p.id for p in self.persons if not p.subject_in_no_case}
+        case_accounts = [
+            a for a in self.accounts
+            if any(pid in case_person_ids for pid in a.controller_ids)
+        ]
+        if not case_accounts:
+            return
         # Chain transfers through mule accounts (structuring signature)
         for _ in range(self.opts.transaction_count):
-            src_acc = self.rng.choice(self.accounts)
+            src_acc = self.rng.choice(case_accounts)
             # 80% same-case, 20% mule chain (different account / network)
             if self.rng.random() < 0.7:
                 candidates = [
-                    a for a in self.accounts
+                    a for a in case_accounts
                     if a.id != src_acc.id
                     and (set(a.controller_ids) & set(src_acc.controller_ids) == set())
-                ] or [a for a in self.accounts if a.id != src_acc.id]
+                ] or [a for a in case_accounts if a.id != src_acc.id]
             else:
-                candidates = [a for a in self.accounts if a.id != src_acc.id]
+                candidates = [a for a in case_accounts if a.id != src_acc.id]
             if not candidates:
                 continue
             dst_acc = self.rng.choice(candidates)
@@ -635,12 +818,9 @@ class SyntheticCorpus:
             # temporal — most around case incident dates
             c = self.rng.choice(self.cases) if self.cases else None
             if c:
-                ts = c.incident_date + timedelta(
-                    days=self.rng.randint(-30, 10),
-                    hours=self.rng.randint(0, 23),
-                )
+                ts = self._window_ts(c.incident_date, before_days=30, after_days=10)
             else:
-                ts = utcnow() - timedelta(days=self.rng.randint(1, 90))
+                ts = self._window_ts(self._now, before_days=90, after_days=0)
             self.transactions.append(
                 SynthTransaction(
                     id=f"TXN_{len(self.transactions)+1:05d}",
@@ -648,9 +828,93 @@ class SyntheticCorpus:
                     dst_account=dst_acc.id,
                     amount=float(amount),
                     ts=ts,
-                    remarks=self.rng.choice(["cash", "neft", "imps", "rtgs", "transfer", ""]),
+                    channel=self.rng.choice(TRANSACTION_CHANNELS),
                 )
             )
+
+    def _sightings(self) -> None:
+        """Vehicle/location sightings — one identity per observation.
+
+        Each sighting is its own event with a unique ``id`` and a distinct
+        ``(subject, timestamp)``, so two CCTV sightings of the same person stay
+        two events in the graph.  The subject is the owner of the sighted
+        vehicle (the same claim the external corpus's ``vehicle_sightings.csv``
+        makes); the ``source`` records *which* system made the observation.
+        """
+        vehicle_by_id = {v.id: v for v in self.vehicles}
+        used_keys: set[tuple[str, str]] = set()
+        for c in self.cases:
+            case_vehicles = [vehicle_by_id[vid] for vid in c.vehicle_ids if vid in vehicle_by_id]
+            case_locations = [l for l in self.locations if l.id in c.location_ids]
+            if not case_vehicles or not case_locations:
+                continue
+            n_sightings = self.rng.randint(3, 10)
+            for _ in range(n_sightings):
+                vehicle = self.rng.choice(case_vehicles)
+                location = self.rng.choice(case_locations)
+                owner = vehicle.owner_ids[0] if vehicle.owner_ids else ""
+                # Guarantee a distinct (subject, timestamp) for this occurrence.
+                while True:
+                    ts = self._window_ts(c.incident_date, before_days=15, after_days=5)
+                    key = (owner, ts.isoformat())
+                    if key not in used_keys:
+                        used_keys.add(key)
+                        break
+                self.sightings.append(
+                    SynthSighting(
+                        id=f"SIGHTING_{len(self.sightings) + 1:04d}",
+                        person_id=owner,
+                        vehicle_id=vehicle.id,
+                        location_id=location.id,
+                        ts=ts,
+                        source=self.rng.choice(SIGHTING_SOURCES),
+                        case_id=c.id,
+                    )
+                )
+
+    def _background_activity(self) -> None:
+        """Coherent, self-contained background activity (the negative class).
+
+        Background people phone and pay each other, exactly like
+        ``build_external.build_background``, but none of it is attached to a
+        case or emitted into any document — so it never reaches the operational
+        graph.  It is recorded in ground truth only.
+        """
+        bg_ids = {p.id for p in self.persons if p.subject_in_no_case}
+        if len(bg_ids) < 2:
+            return
+        bg_phones = [
+            ph for ph in self.phones if ph.owner_ids and all(o in bg_ids for o in ph.owner_ids)
+        ]
+        bg_accounts = [
+            a for a in self.accounts if a.controller_ids and all(o in bg_ids for o in a.controller_ids)
+        ]
+        if len(bg_phones) >= 2:
+            for _ in range(max(2, len(bg_ids) * 3)):
+                src, dst = self.rng.sample(bg_phones, 2)
+                ts = self._window_ts(self._now, before_days=self.opts.time_window_days, after_days=0)
+                self.background_calls.append(
+                    SynthCall(
+                        src_phone=src.id,
+                        dst_phone=dst.id,
+                        ts=ts,
+                        duration_s=self.rng.randint(5, 1800),
+                    )
+                )
+        if len(bg_accounts) >= 2:
+            for _ in range(max(2, len(bg_accounts))):
+                src_acc, dst_acc = self.rng.sample(bg_accounts, 2)
+                ts = self._window_ts(self._now, before_days=self.opts.time_window_days, after_days=0)
+                self.background_transactions.append(
+                    SynthTransaction(
+                        id=f"BG_TXN_{len(self.background_transactions) + 1:04d}",
+                        src_account=src_acc.id,
+                        dst_account=dst_acc.id,
+                        amount=round(self.rng.uniform(1000, 200000), 2),
+                        ts=ts,
+                        channel=self.rng.choice(TRANSACTION_CHANNELS),
+                    )
+                )
 
     # ------------------------------------------------------------ documents
 
@@ -685,11 +949,15 @@ class SyntheticCorpus:
         return name if self.rng.random() > self.opts.missing_field_rate / 2 else ""
 
     def _documents(self) -> None:
-        """Generate a set of document records (FIR/CDR/FINANCIAL/SURVEILLANCE).
+        """Generate document records (FIR/CRIMINAL_HISTORY/CDR/FINANCIAL/SURVEILLANCE).
 
         These are rendered as text/CSV content strings that the existing
-        document adapters will parse.  Duplicates are emitted at
-        ``duplicate_rate`` to exercise de-duplication.
+        document adapters will parse.  The criminal-history record is the
+        ownership evidence: it names each case member with the phone, vehicle
+        and account the corpus *actually* assigns them, so the pipeline can
+        emit ``USES_PHONE`` / ``OWNS_VEHICLE`` / ``OWNS_ACCOUNT`` edges rather
+        than guessing.  Duplicates are emitted at ``duplicate_rate`` to exercise
+        de-duplication.
         """
         phone_by_id = {p.id: p for p in self.phones}
         vehicle_by_id = {v.id: v for v in self.vehicles}
@@ -768,6 +1036,40 @@ class SyntheticCorpus:
                 "language": "en",
             })
 
+        # Criminal-history record per case — the *ownership* evidence.
+        # Columns mirror the criminal-history adapter's aliases; phone/vehicle/
+        # account are joined from the corpus ownership data, never invented.
+        # Addresses contain commas, so the CSV is written with real quoting.
+        for c in self.cases:
+            members = [person_by_id[pid] for pid in c.person_ids if pid in person_by_id]
+            if not members:
+                continue
+            rows = [["name", "aliases", "role", "case_ref", "case_date",
+                     "phone", "plate", "account", "bank_code", "address"]]
+            for idx, m in enumerate(members):
+                role = CASE_ROLES[0] if idx == 0 else CASE_ROLES[1]
+                ph = phone_by_id[m.phone_ids[0]].number if m.phone_ids else ""
+                v = vehicle_by_id[m.vehicle_ids[0]].plate if m.vehicle_ids else ""
+                acc = account_by_id.get(m.account_ids[0]) if m.account_ids else None
+                rows.append([
+                    m.canonical_name, "", role, c.case_number,
+                    c.incident_date.strftime("%d/%m/%Y"), ph, v,
+                    acc.number if acc else "", acc.ifsc if acc else "",
+                    m.addresses[0] if m.addresses else "",
+                ])
+            buf = io.StringIO(newline="")
+            csv.writer(buf).writerows(rows)
+            content = buf.getvalue()
+            self.documents.append({
+                "doc_id": new_doc_id(),
+                "case": c,
+                "document_type": DocumentType.CRIMINAL_HISTORY,
+                "filename": f"{c.case_number.replace('/', '-')}-PERSONS.csv",
+                "content_type": "text/csv",
+                "content": content,
+                "language": "en",
+            })
+
         # CDR document per case — CSV
         for c in self.cases:
             case_phones = [phone_by_id[pid] for pid in c.phone_ids if pid in phone_by_id]
@@ -800,7 +1102,7 @@ class SyntheticCorpus:
         # Bank / financial document per case
         for c in self.cases:
             case_accounts = {aid for aid in c.account_ids}
-            lines = ["txn_id,date,from_account,to_account,amount,ifsc,remarks"]
+            lines = ["txn_id,date,from_account,to_account,amount,ifsc,channel"]
             tx_count = 0
             for t in self.transactions:
                 if t.src_account in case_accounts or t.dst_account in case_accounts:
@@ -811,7 +1113,7 @@ class SyntheticCorpus:
                     lines.append(
                         f"{t.id},{t.ts.strftime('%Y-%m-%d')},"
                         f"{src_acc.number},{dst_acc.number},"
-                        f"{t.amount:.2f},{src_acc.ifsc},{t.remarks}"
+                        f"{t.amount:.2f},{src_acc.ifsc},{t.channel}"
                     )
                     tx_count += 1
                     if tx_count > 80:
@@ -829,23 +1131,32 @@ class SyntheticCorpus:
                 "language": "en",
             })
 
-        # Surveillance document for some cases — vehicle/location sightings
-        for c in self.cases[: max(1, len(self.cases) // 2)]:
-            lines = ["date,vehicle,location,observer"]
-            case_vehicles = [vehicle_by_id[vid] for vid in c.vehicle_ids if vid in vehicle_by_id]
-            case_locations = [location_by_id[lid] for lid in c.location_ids if lid in location_by_id]
-            if not case_vehicles or not case_locations:
+        # Surveillance document per case — one row per observation, rendered
+        # from the first-class sighting events so every occurrence keeps its
+        # own subject, timestamp and source (no global PATROL/CCTV collapse).
+        # Locations contain commas, so the CSV is written with real quoting.
+        for c in self.cases:
+            case_sightings = [s for s in self.sightings if s.case_id == c.id]
+            if not case_sightings:
                 continue
-            n_sightings = self.rng.randint(3, 10)
-            for _ in range(n_sightings):
-                v = self.rng.choice(case_vehicles)
-                loc = self.rng.choice(case_locations)
-                ts = c.incident_date + timedelta(days=self.rng.randint(-15, 5))
-                lines.append(
-                    f"{ts.strftime('%Y-%m-%d %H:%M')},{v.plate},"
-                    f"{loc.address} {loc.district},SI-{self.rng.randint(10,99)}"
-                )
-            content = "\n".join(lines)
+            rows = [["subject", "observed_at", "location", "vehicle", "remarks"]]
+            for s in case_sightings:
+                subject = person_by_id.get(s.person_id)
+                subject_name = subject.canonical_name if subject else ""
+                loc = location_by_id.get(s.location_id)
+                loc_label = f"{loc.address} {loc.district}" if loc else ""
+                v = vehicle_by_id.get(s.vehicle_id)
+                plate = v.plate if v else ""
+                rows.append([
+                    subject_name,
+                    s.ts.strftime("%Y-%m-%d %H:%M:%S"),
+                    loc_label,
+                    plate,
+                    s.source,
+                ])
+            buf = io.StringIO(newline="")
+            csv.writer(buf).writerows(rows)
+            content = buf.getvalue()
             self.documents.append({
                 "doc_id": new_doc_id(),
                 "case": c,
@@ -918,12 +1229,25 @@ class SyntheticCorpus:
             "type": "noise",
             "description": "Phones/vehicles shared across members create low-confidence indirect links.",
         })
+        # 9) the unrelated background population — the coherent negative class
+        bg_ids = [p.id for p in self.persons if p.subject_in_no_case]
+        if bg_ids:
+            scenarios.append({
+                "type": "background_population",
+                "person_ids": bg_ids,
+                "description": (
+                    "Structurally valid people who belong to no case; their calls and "
+                    "transfers stay self-contained and never enter the investigation."
+                ),
+            })
         self.ground_truth.update({
             "version": self.opts.version,
             "seed": self.opts.seed,
             "generated_at": utcnow().isoformat(),
             "counts": {
                 "persons": len(self.persons),
+                "case_persons": len(self.persons) - len(bg_ids),
+                "background_persons": len(bg_ids),
                 "phones": len(self.phones),
                 "vehicles": len(self.vehicles),
                 "locations": len(self.locations),
@@ -932,15 +1256,52 @@ class SyntheticCorpus:
                 "cases": len(self.cases),
                 "calls": len(self.calls),
                 "transactions": len(self.transactions),
+                "sightings": len(self.sightings),
+                "background_calls": len(self.background_calls),
+                "background_transactions": len(self.background_transactions),
                 "documents": len(self.documents),
             },
             "scenarios": scenarios,
+            "background_person_ids": bg_ids,
+            "background_population": [
+                {
+                    "id": p.id,
+                    "canonical_name": p.canonical_name,
+                    "subject_in_no_case": True,
+                    "phone_ids": p.phone_ids,
+                    "vehicle_ids": p.vehicle_ids,
+                    "account_ids": p.account_ids,
+                }
+                for p in self.persons
+                if p.subject_in_no_case
+            ],
+            "background_calls": [
+                {
+                    "src_phone": call.src_phone,
+                    "dst_phone": call.dst_phone,
+                    "ts": call.ts.isoformat(),
+                    "duration_s": call.duration_s,
+                }
+                for call in self.background_calls
+            ],
+            "background_transactions": [
+                {
+                    "id": t.id,
+                    "src_account": t.src_account,
+                    "dst_account": t.dst_account,
+                    "amount": t.amount,
+                    "ts": t.ts.isoformat(),
+                    "channel": t.channel,
+                }
+                for t in self.background_transactions
+            ],
             "persons": [
                 {
                     "id": p.id,
                     "canonical_name": p.canonical_name,
                     "is_bridge": p.is_bridge,
                     "network": p.network,
+                    "subject_in_no_case": p.subject_in_no_case,
                     "phone_ids": p.phone_ids,
                     "vehicle_ids": p.vehicle_ids,
                     "account_ids": p.account_ids,
@@ -1086,6 +1447,12 @@ async def generate_corpus(opts: CorpusOptions | None = None, *,
     corpus = SyntheticCorpus(opts=opts)
     t0 = time.time()
     corpus.build()
+    problems = corpus.validate()
+    if problems:
+        raise RuntimeError(
+            "Generated synthetic corpus failed semantic validation:\n- "
+            + "\n- ".join(problems)
+        )
     log.info("synthetic.built", persons=len(corpus.persons), cases=len(corpus.cases),
              phones=len(corpus.phones), docs=len(corpus.documents),
              elapsed=round(time.time() - t0, 2))

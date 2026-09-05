@@ -99,22 +99,89 @@ async def case_graph(
         False, description="Include unverified (anonymous-tip) nodes and links"
     ),
     limit: int = Query(2000, ge=1, le=10_000),
+    labels: str | None = Query(
+        None, description="Comma-separated entity types (PERSON, PHONE, …) to keep"
+    ),
+    rel_types: str | None = Query(
+        None, description="Comma-separated relationship types (CALLED, …) to keep"
+    ),
     scope: JurisdictionScope = Depends(get_scope),
     session: AsyncSession = Depends(get_db_session),
     principal: Principal = Depends(get_principal),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
-    """The whole case graph for the canvas — every node carries its evidence."""
+    """The whole case graph for the canvas — every node carries its evidence.
+
+    This is the **Master Graph**: the complete network of the case.  The
+    optional ``labels`` / ``rel_types`` filters restrict the view (the same
+    canonical data, just filtered) — they never change what is persisted.
+    """
+    label_list = [l.strip().upper() for l in (labels or "").split(",") if l.strip()]
+    rel_list = [r.strip().upper() for r in (rel_types or "").split(",") if r.strip()]
     payload = await GraphService().case_graph(
-        session, scope, case_id, include_staging=include_staging, limit=limit
+        session,
+        scope,
+        case_id,
+        include_staging=include_staging,
+        limit=limit,
+        labels=label_list or None,
+        rel_types=rel_list or None,
     )
     recorder.record(
         "GRAPH_EXPAND",
         target_resource=case_id,
         details={
-            "kind": "case_graph",
+            "kind": "master_graph",
             "nodes": len(payload["nodes"]),
             "edges": len(payload["edges"]),
+        },
+    )
+    await recorder.flush()
+    return payload
+
+
+@router.get("/cases/{case_id}/temporal")
+async def temporal_graph(
+    case_id: str,
+    target: str | None = Query(
+        None, description="Optional person provenance key to focus the window on"
+    ),
+    from_ts: str | None = Query(None, description="ISO-8601 start (inclusive)"),
+    to_ts: str | None = Query(None, description="ISO-8601 end (inclusive)"),
+    depth: int = Query(3, ge=1, le=4, description="BFS depth from the target"),
+    limit: int = Query(400, ge=1, le=2000),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """The time-constrained **visual** graph (Temporal Graph).
+
+    Returns graph-ready ``nodes`` / ``edges`` (plus the window, dated events
+    and evidence), NOT a serialised path.  A window that matches nothing comes
+    back with an explicit ``empty_reason``.
+    """
+    payload = await GraphService().temporal_graph(
+        session,
+        scope,
+        case_id,
+        target=target,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        depth=depth,
+        limit=limit,
+    )
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource=case_id,
+        details={
+            "kind": "temporal_graph",
+            "target": target,
+            "from_ts": from_ts,
+            "to_ts": to_ts,
+            "nodes": len(payload["nodes"]),
+            "edges": len(payload["edges"]),
+            "empty_reason": payload.get("empty_reason"),
         },
     )
     await recorder.flush()

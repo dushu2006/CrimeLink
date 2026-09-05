@@ -1366,3 +1366,148 @@ ul.compact {
 .influence h4 {
   margin: 0 0 6px;
 }
+
+/* -------------------------------------------------- graph mode switcher */
+.graph-modes {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--line, #d7dce3);
+  margin-bottom: 12px;
+}
+
+.mode-tab {
+  font: inherit;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--muted, #6b7280);
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+
+.mode-tab:hover {
+  color: var(--navy, #1b3a6b);
+  background: var(--navy-soft, #e8edf5);
+}
+
+.mode-tab.active {
+  color: var(--navy, #1b3a6b);
+  background: #fff;
+  border-color: var(--line, #d7dce3);
+  font-weight: 600;
+  position: relative;
+  top: 1px;
+}
+
+/* ------------------------------------------- master graph filter chips */
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+button.chip {
+  font: inherit;
+  padding: 3px 9px;
+  border: 1px solid var(--line, #d7dce3);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink, #111827);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+button.chip:hover {
+  border-color: var(--navy, #1b3a6b);
+}
+
+button.chip.active {
+  background: var(--navy, #1b3a6b);
+  color: #fff;
+  border-color: var(--navy, #1b3a6b);
+}
+
+.chip-rel {
+  text-transform: lowercase;
+}
+
+.rail-sub {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #6b7280);
+  margin: 10px 0 4px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+/* ------------------------------------------------ temporal controls */
+.form-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.form-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #6b7280);
+}
+
+.form-col input,
+.form-col select {
+  width: 100%;
+}
+
+/* --------------------------------------------------- timeline strip */
+.timeline-strip {
+  position: relative;
+  height: 34px;
+  border-bottom: 1px solid var(--line, #d7dce3);
+  background:
+    linear-gradient(to right, transparent calc(50% - 1px), var(--line, #d7dce3) 50%, transparent calc(50% + 1px)),
+    #fafbfc;
+}
+
+.timeline-dot {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  transform: translateY(-50%);
+  border: none;
+  border-radius: 50%;
+  background: var(--navy, #1b3a6b);
+  cursor: pointer;
+  padding: 0;
+}
+
+.timeline-dot:hover {
+  background: var(--warn, #b45309);
+}
+
+/* ------------------------------------------------------------- banners */
+.banner {
+  padding: 8px 12px;
+  border: 1px solid var(--line, #d7dce3);
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.banner-warn {
+  background: #fff7ed;
+  border-color: #f0c58f;
+  color: var(--warn, #b45309);
+}

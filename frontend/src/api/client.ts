@@ -91,6 +91,43 @@ export const tokenStore = {
   },
 };
 
+/**
+ * Milliseconds before the access token's expiry at which the client renews it
+ * proactively — before a request has a chance to 401 and before a WebSocket
+ * handshake is attempted with a token the server is about to reject.
+ */
+const TOKEN_REFRESH_MARGIN_MS = 60_000;
+
+/** Decode the JWT payload of an access token without verifying it. */
+function decodeJwtPayload(token: string): { exp?: number } | null {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const decoded = atob(padded);
+    return JSON.parse(decoded) as { exp?: number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Renew the access token if it is within the refresh margin of expiring (or
+ * already expired).  Runs before outbound requests and WebSocket connects so
+ * the expiry+replay dance — and the corresponding 401 / 4401 console noise —
+ * happens as rarely as possible.  Reuses the single shared refresh promise.
+ */
+export async function ensureFreshToken(): Promise<void> {
+  const token = tokenStore.access;
+  if (!token || !tokenStore.refresh) return;
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== "number") return;
+  if (payload.exp * 1000 - Date.now() < TOKEN_REFRESH_MARGIN_MS) {
+    await refreshSession().catch(() => undefined);
+  }
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -177,6 +214,9 @@ export function refreshSession(): Promise<boolean> {
 }
 
 async function apiInner<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Renew the access token *before* it expires so a request never has to 401
+  // and replay in the first place (the replay path remains as a safety net).
+  await ensureFreshToken();
   let response = await raw(path, init);
   if (response.status === 401 && tokenStore.refresh) {
     const renewed = await refreshSession();
@@ -330,22 +370,54 @@ export async function uploadDocument(
  * The channel authenticates with the access token at connect time.  When the
  * server closes the socket with code 4401 the token was rejected: renew it
  * (one shared refresh) and reconnect with the NEW token.  Any other abnormal
- * close — backend restart, network blip — is retried with a bounded backoff:
- * enough to ride out a redeploy, never enough to become a retry storm when
- * the server is genuinely gone or the session cannot be repaired.
+ * close — backend restart, network blip, a proxy that drops upgrade requests
+ * — is retried with a bounded backoff, and if the channel still will not stay
+ * up the supervisor degrades honestly to polling and tells the UI via
+ * ``onStatus``.  It never fabricates "connected": the page shows either the
+ * live channel or an explicit polling fallback.
  */
 const WS_MAX_RETRY_ATTEMPTS = 5;
 const WS_MAX_RETRY_DELAY_MS = 15_000;
 // Renewals that keep failing to produce an accepted socket before the
 // supervisor gives up instead of looping refresh -> connect forever.
 const WS_MAX_AUTH_RETRIES = 2;
+// Coarse fallback cadence when the WebSocket cannot be established at all.
+const WS_POLL_INTERVAL_MS = 5000;
 
-export function jobSocket(caseId: string, onMessage: (event: unknown) => void): () => void {
+export type JobSocketStatus =
+  | { state: "connected" }
+  | { state: "polling"; reason: string };
+
+export function jobSocket(
+  caseId: string,
+  onMessage: (event: unknown) => void,
+  onStatus?: (status: JobSocketStatus) => void,
+): () => void {
   let stopped = false;
   let socket: WebSocket | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
   let attempts = 0; // consecutive non-auth failures since the last open
   let authRetries = 0; // 4401 cycles since the last successful open
+
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const startPolling = (reason: string) => {
+    if (stopped || pollTimer !== null) return;
+    onStatus?.({ state: "polling", reason });
+    pollTimer = setInterval(() => {
+      if (stopped) {
+        stopPolling();
+        return;
+      }
+      onMessage({ type: "poll_tick" });
+    }, WS_POLL_INTERVAL_MS);
+  };
 
   const connect = () => {
     if (stopped) return;
@@ -358,6 +430,8 @@ export function jobSocket(caseId: string, onMessage: (event: unknown) => void): 
     socket.onopen = () => {
       attempts = 0;
       authRetries = 0;
+      stopPolling();
+      onStatus?.({ state: "connected" });
     };
     socket.onmessage = (event) => {
       try {
@@ -372,6 +446,7 @@ export function jobSocket(caseId: string, onMessage: (event: unknown) => void): 
       if (event.code === 4403) {
         // Authenticated, but this session may not watch the case.  That
         // verdict will not change on retry — stop immediately.
+        stopPolling();
         return;
       }
       if (event.code === 4401) {
@@ -390,7 +465,13 @@ export function jobSocket(caseId: string, onMessage: (event: unknown) => void): 
         });
         return;
       }
-      if (attempts >= WS_MAX_RETRY_ATTEMPTS) return;
+      if (attempts >= WS_MAX_RETRY_ATTEMPTS) {
+        // The channel cannot be held open (e.g. the connection never got
+        // established — a proxy or the server dropped the upgrade).  Be
+        // honest: fall back to polling rather than reporting a live feed.
+        startPolling(`websocket_closed_code_${event.code || 1006}`);
+        return;
+      }
       const delay = Math.min(1000 * 2 ** attempts, WS_MAX_RETRY_DELAY_MS);
       attempts += 1;
       timer = setTimeout(connect, delay);
@@ -402,6 +483,7 @@ export function jobSocket(caseId: string, onMessage: (event: unknown) => void): 
   return () => {
     stopped = true;
     if (timer !== null) clearTimeout(timer);
+    stopPolling();
     if (socket) {
       socket.onclose = null;
       socket.onmessage = null;
@@ -528,6 +610,81 @@ export function personNetwork(
   return api(
     `/cases/${caseId}/network/${encodeURIComponent(personKey)}?depth=${depth}`,
   );
+}
+
+/**
+ * The **Master Graph**: the complete, evidence-backed network of the case.
+ * ``labels`` / ``relTypes`` restrict the view (the same canonical data, just
+ * filtered) — they never change what is persisted.
+ */
+export interface CaseGraph {
+  case_id: string;
+  include_staging: boolean;
+  truncated: boolean;
+  filters: { labels: string[]; rel_types: string[] };
+  counts: {
+    nodes: number;
+    edges: number;
+    by_label: Record<string, number>;
+    by_rel_type: Record<string, number>;
+  };
+  nodes: GraphNodeRow[];
+  edges: GraphEdgeRow[];
+}
+
+export function caseGraph(
+  caseId: string,
+  opts: { includeStaging?: boolean; labels?: string[]; relTypes?: string[] } = {},
+): Promise<CaseGraph> {
+  const params = new URLSearchParams();
+  if (opts.includeStaging) params.set("include_staging", "true");
+  if (opts.labels?.length) params.set("labels", opts.labels.join(","));
+  if (opts.relTypes?.length) params.set("rel_types", opts.relTypes.join(","));
+  const qs = params.toString();
+  return api(`/graph/cases/${caseId}${qs ? `?${qs}` : ""}`);
+}
+
+/** A dated event inside a temporal window — drives the timeline strip. */
+export interface TemporalEvent {
+  provenance_key: string;
+  event_type: string | null;
+  name: string;
+  timestamp: string | null;
+  description: string | null;
+}
+
+/**
+ * The **Temporal Graph**: a time-constrained visual subgraph (NOT a serialised
+ * path).  Carries the window that produced it plus the dated events inside it.
+ */
+export interface TemporalGraph {
+  case_id: string;
+  target: string | null;
+  depth: number;
+  empty_reason: string | null;
+  time_range: { from: string | null; to: string | null; first: string | null; last: string | null };
+  events: TemporalEvent[];
+  counts: {
+    nodes: number;
+    edges: number;
+    by_label: Record<string, number>;
+    by_rel_type: Record<string, number>;
+  };
+  nodes: GraphNodeRow[];
+  edges: GraphEdgeRow[];
+}
+
+export function temporalGraph(
+  caseId: string,
+  opts: { target?: string; fromTs?: string; toTs?: string; depth?: number } = {},
+): Promise<TemporalGraph> {
+  const params = new URLSearchParams();
+  if (opts.target) params.set("target", opts.target);
+  if (opts.fromTs) params.set("from_ts", opts.fromTs);
+  if (opts.toTs) params.set("to_ts", opts.toTs);
+  if (opts.depth) params.set("depth", String(opts.depth));
+  const qs = params.toString();
+  return api(`/graph/cases/${caseId}/temporal${qs ? `?${qs}` : ""}`);
 }
 
 export interface Finding {

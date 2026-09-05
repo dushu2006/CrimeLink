@@ -780,3 +780,128 @@ async def test_admin_synthetic_status_endpoint(client, admin_headers, container)
 async def test_admin_status_requires_admin(client, viewer_headers):
     response = client.get("/api/v1/admin/synthetic/status", headers=viewer_headers)
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Shared corpus validation (validation.validate_external)
+# ---------------------------------------------------------------------------
+
+
+def _write_table(root: Path, name: str, header: str, rows: list[str]) -> None:
+    (root / "operational" / name).write_text(
+        "\n".join([header] + rows) + "\n", encoding="utf-8"
+    )
+
+
+def _make_validated_corpus(root: Path) -> Path:
+    """A minimal CrimeLink relational corpus that must pass validate_external."""
+    (root / "operational").mkdir(parents=True)
+    (root / "documents").mkdir(parents=True)
+    _write_table(root, "cases.csv", "case_id,case_number,registered_date,case_type,police_station,city,status",
+                 ["C0001,FIR/2026/00001,2026-08-30,VEHICLE_THEFT,PS-10,Warangal,UNDER_REVIEW"])
+    _write_table(root, "persons.csv", "person_id,full_name,gender,dob,address,city,state,status",
+                 ["P0001,Ada Rao,F,,,Warangal,Telangana,ACTIVE",
+                  "P0002,Ravi Kumar,M,,,Warangal,Telangana,ACTIVE"])
+    _write_table(root, "phones.csv", "phone_id,phone_number,owner_person_id,status,source",
+                 ["PH0001,9982796927,P0001,ACTIVE,SYNTHETIC",
+                  "PH0002,9876543210,P0002,ACTIVE,SYNTHETIC"])
+    _write_table(root, "vehicles.csv", "vehicle_id,registration_number,vehicle_type,owner_person_id,color",
+                 ["V0001,AP49IY3171,TRUCK,P0001,Black"])
+    _write_table(root, "accounts.csv", "account_id,account_number,holder_person_id,bank_code,account_status",
+                 ["AC0001,111111111111,P0001,PUNB,ACTIVE",
+                  "AC0002,222222222222,P0002,PUNB,ACTIVE"])
+    _write_table(root, "locations.csv", "location_id,name,city,state,latitude,longitude",
+                 ["L0001,Warehouse 9,Warangal,Telangana,17.9,79.6"])
+    _write_table(root, "organizations.csv", "organization_id,name,organization_type,city,state",
+                 ["O0001,Bharat Traders 884,TRANSPORT,Warangal,Telangana"])
+    _write_table(root, "case_members.csv", "case_member_id,case_id,person_id,role",
+                 ["CM00001,C0001,P0001,SUBJECT"])
+    _write_table(root, "person_organizations.csv", "person_org_id,person_id,organization_id,role,start_date,end_date",
+                 ["PO00001,P0001,O0001,CONTRACTOR,2025-01-01,"])
+    _write_table(root, "cdr.csv",
+                 "cdr_id,timestamp,from_phone_id,to_phone_id,duration_seconds,call_type,cell_location_id,case_id",
+                 ["CDR000001,2025-05-26 16:48:00,PH0001,PH0001,841,VOICE,L0001,C0001"])
+    _write_table(root, "transactions.csv",
+                 "transaction_id,timestamp,from_account_id,to_account_id,amount_inr,transaction_type,location_id,case_id",
+                 ["TX000001,2025-09-15 21:44:00,AC0001,AC0001,69462.27,CASH_DEPOSIT,L0001,C0001"])
+    _write_table(root, "vehicle_sightings.csv",
+                 "sighting_id,vehicle_id,location_id,timestamp,case_id,source",
+                 ["VS000001,V0001,L0001,2025-10-25 19:17:00,C0001,CCTV"])
+    _write_table(root, "intelligence_reports.csv",
+                 "report_id,report_date,subject_person_id,location_id,case_id,source_type,summary",
+                 ["IR00001,2024-06-18,P0001,L0001,C0001,SOURCE_REPORT,Field note near Warehouse 9."])
+    return root
+
+
+def test_validate_external_accepts_crimelink_corpus(tmp_path: Path):
+    from app.synthetic_corpus.validation import validate_external
+
+    root = _make_crimelink_corpus(tmp_path / "CrimeLink_Synthetic_Corpus_v1")
+    assert validate_external(root) == []
+
+
+def test_validate_external_accepts_build_external_output(tmp_path: Path):
+    """The reference generator's own output passes the shared validator."""
+    from app.synthetic_corpus.build_external import Builder
+    from app.synthetic_corpus.validation import validate_external
+
+    root = tmp_path / "built_corpus"
+    builder = Builder(seed=20260902, root=root)
+    for index in range(1, 6):
+        builder.build_case(index)
+    builder.build_background()
+    builder.write()
+    assert validate_external(root) == []
+
+
+def test_validate_external_rejects_background_person_in_case_event(tmp_path: Path):
+    from app.synthetic_corpus.validation import validate_external
+
+    root = _make_validated_corpus(tmp_path / "corpus")
+    # P0002 is NOT a case member (background).  A case-scoped CDR referencing
+    # their phone must be flagged.
+    _write_table(root, "cdr.csv",
+                 "cdr_id,timestamp,from_phone_id,to_phone_id,duration_seconds,call_type,cell_location_id,case_id",
+                 ["CDR000001,2025-05-26 16:48:00,PH0002,PH0002,841,VOICE,L0001,C0001"])
+    problems = validate_external(root)
+    assert any("non-member" in p or "background" in p for p in problems)
+
+
+def test_validate_external_rejects_missing_references_and_owners(tmp_path: Path):
+    from app.synthetic_corpus.validation import validate_external
+
+    root = _make_validated_corpus(tmp_path / "corpus")
+    # Transaction references an account that does not exist.
+    _write_table(root, "transactions.csv",
+                 "transaction_id,timestamp,from_account_id,to_account_id,amount_inr,transaction_type,location_id,case_id",
+                 ["TX000001,2025-09-15 21:44:00,AC0099,AC0001,100.00,NEFT,L0001,C0001"])
+    # A phone with no owner.
+    _write_table(root, "phones.csv", "phone_id,phone_number,owner_person_id,status,source",
+                 ["PH0001,9982796927,P0001,ACTIVE,SYNTHETIC",
+                  "PH0002,9876543210,,ACTIVE,SYNTHETIC"])
+    problems = validate_external(root)
+    assert any("missing source account" in p for p in problems)
+    assert any("no owner" in p for p in problems)
+
+
+def test_validate_external_rejects_duplicate_event_identities(tmp_path: Path):
+    from app.synthetic_corpus.validation import validate_external
+
+    root = _make_validated_corpus(tmp_path / "corpus")
+    _write_table(root, "vehicle_sightings.csv",
+                 "sighting_id,vehicle_id,location_id,timestamp,case_id,source",
+                 ["VS000001,V0001,L0001,2025-10-25 19:17:00,C0001,CCTV",
+                  "VS000001,V0001,L0001,2025-10-25 19:17:00,C0001,CCTV"])
+    problems = validate_external(root)
+    assert any("duplicate" in p for p in problems)
+
+
+def test_validate_external_rejects_impossible_timestamps(tmp_path: Path):
+    from app.synthetic_corpus.validation import validate_external
+
+    root = _make_validated_corpus(tmp_path / "corpus")
+    _write_table(root, "cdr.csv",
+                 "cdr_id,timestamp,from_phone_id,to_phone_id,duration_seconds,call_type,cell_location_id,case_id",
+                 ["CDR000001,1899-01-01 00:00:00,PH0001,PH0001,841,VOICE,L0001,C0001"])
+    problems = validate_external(root)
+    assert any("precedes" in p for p in problems)

@@ -106,6 +106,7 @@ export default function CaseDetail() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<Record<string, unknown> | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [liveStatus, setLiveStatus] = useState<"connected" | "polling" | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
@@ -127,17 +128,22 @@ export default function CaseDetail() {
 
   useEffect(load, [load]);
 
-  // Live processing status: "Stage 3/6 — NLP extraction" without polling.
+  // Live processing status: "Stage 3/6 — NLP extraction" over the WebSocket,
+  // with an honest polling fallback when the channel cannot be established.
   useEffect(() => {
-    return jobSocket(caseId, () => {
-      api<{ items: JobRow[] }>(`/cases/${caseId}/jobs?limit=50`)
-        .then((data) => {
-          setJobs(Object.fromEntries(data.items.map((j) => [j.doc_id, j])));
-          return api<{ items: DocRow[] }>(`/cases/${caseId}/documents`);
-        })
-        .then((data) => setDocs(data.items))
-        .catch(() => undefined);
-    });
+    return jobSocket(
+      caseId,
+      () => {
+        api<{ items: JobRow[] }>(`/cases/${caseId}/jobs?limit=50`)
+          .then((data) => {
+            setJobs(Object.fromEntries(data.items.map((j) => [j.doc_id, j])));
+            return api<{ items: DocRow[] }>(`/cases/${caseId}/documents`);
+          })
+          .then((data) => setDocs(data.items))
+          .catch(() => undefined);
+      },
+      (status) => setLiveStatus(status.state),
+    );
   }, [caseId]);
 
   async function upload(event: React.FormEvent) {
@@ -192,6 +198,12 @@ export default function CaseDetail() {
             </button>
           </div>
         </header>
+      )}
+
+      {liveStatus === "polling" && (
+        <div className="banner banner-warn">
+          {t("case.livePolling")}
+        </div>
       )}
 
       <section className="panel">

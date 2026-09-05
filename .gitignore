@@ -15,6 +15,10 @@ downloads/
 eggs/
 .eggs/
 lib/
+# The Python "lib/" rule above must not swallow the TypeScript source under
+# frontend/src/lib/ — investigation.ts is a real, imported module, and ignoring
+# it is why the file went missing from a fresh checkout.
+!frontend/src/lib/
 lib64/
 parts/
 sdist/

@@ -24,7 +24,6 @@ from starlette.websockets import WebSocketDisconnect
 from app.config import get_settings
 from app.db.session import async_session
 from tests.conftest import PASSWORD
-from app.db.session import async_session
 
 WS_PATH = "/api/v1/jobs/ws/{case_id}"
 
@@ -281,3 +280,74 @@ def test_ws_with_valid_token_receives_channel_events(client, container, users, c
         publisher.join(timeout=2)
 
     assert received == message
+
+
+# --------------------------------------------------------------------------- #
+# Cross-loop pool regression
+# --------------------------------------------------------------------------- #
+
+
+def test_repeated_ws_auth_does_not_poison_rest_db(client, users, case):
+    """Many WebSocket authorizations must leave REST database access intact.
+
+    WS authorization runs on its own event loop.  If it borrowed the
+    process-wide async engine — an asyncpg pool bound to the API loop — the
+    connections it creates would later be handed back to the API loop and
+    raise ``RuntimeError: attached to a different loop`` on the next REST
+    call.  This test performs enough handshakes to fill a pool, then proves
+    REST still works and that the two code paths use distinct engines.
+    """
+    import app.api.v1.jobs as jobs_module
+    from app.db.session import get_async_engine
+
+    token = _token_for(users["INV-0001"])
+    url = _ws_url(case.id, token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Authorized handshakes: each runs the full auth chain on the auth loop.
+    for _ in range(40):
+        with client.websocket_connect(url):
+            pass
+
+    # The auth path must own its engine; it must never be the REST pool.
+    assert jobs_module._get_auth_engine() is not get_async_engine()
+
+    # REST still works immediately after the handshakes.
+    assert client.get(f"/api/v1/cases/{case.id}", headers=headers).status_code == 200
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"badge_number": "INV-0001", "password": PASSWORD},
+    )
+    assert login.status_code == 200, login.text
+
+
+def test_ws_auth_never_touches_the_process_wide_sessionmaker(
+    client, users, case, monkeypatch
+):
+    """The WS auth path must not ask the REST sessionmaker for a session.
+
+    ``app.db.session.async_session`` (the REST dependency) is backed by the
+    loop-bound process-wide engine.  The auth path must use its own engine.
+    Replace the sessionmaker factory with a guard that fails if it is invoked
+    from the auth-loop thread, then prove a handshake still authorizes.
+    """
+    import threading
+
+    from app.db import session as db_session
+
+    real = db_session.get_async_sessionmaker
+    touched: list[str] = []
+
+    def guarded():
+        if threading.current_thread().name == "crimelink-ws-auth":
+            touched.append("auth-loop-touched-rest-sessionmaker")
+            raise RuntimeError("WS auth touched the process-wide sessionmaker")
+        return real()
+
+    monkeypatch.setattr(db_session, "get_async_sessionmaker", guarded)
+
+    token = _token_for(users["INV-0001"])
+    with client.websocket_connect(_ws_url(case.id, token)):
+        pass
+
+    assert touched == []

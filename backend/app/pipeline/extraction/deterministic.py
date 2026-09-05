@@ -578,19 +578,36 @@ def _extract_from_record(
     elif kind == "sighting":
         person = str(data.get("person") or "").strip()
         ts = str(data.get("ts") or "")
-        description = str(data.get("description") or "Surveillance sighting")
+        # The "description" column of a corpus sighting row carries the *source*
+        # (CCTV / PATROL / ANPR / INTELLIGENCE).  That is a property of the
+        # event instance, not its identity: two CCTV sightings are two events.
+        source = str(data.get("description") or "SURVEILLANCE").strip() or "SURVEILLANCE"
+        source_upper = re.sub(r"[^A-Z0-9]+", "_", source.upper()).strip("_") or "SURVEILLANCE"
+        location_name = str(data.get("location") or "").strip()
+        # A unique, meaningful display label — without it every CCTV/ANPR/
+        # PATROL sighting renders as a bare "CCTV" node and the master graph
+        # collapses hundreds of distinct events into identical-looking ones.
+        short_ts = ts[:16].replace("T", " ")
+        source_label = source_upper.replace("_", " ").title()
+        event_label = (
+            f"{source_label} · {location_name} · {short_ts}"
+            if location_name
+            else f"{source_label} · {short_ts}"
+        )
+        event_key = f"SIGHTING::{normalize_name(person)}::{ts}"
         entities.append(
             _ent(EntityType.PERSON, normalize_name(person), person, {"name": person, "source_type": "surveillance"})
         )
         entities.append(
             _ent(
                 EntityType.EVENT,
-                f"SIGHTING::{normalize_name(person)}::{ts}",
-                description,
+                event_key,
+                event_label,
                 {
-                    "event_type": "SIGHTING",
+                    "event_type": source_upper,
                     "timestamp": ts,
-                    "description": description,
+                    "description": event_label,
+                    "source": source_upper,
                     "source_type": "surveillance",
                 },
             )
@@ -600,10 +617,10 @@ def _extract_from_record(
                 source_type=EntityType.PERSON,
                 source_value=normalize_name(person),
                 target_type=EntityType.EVENT,
-                target_value=f"SIGHTING::{normalize_name(person)}::{ts}",
+                target_value=event_key,
                 rel_type="PARTICIPATED_IN",
                 confidence=confidence,
-                attributes={"role": "SUBJECT", "ts": ts},
+                attributes={"role": "SUBJECT", "ts": ts, "event_type": source_upper},
                 source_doc_id=doc.doc_id,
                 case_id=doc.case_id,
                 text_span=block.span,
@@ -631,7 +648,7 @@ def _extract_from_record(
             relations.append(
                 RelationCandidate(
                     source_type=EntityType.EVENT,
-                    source_value=f"SIGHTING::{normalize_name(person)}::{ts}",
+                    source_value=event_key,
                     target_type=EntityType.LOCATION,
                     target_value=key,
                     rel_type="LOCATED_AT",
@@ -640,7 +657,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
-                origin=block.origin,
+                    origin=block.origin,
                     extractor="deterministic",
                     staging=staging,
                 )
@@ -660,7 +677,7 @@ def _extract_from_record(
                     source_doc_id=doc.doc_id,
                     case_id=doc.case_id,
                     text_span=block.span,
-                origin=block.origin,
+                    origin=block.origin,
                     extractor="deterministic",
                     staging=staging,
                 )

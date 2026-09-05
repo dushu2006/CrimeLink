@@ -714,28 +714,39 @@ def _stage_ai_analysis(
 
     snapshot = container.graph_store.snapshot(case_id, include_staging=False)
     centrality = compute_centrality(snapshot, settings)
+    top_count = max(1, int(settings.ai_reasoning_target_count))
     top_persons = [
         key
-        for key, _ in sorted(centrality.betweenness.items(), key=lambda kv: -kv[1])[:3]
+        for key, _ in sorted(centrality.betweenness.items(), key=lambda kv: -kv[1])[:top_count]
         if key in snapshot.nodes and snapshot.nodes[key].label in ("PERSON", "Person")
     ]
     gateway = get_ai_gateway()
+
+    # Independent per-person analyses run concurrently over the workflow loop —
+    # three sequential reasoning calls is the dominant cost of this stage, and
+    # nothing here depends on the answer to a previous person.
+    async def _ask_one(key: str):
+        name = snapshot.nodes[key].name
+        response = await gateway.ask(
+            question=(
+                f"Analyse the network around {name} within this case: which "
+                "connections are analytically significant and what evidence "
+                "supports them?"
+            ),
+            case_id=case_id,
+            principal_id=user_id,
+            depth=2,
+            target_key=key,
+        )
+        return key, name, response
+
+    responses: list[tuple] = []
+    if top_persons:
+        responses = await_free(asyncio.gather(*(_ask_one(k) for k in top_persons)))
+
     results = []
     available_count = 0
-    for key in top_persons:
-        name = snapshot.nodes[key].name
-        response = await_free(
-            gateway.ask(
-                question=(
-                    f"Analyse the network around {name} within this case: which "
-                    "connections are analytically significant and what evidence "
-                    "supports them?"
-                ),
-                case_id=case_id,
-                principal_id=user_id,
-                depth=2,
-            )
-        )
+    for key, name, response in responses:
         if response.available:
             available_count += 1
             _persist_ai_finding(case_id, key, name, response)

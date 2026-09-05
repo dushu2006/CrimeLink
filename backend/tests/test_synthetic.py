@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from app.ai.pseudonymize import (  # noqa: E402
     PseudonymMap,
     apply_pseudonymization_to_context,
 )
+from app.db.base import utcnow  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.synthetic_corpus.names import (  # noqa: E402
     GIVEN_NAMES_F,
@@ -25,6 +27,7 @@ from app.synthetic_corpus.names import (  # noqa: E402
     SURNAMES,
 )
 from app.synthetic_corpus.generate import (  # noqa: E402
+    SIGHTING_SOURCES,
     CorpusOptions,
     SyntheticCorpus,
 )
@@ -241,3 +244,209 @@ def test_ai_role_config_picks_up_per_role_overrides():
     assert cfg["model"] == "reason-model"
     cfg_extr = s.role_config("extraction")
     assert cfg_extr["api_key"] == "global-key"  # falls back to global
+
+
+# ---------------------------------------------------------------------------
+# Case population vs background population, event identity and validation
+# (generate path — must stay semantically consistent with build_external.py)
+# ---------------------------------------------------------------------------
+
+
+def _opts_with_background(**overrides) -> CorpusOptions:
+    opts = _opts()
+    opts.background_person_count = 12
+    for key, value in overrides.items():
+        setattr(opts, key, value)
+    return opts
+
+
+def test_background_population_is_structural_and_unrelated():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40))
+    c.build()
+    bg = [p for p in c.persons if p.subject_in_no_case]
+    assert len(bg) == 12
+    case_ids = {case.id for case in c.cases}
+    assert case_ids  # sanity: cases exist
+    for p in bg:
+        # Structurally valid: a name, an address and always a phone.
+        assert p.canonical_name.strip()
+        assert p.addresses
+        assert p.phone_ids
+        # Never attached to a case.
+        for case in c.cases:
+            assert p.id not in case.person_ids
+            for pid in p.phone_ids:
+                assert pid not in case.phone_ids
+            for vid in p.vehicle_ids:
+                assert vid not in case.vehicle_ids
+            for aid in p.account_ids:
+                assert aid not in case.account_ids
+    # Canonical representation is recorded in ground truth.
+    assert set(c.ground_truth["background_person_ids"]) == {p.id for p in bg}
+    gt = {p["id"]: p for p in c.ground_truth["background_population"]}
+    assert all(gt[p.id]["subject_in_no_case"] for p in bg)
+
+
+def test_background_population_never_enters_case_documents_or_graph():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40, case_count=4))
+    c.build()
+    bg_names = {p.canonical_name for p in c.persons if p.subject_in_no_case}
+    bg_phone_numbers = {
+        ph.number
+        for p in c.persons
+        if p.subject_in_no_case
+        for pid in p.phone_ids
+        for ph in c.phones
+        if ph.id == pid
+    }
+    bg_account_numbers = {
+        a.number
+        for p in c.persons
+        if p.subject_in_no_case
+        for aid in p.account_ids
+        for a in c.accounts
+        if a.id == aid
+    }
+    # A negative-class person appears in *no* case document.
+    for doc in c.documents:
+        content = doc["content"]
+        for name in bg_names:
+            assert name not in content
+        for number in bg_phone_numbers:
+            assert number not in content
+        for number in bg_account_numbers:
+            assert number not in content
+    # ... and their activity is coherent but recorded only in ground truth.
+    assert c.background_calls or c.background_transactions
+    assert "background_calls" in c.ground_truth
+    assert "background_transactions" in c.ground_truth
+
+
+def test_background_assets_are_exclusively_owned():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40))
+    c.build()
+    bg_ids = {p.id for p in c.persons if p.subject_in_no_case}
+    case_ids = {p.id for p in c.persons if not p.subject_in_no_case}
+    for ph in c.phones:
+        if any(oid in bg_ids for oid in ph.owner_ids):
+            # A background phone must never be shared with a case person.
+            assert not any(oid in case_ids for oid in ph.owner_ids)
+
+
+def test_generated_corpus_passes_shared_validation():
+    for bg in (0, 12):
+        opts = _opts_with_background(person_count=40, background_person_count=bg)
+        corpus = SyntheticCorpus(opts=opts)
+        corpus.build()
+        assert corpus.validate() == []
+
+
+def test_event_identity_is_unique_per_occurrence():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40, case_count=5))
+    c.build()
+    assert c.sightings  # the corpus must actually contain sightings
+    ids = [s.id for s in c.sightings]
+    assert len(ids) == len(set(ids))
+    keys = [(s.person_id, s.ts.isoformat()) for s in c.sightings]
+    assert len(keys) == len(set(keys))  # two sightings are never the same event
+    # Sources are a property of the event, not its identity.
+    assert {s.source for s in c.sightings} <= set(SIGHTING_SOURCES)
+
+
+def test_person_phone_and_account_semantics_are_evidence_based():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40, case_count=5))
+    c.build()
+    phones = {ph.id: ph for ph in c.phones}
+    accounts = {a.id: a for a in c.accounts}
+    # Every person<->asset link the corpus claims resolves to a real record.
+    for p in c.persons:
+        for pid in p.phone_ids:
+            assert pid in phones and p.id in phones[pid].owner_ids
+        for aid in p.account_ids:
+            assert aid in accounts and p.id in accounts[aid].controller_ids
+
+
+def test_transaction_traceability_person_account_transaction_account_person():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40, case_count=5))
+    c.build()
+    assert c.transactions
+    accounts = {a.id: a for a in c.accounts}
+    persons = {p.id: p for p in c.persons}
+    for txn in c.transactions:
+        src = accounts[txn.src_account]
+        dst = accounts[txn.dst_account]
+        # Every transfer is anchored at both ends by a real holder...
+        assert src.controller_ids and dst.controller_ids
+        # ...and that holder exists, so Person -> Account -> Transaction ->
+        # Account -> Person is traversable.
+        for holder in (*src.controller_ids, *dst.controller_ids):
+            assert holder in persons
+        assert txn.amount > 0
+        assert txn.id
+
+
+def test_timestamps_are_coherent_and_never_in_the_future():
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40, case_count=5))
+    c.build()
+    now = utcnow()
+    floor = now - timedelta(days=c.opts.time_window_days + 40)
+    events = (
+        [(call.ts, "call") for call in c.calls]
+        + [(txn.ts, "transaction") for txn in c.transactions]
+        + [(s.ts, "sighting") for s in c.sightings]
+        + [(call.ts, "background call") for call in c.background_calls]
+        + [(txn.ts, "background transaction") for txn in c.background_transactions]
+    )
+    assert events
+    for ts, kind in events:
+        assert ts <= now + timedelta(days=2), f"{kind} in the future: {ts}"
+        assert ts >= floor, f"{kind} predates the corpus window: {ts}"
+
+
+def test_documents_emit_ownership_and_sighting_edges():
+    from app.domain.enums import EntityType, SourceConfidence
+    from app.pipeline.adapters.protocol import DocumentMeta
+    from app.pipeline.adapters.registry import get_adapter
+    from app.pipeline.extraction.deterministic import extract_deterministic
+
+    c = SyntheticCorpus(opts=_opts_with_background(person_count=40, case_count=4))
+    c.build()
+    ch_docs = [d for d in c.documents if d["document_type"].value == "CRIMINAL_HISTORY"]
+    surv_docs = [d for d in c.documents if d["document_type"].value == "SURVEILLANCE"]
+    assert ch_docs and surv_docs
+
+    rel_types: set[str] = set()
+    for doc in ch_docs:
+        meta = DocumentMeta(
+            doc_id=doc["doc_id"], case_id=doc["case"].id, filename=doc["filename"],
+            document_type=doc["document_type"],
+            source_confidence=SourceConfidence.UNVERIFIED, language_hint="en", extra={},
+        )
+        normalized = get_adapter(doc["document_type"]).parse(
+            doc["content"].encode("utf-8"), meta
+        )
+        _, relations = extract_deterministic(normalized)
+        rel_types.update(r.rel_type for r in relations)
+    # Ownership evidence yields the canonical ownership edges.
+    assert "USES_PHONE" in rel_types
+    assert "OWNS_VEHICLE" in rel_types
+    assert "OWNS_ACCOUNT" in rel_types
+
+    event_keys: set[str] = set()
+    for doc in surv_docs:
+        meta = DocumentMeta(
+            doc_id=doc["doc_id"], case_id=doc["case"].id, filename=doc["filename"],
+            document_type=doc["document_type"],
+            source_confidence=SourceConfidence.UNVERIFIED, language_hint="en", extra={},
+        )
+        normalized = get_adapter(doc["document_type"]).parse(
+            doc["content"].encode("utf-8"), meta
+        )
+        entities, relations = extract_deterministic(normalized)
+        for ent in entities:
+            if ent.entity_type == EntityType.EVENT:
+                event_keys.add(ent.normalized_value)
+                assert ent.attributes.get("timestamp")
+        assert any(r.rel_type == "LOCATED_AT" for r in relations)
+    # Every sighting became its own event node (no global PATROL/CCTV collapse).
+    assert len(event_keys) == len(c.sightings)

@@ -153,6 +153,7 @@ class Settings(BaseSettings):
     ai_reasoning_provider: str = "default"
     ai_reasoning_api_key: str | None = None
     ai_reasoning_base_url: str | None = None
+    ai_reasoning_target_count: int = 5
 
     ai_explanation_model: str = "meta/llama-3.1-8b-instruct"
     ai_explanation_provider: str = "default"

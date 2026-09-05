@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.centrality import CentralityResult, compute_centrality, percentile_rank
 from app.analytics.explanation import explain_node
-from app.analytics.temporal import find_temporal_paths
+from app.analytics.temporal import build_temporal_graph, find_temporal_paths
 from app.config import Settings, get_settings
 from app.container import Container, get_container
 from app.db.models import Case
@@ -209,14 +209,32 @@ class GraphService:
         *,
         include_staging: bool = False,
         limit: int = 2000,
+        labels: list[str] | None = None,
+        rel_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Everything needed to draw the case canvas, in Cytoscape element form."""
+        """Everything needed to draw the case canvas, in Cytoscape element form.
+
+        This is the **Master Graph**: the complete, evidence-backed network of
+        the case.  Optional ``labels`` / ``rel_types`` restrict it to a subset
+        of entity types and relationship types (the same filters the console
+        applies in Master/Temporal mode); every node and edge still carries its
+        provenance.
+        """
         from app.services.cases import require_case
 
         await require_case(session, scope, case_id)
         snapshot = self.container.graph_store.snapshot(case_id, include_staging=include_staging)
-        nodes = list(snapshot.nodes.values())
+        if labels:
+            wanted = {canonical_label(l) for l in labels}
+            nodes = [n for n in snapshot.nodes.values() if canonical_label(n.label) in wanted]
+        else:
+            nodes = list(snapshot.nodes.values())
         edges = list(snapshot.edges)
+        if rel_types:
+            wanted_rels = {r.upper() for r in rel_types}
+            edges = [e for e in edges if e.rel_type.upper() in wanted_rels]
+        keep = {n.provenance_key for n in nodes}
+        edges = [e for e in edges if e.source_key in keep and e.target_key in keep]
         truncated = False
         if len(nodes) > limit:
             nodes = nodes[:limit]
@@ -230,10 +248,11 @@ class GraphService:
             "case_id": case_id,
             "include_staging": include_staging,
             "truncated": truncated,
+            "filters": {"labels": labels or [], "rel_types": rel_types or []},
             "counts": {
                 "nodes": len(nodes),
                 "edges": len(edges),
-                "by_label": dict(Counter(n.label for n in nodes)),
+                "by_label": dict(Counter(canonical_label(n.label) for n in nodes)),
                 "by_rel_type": dict(Counter(e.rel_type for e in edges)),
             },
             "nodes": [_node_row(n) for n in nodes],
@@ -418,6 +437,59 @@ class GraphService:
             max_depth=max_depth or self.settings.temporal_path_max_depth,
             limit=limit,
         )
+
+    # ------------------------------------------------------- temporal graph
+    async def temporal_graph(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        case_id: str,
+        *,
+        target: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        depth: int = 3,
+        limit: int = 400,
+    ) -> dict[str, Any]:
+        """The time-constrained **visual** graph (PRD 11.5 — Temporal Graph).
+
+        This is distinct from :meth:`temporal_paths`: instead of serialised
+        paths, it returns graph-ready nodes/edges for Cytoscape, the time
+        window that produced them, and the dated events inside it.  When no
+        relationship satisfies the window the response carries an explicit
+        ``empty_reason`` so the UI can say "no temporal relationships found"
+        instead of drawing an empty canvas.
+        """
+        from app.services.cases import require_case
+
+        await require_case(session, scope, case_id)
+        snapshot = self.container.graph_store.snapshot(case_id, include_staging=False)
+        result = build_temporal_graph(
+            snapshot,
+            target_key=target,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            depth=depth,
+            limit=limit,
+        )
+        nodes = result["nodes"]
+        edges = result["edges"]
+        return {
+            "case_id": case_id,
+            "target": target,
+            "depth": depth,
+            "empty_reason": result["empty_reason"],
+            "time_range": result["time_range"],
+            "events": result["events"],
+            "counts": {
+                "nodes": len(nodes),
+                "edges": len(edges),
+                "by_label": dict(Counter(canonical_label(n.label) for n in nodes)),
+                "by_rel_type": dict(Counter(e.rel_type for e in edges)),
+            },
+            "nodes": [_node_row(n) for n in nodes],
+            "edges": [_edge_row(e) for e in edges],
+        }
 
     # -------------------------------------------------------------- staging
     async def staging_nodes(

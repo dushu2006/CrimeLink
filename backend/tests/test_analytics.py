@@ -168,3 +168,50 @@ async def test_staging_nodes_can_be_promoted_by_an_investigator(client, investig
         json={"provenance_keys": [staged["items"][0]["provenance_key"]]},
     ).json()
     assert promoted["promoted"] == 1
+
+
+async def test_master_graph_filters_by_label(client, investigator_headers, db, container, case, users):
+    """Master Graph: the same canonical data, filtered — nothing is invented."""
+    await _seed(db, container, case, users)
+    body = client.get(
+        f"/api/v1/graph/cases/{case.id}", params={"labels": "PHONE"}, headers=investigator_headers
+    ).json()
+    assert body["counts"]["nodes"] >= 1
+    assert all(n["label"] == "PHONE" for n in body["nodes"]), "label filter keeps only PHONE nodes"
+    assert body["filters"]["labels"] == ["PHONE"]
+
+
+async def test_master_graph_filters_by_rel_type(client, investigator_headers, db, container, case, users):
+    await _seed(db, container, case, users)
+    body = client.get(
+        f"/api/v1/graph/cases/{case.id}", params={"rel_types": "CALLED"}, headers=investigator_headers
+    ).json()
+    assert body["counts"]["edges"] >= 1
+    assert all(e["rel_type"] == "CALLED" for e in body["edges"]), "rel_type filter keeps only CALLED edges"
+
+
+async def test_temporal_graph_endpoint_returns_visual_graph(client, investigator_headers, db, container, case, users):
+    """Temporal Graph (visual): graph-ready nodes/edges, NOT a serialised path."""
+    await _seed(db, container, case, users)
+    body = client.get(
+        f"/api/v1/graph/cases/{case.id}/temporal",
+        params={"from_ts": "2024-08-01T00:00:00", "to_ts": "2024-08-31T23:59:59"},
+        headers=investigator_headers,
+    ).json()
+    assert "nodes" in body and "edges" in body and "events" in body
+    assert "time_range" in body and "empty_reason" in body
+    assert body["counts"]["edges"] >= 1, "the seeded CDR lies inside the window"
+    assert body["empty_reason"] is None
+    for edge in body["edges"]:
+        assert edge["source_doc_ids"], "temporal edges keep their evidence (G1)"
+
+
+async def test_temporal_graph_empty_window_reports_reason(client, investigator_headers, db, container, case, users):
+    await _seed(db, container, case, users)
+    body = client.get(
+        f"/api/v1/graph/cases/{case.id}/temporal",
+        params={"from_ts": "2010-01-01T00:00:00", "to_ts": "2010-12-31T23:59:59"},
+        headers=investigator_headers,
+    ).json()
+    assert body["counts"]["edges"] == 0
+    assert body["empty_reason"] is not None, "an empty window is reported honestly"
