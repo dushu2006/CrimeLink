@@ -1,0 +1,5 @@
+question_id,question,answer
+Q001,Which identity is confirmed for the repeated Ganesh Kumar references?,Resolve using Aadhaar/PAN/DOB/address rather than name alone.
+Q002,Which network is intentionally legitimate but structurally suspicious?,EVNET_12
+Q003,Which network contains the designed cross-network bridge?,EVNET_11
+Q004,What should happen when two records share a name but have different Aadhaar identities?,Keep them separate unless independent evidence supports a merge.

@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2025-01-21
+Case: CASE_0036
+Observed reference: Vivek Singh
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

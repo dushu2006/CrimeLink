@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2024-01-06
+Case: CASE_0045
+Observed reference: Srinivas Naidu
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

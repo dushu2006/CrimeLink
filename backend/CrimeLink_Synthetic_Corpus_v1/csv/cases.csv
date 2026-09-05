@@ -1,0 +1,61 @@
+case_id,case_type,opened_date,police_unit,status
+CASE_0001,counterfeit goods,2023-03-29,District Investigation Unit 03,Under Investigation
+CASE_0002,property forgery,2024-02-21,District Investigation Unit 06,Open
+CASE_0003,warehouse theft,2024-06-11,District Investigation Unit 05,Open
+CASE_0004,procurement dispute,2024-02-25,District Investigation Unit 01,Charge Sheeted
+CASE_0005,financial irregularity,2022-04-25,District Investigation Unit 07,Under Investigation
+CASE_0006,burglary,2025-03-04,District Investigation Unit 11,Open
+CASE_0007,construction extortion,2022-08-04,District Investigation Unit 06,Charge Sheeted
+CASE_0008,burglary,2023-06-18,District Investigation Unit 07,Closed
+CASE_0009,vehicle theft,2023-10-09,District Investigation Unit 03,Charge Sheeted
+CASE_0010,burglary,2025-08-10,District Investigation Unit 07,Under Investigation
+CASE_0011,online fraud,2023-09-21,District Investigation Unit 02,Open
+CASE_0012,transport diversion,2023-11-28,District Investigation Unit 12,Closed
+CASE_0013,financial irregularity,2025-06-14,District Investigation Unit 05,Charge Sheeted
+CASE_0014,financial irregularity,2025-09-23,District Investigation Unit 12,Open
+CASE_0015,vehicle theft,2025-10-16,District Investigation Unit 05,Open
+CASE_0016,financial irregularity,2024-07-09,District Investigation Unit 07,Open
+CASE_0017,missing person,2023-12-16,District Investigation Unit 10,Closed
+CASE_0018,property forgery,2024-06-22,District Investigation Unit 01,Charge Sheeted
+CASE_0019,counterfeit goods,2023-01-17,District Investigation Unit 11,Under Investigation
+CASE_0020,online fraud,2023-11-06,District Investigation Unit 07,Closed
+CASE_0021,transport diversion,2023-11-06,District Investigation Unit 02,Under Investigation
+CASE_0022,property forgery,2023-12-19,District Investigation Unit 12,Open
+CASE_0023,loan fraud,2023-04-24,District Investigation Unit 03,Charge Sheeted
+CASE_0024,transport diversion,2022-01-09,District Investigation Unit 04,Under Investigation
+CASE_0025,online fraud,2025-03-12,District Investigation Unit 10,Closed
+CASE_0026,construction extortion,2022-09-13,District Investigation Unit 11,Charge Sheeted
+CASE_0027,procurement dispute,2026-02-01,District Investigation Unit 12,Charge Sheeted
+CASE_0028,counterfeit goods,2022-05-16,District Investigation Unit 08,Closed
+CASE_0029,financial irregularity,2023-03-22,District Investigation Unit 02,Closed
+CASE_0030,financial irregularity,2024-04-06,District Investigation Unit 05,Charge Sheeted
+CASE_0031,counterfeit goods,2024-06-26,District Investigation Unit 05,Open
+CASE_0032,burglary,2022-05-14,District Investigation Unit 03,Charge Sheeted
+CASE_0033,vehicle theft,2023-07-31,District Investigation Unit 10,Charge Sheeted
+CASE_0034,online fraud,2024-11-19,District Investigation Unit 10,Open
+CASE_0035,transport diversion,2023-11-29,District Investigation Unit 04,Closed
+CASE_0036,warehouse theft,2023-11-01,District Investigation Unit 03,Under Investigation
+CASE_0037,procurement dispute,2023-12-03,District Investigation Unit 04,Charge Sheeted
+CASE_0038,warehouse theft,2025-08-13,District Investigation Unit 09,Under Investigation
+CASE_0039,counterfeit goods,2025-03-09,District Investigation Unit 04,Charge Sheeted
+CASE_0040,counterfeit goods,2022-07-24,District Investigation Unit 03,Charge Sheeted
+CASE_0041,warehouse theft,2023-12-21,District Investigation Unit 12,Charge Sheeted
+CASE_0042,financial irregularity,2022-05-31,District Investigation Unit 11,Closed
+CASE_0043,loan fraud,2023-11-18,District Investigation Unit 06,Closed
+CASE_0044,online fraud,2025-12-10,District Investigation Unit 04,Open
+CASE_0045,warehouse theft,2023-10-10,District Investigation Unit 12,Charge Sheeted
+CASE_0046,procurement dispute,2022-11-04,District Investigation Unit 09,Under Investigation
+CASE_0047,property forgery,2022-08-26,District Investigation Unit 06,Open
+CASE_0048,burglary,2022-12-28,District Investigation Unit 12,Charge Sheeted
+CASE_0049,transport diversion,2024-03-16,District Investigation Unit 06,Under Investigation
+CASE_0050,financial irregularity,2022-05-13,District Investigation Unit 07,Under Investigation
+CASE_0051,missing person,2023-11-12,District Investigation Unit 01,Open
+CASE_0052,property forgery,2025-10-21,District Investigation Unit 05,Charge Sheeted
+CASE_0053,construction extortion,2023-10-12,District Investigation Unit 01,Closed
+CASE_0054,warehouse theft,2026-03-21,District Investigation Unit 03,Open
+CASE_0055,vehicle theft,2022-09-20,District Investigation Unit 03,Closed
+CASE_0056,procurement dispute,2023-09-30,District Investigation Unit 09,Under Investigation
+CASE_0057,loan fraud,2024-09-08,District Investigation Unit 07,Charge Sheeted
+CASE_0058,construction extortion,2025-07-06,District Investigation Unit 03,Open
+CASE_0059,online fraud,2025-11-01,District Investigation Unit 10,Under Investigation
+CASE_0060,transport diversion,2025-07-19,District Investigation Unit 05,Closed

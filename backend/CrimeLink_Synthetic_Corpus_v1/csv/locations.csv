@@ -1,0 +1,121 @@
+location_id,location_name,city,state,type
+LOC_0001,Airport Road 1,Kolkata,West Bengal,financial
+LOC_0002,Market Yard 2,Mumbai,Maharashtra,residential
+LOC_0003,Court Complex 3,Jaipur,Rajasthan,commercial
+LOC_0004,Court Complex 4,Panaji,Goa,commercial
+LOC_0005,Market Yard 5,Kochi,Kerala,transport
+LOC_0006,Railway Station 6,Ranchi,Jharkhand,public
+LOC_0007,Commercial Centre 7,Kolkata,West Bengal,commercial
+LOC_0008,Airport Road 8,Kochi,Kerala,police
+LOC_0009,Railway Station 9,Mumbai,Maharashtra,public
+LOC_0010,Warehouse Cluster 10,Indore,Madhya Pradesh,residential
+LOC_0011,Market Yard 11,Delhi,Delhi,public
+LOC_0012,Market Yard 12,Mumbai,Maharashtra,financial
+LOC_0013,Industrial Estate 13,Kochi,Kerala,transport
+LOC_0014,Commercial Centre 14,Mumbai,Maharashtra,residential
+LOC_0015,Warehouse Cluster 15,Kochi,Kerala,police
+LOC_0016,Warehouse Cluster 16,Indore,Madhya Pradesh,public
+LOC_0017,Hotel District 17,Vijayawada,Andhra Pradesh,public
+LOC_0018,Highway Toll 18,Mumbai,Maharashtra,police
+LOC_0019,Railway Station 19,Mumbai,Maharashtra,police
+LOC_0020,Airport Road 20,Ranchi,Jharkhand,police
+LOC_0021,Warehouse Cluster 21,Kolkata,West Bengal,residential
+LOC_0022,Industrial Estate 22,Bengaluru,Karnataka,transport
+LOC_0023,Highway Toll 23,Kolkata,West Bengal,transport
+LOC_0024,Airport Road 24,Kolkata,West Bengal,police
+LOC_0025,Airport Road 25,Indore,Madhya Pradesh,transport
+LOC_0026,Airport Road 26,Hyderabad,Telangana,financial
+LOC_0027,Airport Road 27,Kolkata,West Bengal,public
+LOC_0028,Airport Road 28,Kochi,Kerala,transport
+LOC_0029,Market Yard 29,Delhi,Delhi,transport
+LOC_0030,Bus Terminal 30,Indore,Madhya Pradesh,public
+LOC_0031,Market Yard 31,Ahmedabad,Gujarat,commercial
+LOC_0032,Highway Toll 32,Bhubaneswar,Odisha,police
+LOC_0033,Highway Toll 33,Kochi,Kerala,residential
+LOC_0034,Bus Terminal 34,Jaipur,Rajasthan,financial
+LOC_0035,Bus Terminal 35,Kolkata,West Bengal,public
+LOC_0036,Airport Road 36,Vijayawada,Andhra Pradesh,police
+LOC_0037,Airport Road 37,Kochi,Kerala,commercial
+LOC_0038,Court Complex 38,Bengaluru,Karnataka,financial
+LOC_0039,Industrial Estate 39,Bengaluru,Karnataka,residential
+LOC_0040,Bus Terminal 40,Ranchi,Jharkhand,police
+LOC_0041,Highway Toll 41,Bhubaneswar,Odisha,financial
+LOC_0042,Industrial Estate 42,Panaji,Goa,residential
+LOC_0043,Warehouse Cluster 43,Bhubaneswar,Odisha,commercial
+LOC_0044,Airport Road 44,Kochi,Kerala,public
+LOC_0045,Industrial Estate 45,Raipur,Chhattisgarh,transport
+LOC_0046,Market Yard 46,Chennai,Tamil Nadu,commercial
+LOC_0047,Court Complex 47,Mumbai,Maharashtra,commercial
+LOC_0048,Warehouse Cluster 48,Jaipur,Rajasthan,financial
+LOC_0049,Hotel District 49,Bhubaneswar,Odisha,financial
+LOC_0050,Market Yard 50,Kochi,Kerala,police
+LOC_0051,Railway Station 51,Indore,Madhya Pradesh,financial
+LOC_0052,Industrial Estate 52,Jaipur,Rajasthan,transport
+LOC_0053,Commercial Centre 53,Hyderabad,Telangana,police
+LOC_0054,Warehouse Cluster 54,Delhi,Delhi,public
+LOC_0055,Railway Station 55,Chennai,Tamil Nadu,public
+LOC_0056,Market Yard 56,Vijayawada,Andhra Pradesh,transport
+LOC_0057,Airport Road 57,Raipur,Chhattisgarh,transport
+LOC_0058,Industrial Estate 58,Ranchi,Jharkhand,commercial
+LOC_0059,Bus Terminal 59,Panaji,Goa,financial
+LOC_0060,Hotel District 60,Vijayawada,Andhra Pradesh,residential
+LOC_0061,Market Yard 61,Panaji,Goa,police
+LOC_0062,Railway Station 62,Chennai,Tamil Nadu,police
+LOC_0063,Court Complex 63,Ahmedabad,Gujarat,residential
+LOC_0064,Railway Station 64,Noida,Uttar Pradesh,transport
+LOC_0065,Commercial Centre 65,Noida,Uttar Pradesh,residential
+LOC_0066,Commercial Centre 66,Kolkata,West Bengal,public
+LOC_0067,Railway Station 67,Kolkata,West Bengal,public
+LOC_0068,Railway Station 68,Bengaluru,Karnataka,public
+LOC_0069,Market Yard 69,Raipur,Chhattisgarh,residential
+LOC_0070,Market Yard 70,Mumbai,Maharashtra,transport
+LOC_0071,Railway Station 71,Kochi,Kerala,public
+LOC_0072,Market Yard 72,Indore,Madhya Pradesh,transport
+LOC_0073,Bus Terminal 73,Hyderabad,Telangana,public
+LOC_0074,Highway Toll 74,Raipur,Chhattisgarh,residential
+LOC_0075,Market Yard 75,Vijayawada,Andhra Pradesh,residential
+LOC_0076,Railway Station 76,Noida,Uttar Pradesh,police
+LOC_0077,Warehouse Cluster 77,Raipur,Chhattisgarh,public
+LOC_0078,Airport Road 78,Bengaluru,Karnataka,commercial
+LOC_0079,Commercial Centre 79,Bhubaneswar,Odisha,financial
+LOC_0080,Industrial Estate 80,Kolkata,West Bengal,transport
+LOC_0081,Warehouse Cluster 81,Raipur,Chhattisgarh,transport
+LOC_0082,Railway Station 82,Delhi,Delhi,financial
+LOC_0083,Airport Road 83,Kochi,Kerala,public
+LOC_0084,Market Yard 84,Kochi,Kerala,police
+LOC_0085,Highway Toll 85,Indore,Madhya Pradesh,transport
+LOC_0086,Bus Terminal 86,Bengaluru,Karnataka,financial
+LOC_0087,Warehouse Cluster 87,Raipur,Chhattisgarh,commercial
+LOC_0088,Commercial Centre 88,Patna,Bihar,transport
+LOC_0089,Market Yard 89,Panaji,Goa,public
+LOC_0090,Airport Road 90,Ahmedabad,Gujarat,police
+LOC_0091,Commercial Centre 91,Indore,Madhya Pradesh,transport
+LOC_0092,Court Complex 92,Raipur,Chhattisgarh,transport
+LOC_0093,Railway Station 93,Chennai,Tamil Nadu,transport
+LOC_0094,Railway Station 94,Patna,Bihar,public
+LOC_0095,Court Complex 95,Kolkata,West Bengal,financial
+LOC_0096,Market Yard 96,Hyderabad,Telangana,police
+LOC_0097,Commercial Centre 97,Raipur,Chhattisgarh,commercial
+LOC_0098,Court Complex 98,Noida,Uttar Pradesh,transport
+LOC_0099,Industrial Estate 99,Delhi,Delhi,transport
+LOC_0100,Airport Road 100,Panaji,Goa,residential
+LOC_0101,Warehouse Cluster 101,Ranchi,Jharkhand,police
+LOC_0102,Court Complex 102,Ahmedabad,Gujarat,financial
+LOC_0103,Industrial Estate 103,Ranchi,Jharkhand,residential
+LOC_0104,Highway Toll 104,Kolkata,West Bengal,public
+LOC_0105,Railway Station 105,Kolkata,West Bengal,residential
+LOC_0106,Bus Terminal 106,Jaipur,Rajasthan,financial
+LOC_0107,Market Yard 107,Ahmedabad,Gujarat,transport
+LOC_0108,Hotel District 108,Ahmedabad,Gujarat,residential
+LOC_0109,Industrial Estate 109,Patna,Bihar,financial
+LOC_0110,Industrial Estate 110,Indore,Madhya Pradesh,police
+LOC_0111,Commercial Centre 111,Chennai,Tamil Nadu,residential
+LOC_0112,Airport Road 112,Ranchi,Jharkhand,public
+LOC_0113,Warehouse Cluster 113,Chennai,Tamil Nadu,residential
+LOC_0114,Hotel District 114,Mumbai,Maharashtra,commercial
+LOC_0115,Highway Toll 115,Kochi,Kerala,commercial
+LOC_0116,Hotel District 116,Chennai,Tamil Nadu,financial
+LOC_0117,Commercial Centre 117,Bhubaneswar,Odisha,transport
+LOC_0118,Industrial Estate 118,Chennai,Tamil Nadu,commercial
+LOC_0119,Court Complex 119,Noida,Uttar Pradesh,residential
+LOC_0120,Court Complex 120,Kolkata,West Bengal,financial

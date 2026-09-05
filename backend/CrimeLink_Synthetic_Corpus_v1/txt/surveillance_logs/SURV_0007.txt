@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2025-07-27
+Case: CASE_0018
+Observed reference: Amit Patel
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

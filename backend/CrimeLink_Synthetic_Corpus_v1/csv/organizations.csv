@@ -1,0 +1,56 @@
+org_id,org_name,org_type,state,city,incorporated,status
+ORG_0001,National Services 01,Jewellery,Tamil Nadu,Chennai,2019-06-25,Dormant
+ORG_0002,Apex Enterprises 02,Security Services,Gujarat,Ahmedabad,2018-10-11,Dormant
+ORG_0003,Apex Associates 03,Security Services,Odisha,Bhubaneswar,2018-09-12,Active
+ORG_0004,National Industries 04,Property Services,Rajasthan,Jaipur,2020-04-24,Active
+ORG_0005,Silverline Traders 05,IT Services,Jharkhand,Ranchi,2020-03-08,Active
+ORG_0006,Silverline Associates 06,Textiles,Telangana,Hyderabad,2019-07-30,Active
+ORG_0007,Sri Solutions 07,Trading,Kerala,Kochi,2022-11-24,Active
+ORG_0008,Prime Industries 08,Security Services,Uttar Pradesh,Noida,2021-01-29,Active
+ORG_0009,Blue Traders 09,Construction,West Bengal,Kolkata,2018-12-06,Active
+ORG_0010,National Logistics 10,Consulting,Madhya Pradesh,Indore,2018-09-30,Active
+ORG_0011,Silverline Associates 11,Construction,Goa,Panaji,2024-07-08,Active
+ORG_0012,Deccan Suppliers 12,Trading,Karnataka,Bengaluru,2022-05-24,Dormant
+ORG_0013,Deccan Suppliers 13,Auto Parts,Maharashtra,Mumbai,2022-07-24,Dormant
+ORG_0014,Sunrise Traders 14,Trading,Bihar,Patna,2019-09-17,Active
+ORG_0015,Blue Services 15,Property Services,Delhi,Delhi,2022-12-03,Active
+ORG_0016,Metro Traders 16,Food Distribution,Chhattisgarh,Raipur,2019-08-13,Dormant
+ORG_0017,Sunrise Suppliers 17,Consulting,Andhra Pradesh,Vijayawada,2022-11-05,Active
+ORG_0018,Sri Industries 18,Travel Services,Tamil Nadu,Chennai,2018-09-09,Active
+ORG_0019,Prime Suppliers 19,Property Services,Gujarat,Ahmedabad,2020-07-30,Active
+ORG_0020,Prime Logistics 20,Trading,Odisha,Bhubaneswar,2020-01-20,Active
+ORG_0021,Eastern Solutions 21,Property Services,Rajasthan,Jaipur,2020-11-06,Dormant
+ORG_0022,Deccan Traders 22,Consulting,Jharkhand,Ranchi,2022-07-26,Dormant
+ORG_0023,Blue Solutions 23,Auto Parts,Telangana,Hyderabad,2022-12-16,Active
+ORG_0024,Silverline Enterprises 24,Security Services,Kerala,Kochi,2023-04-17,Active
+ORG_0025,Blue Services 25,Jewellery,Uttar Pradesh,Noida,2022-01-10,Active
+ORG_0026,Silverline Suppliers 26,Security Services,West Bengal,Kolkata,2018-04-16,Active
+ORG_0027,Sunrise Logistics 27,Consulting,Madhya Pradesh,Indore,2021-01-23,Active
+ORG_0028,Sri Industries 28,Property Services,Goa,Panaji,2022-03-22,Active
+ORG_0029,National Industries 29,Construction,Karnataka,Bengaluru,2022-05-24,Active
+ORG_0030,Sunrise Enterprises 30,Logistics,Maharashtra,Mumbai,2023-07-01,Active
+ORG_0031,National Services 31,Construction,Bihar,Patna,2019-07-02,Active
+ORG_0032,Prime Enterprises 32,IT Services,Delhi,Delhi,2024-08-14,Dormant
+ORG_0033,National Solutions 33,Trading,Chhattisgarh,Raipur,2019-05-17,Active
+ORG_0034,Sunrise Traders 34,Auto Parts,Andhra Pradesh,Vijayawada,2020-07-09,Active
+ORG_0035,Apex Logistics 35,Logistics,Tamil Nadu,Chennai,2024-08-19,Dormant
+ORG_0036,Eastern Associates 36,Jewellery,Gujarat,Ahmedabad,2021-04-09,Active
+ORG_0037,Deccan Services 37,Construction,Odisha,Bhubaneswar,2021-05-31,Active
+ORG_0038,National Traders 38,Consulting,Rajasthan,Jaipur,2024-07-05,Active
+ORG_0039,Eastern Suppliers 39,Food Distribution,Jharkhand,Ranchi,2023-01-25,Active
+ORG_0040,Metro Industries 40,Property Services,Telangana,Hyderabad,2019-04-10,Active
+ORG_0041,Blue Logistics 41,IT Services,Kerala,Kochi,2022-12-03,Dormant
+ORG_0042,Sri Associates 42,Trading,Uttar Pradesh,Noida,2024-05-06,Active
+ORG_0043,Eastern Logistics 43,Textiles,West Bengal,Kolkata,2019-09-12,Active
+ORG_0044,Prime Services 44,Consulting,Madhya Pradesh,Indore,2023-03-10,Active
+ORG_0045,Deccan Services 45,Security Services,Goa,Panaji,2020-01-03,Active
+ORG_0046,Blue Services 46,Security Services,Karnataka,Bengaluru,2019-04-11,Active
+ORG_0047,Metro Suppliers 47,Property Services,Maharashtra,Mumbai,2023-04-29,Dormant
+ORG_0048,Eastern Solutions 48,Property Services,Bihar,Patna,2020-09-03,Active
+ORG_0049,Silverline Logistics 49,Food Distribution,Delhi,Delhi,2018-04-28,Active
+ORG_0050,Apex Enterprises 50,Logistics,Chhattisgarh,Raipur,2024-02-03,Active
+ORG_0051,Apex Logistics 51,Trading,Andhra Pradesh,Vijayawada,2020-06-17,Active
+ORG_0052,Sri Associates 52,Jewellery,Tamil Nadu,Chennai,2021-01-30,Active
+ORG_0053,Sunrise Logistics 53,Logistics,Gujarat,Ahmedabad,2024-01-17,Active
+ORG_0054,Sunrise Traders 54,Trading,Odisha,Bhubaneswar,2024-06-18,Active
+ORG_0055,Silverline Associates 55,Textiles,Rajasthan,Jaipur,2019-05-18,Active

@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2022-05-18
+Case: CASE_0058
+Observed reference: Pawan Das
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

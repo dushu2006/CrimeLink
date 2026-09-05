@@ -1,0 +1,261 @@
+evidence_id,case_id,type,collected_date,status
+EVID_00001,CASE_0006,statement,2026-04-05,Received
+EVID_00002,CASE_0011,seized item,2025-06-12,Analyzed
+EVID_00003,CASE_0016,statement,2025-12-18,Received
+EVID_00004,CASE_0021,property document,2025-09-29,Pending
+EVID_00005,CASE_0026,bank record,2022-09-28,Seized
+EVID_00006,CASE_0031,vehicle document,2025-07-02,Pending
+EVID_00007,CASE_0036,property document,2025-03-13,Received
+EVID_00008,CASE_0041,seized item,2025-08-27,Pending
+EVID_00009,CASE_0046,seized item,2026-06-14,Analyzed
+EVID_00010,CASE_0051,bank record,2024-07-03,Pending
+EVID_00011,CASE_0056,CCTV summary,2026-02-24,Seized
+EVID_00012,CASE_0001,bank record,2025-05-01,Pending
+EVID_00013,CASE_0006,vehicle document,2025-03-11,Seized
+EVID_00014,CASE_0011,CCTV summary,2024-05-06,Seized
+EVID_00015,CASE_0016,property document,2024-12-29,Analyzed
+EVID_00016,CASE_0021,CCTV summary,2026-06-17,Analyzed
+EVID_00017,CASE_0026,vehicle document,2024-09-21,Pending
+EVID_00018,CASE_0031,CCTV summary,2026-03-07,Pending
+EVID_00019,CASE_0036,bank record,2025-03-17,Analyzed
+EVID_00020,CASE_0041,statement,2024-05-24,Received
+EVID_00021,CASE_0046,CCTV summary,2025-06-14,Received
+EVID_00022,CASE_0051,property document,2025-05-10,Received
+EVID_00023,CASE_0056,CCTV summary,2025-07-03,Seized
+EVID_00024,CASE_0001,seized item,2024-05-06,Pending
+EVID_00025,CASE_0006,CCTV summary,2025-05-28,Pending
+EVID_00026,CASE_0011,vehicle document,2024-09-27,Received
+EVID_00027,CASE_0016,vehicle document,2025-03-14,Seized
+EVID_00028,CASE_0021,CCTV summary,2025-10-30,Seized
+EVID_00029,CASE_0026,property document,2024-11-09,Received
+EVID_00030,CASE_0031,vehicle document,2025-06-11,Pending
+EVID_00031,CASE_0036,seized item,2026-04-13,Seized
+EVID_00032,CASE_0041,seized item,2024-10-17,Pending
+EVID_00033,CASE_0046,bank record,2023-08-01,Pending
+EVID_00034,CASE_0051,CCTV summary,2025-12-19,Pending
+EVID_00035,CASE_0056,seized item,2025-10-16,Analyzed
+EVID_00036,CASE_0001,statement,2025-02-22,Received
+EVID_00037,CASE_0006,statement,2026-06-14,Received
+EVID_00038,CASE_0011,seized item,2024-09-15,Analyzed
+EVID_00039,CASE_0016,vehicle document,2024-09-09,Seized
+EVID_00040,CASE_0021,statement,2024-03-15,Seized
+EVID_00041,CASE_0026,seized item,2025-04-11,Analyzed
+EVID_00042,CASE_0031,seized item,2026-03-10,Received
+EVID_00043,CASE_0036,mobile device,2024-08-08,Seized
+EVID_00044,CASE_0041,digital export,2024-09-23,Pending
+EVID_00045,CASE_0046,digital export,2024-09-18,Seized
+EVID_00046,CASE_0051,vehicle document,2023-12-17,Seized
+EVID_00047,CASE_0056,digital export,2025-11-26,Received
+EVID_00048,CASE_0001,seized item,2024-03-05,Received
+EVID_00049,CASE_0006,statement,2025-03-08,Analyzed
+EVID_00050,CASE_0011,seized item,2026-03-23,Seized
+EVID_00051,CASE_0016,CCTV summary,2025-04-14,Pending
+EVID_00052,CASE_0021,mobile device,2025-05-28,Pending
+EVID_00053,CASE_0026,property document,2024-11-19,Seized
+EVID_00054,CASE_0031,mobile device,2025-06-21,Pending
+EVID_00055,CASE_0036,CCTV summary,2026-04-08,Pending
+EVID_00056,CASE_0041,bank record,2025-09-23,Analyzed
+EVID_00057,CASE_0046,statement,2024-12-05,Pending
+EVID_00058,CASE_0051,property document,2024-11-22,Analyzed
+EVID_00059,CASE_0056,bank record,2026-04-02,Analyzed
+EVID_00060,CASE_0001,bank record,2026-04-24,Received
+EVID_00061,CASE_0006,vehicle document,2025-08-17,Received
+EVID_00062,CASE_0011,seized item,2025-07-22,Pending
+EVID_00063,CASE_0016,CCTV summary,2024-12-11,Analyzed
+EVID_00064,CASE_0021,CCTV summary,2026-01-12,Seized
+EVID_00065,CASE_0026,vehicle document,2023-08-09,Received
+EVID_00066,CASE_0031,bank record,2025-03-13,Received
+EVID_00067,CASE_0036,statement,2026-06-10,Pending
+EVID_00068,CASE_0041,CCTV summary,2025-08-02,Seized
+EVID_00069,CASE_0046,digital export,2025-09-29,Pending
+EVID_00070,CASE_0051,CCTV summary,2025-01-31,Received
+EVID_00071,CASE_0056,mobile device,2024-08-25,Analyzed
+EVID_00072,CASE_0001,property document,2026-04-02,Pending
+EVID_00073,CASE_0006,property document,2025-07-17,Pending
+EVID_00074,CASE_0011,vehicle document,2024-12-07,Analyzed
+EVID_00075,CASE_0016,bank record,2026-05-01,Received
+EVID_00076,CASE_0021,digital export,2025-07-11,Analyzed
+EVID_00077,CASE_0026,statement,2025-05-09,Pending
+EVID_00078,CASE_0031,digital export,2024-12-25,Received
+EVID_00079,CASE_0036,mobile device,2023-11-02,Received
+EVID_00080,CASE_0041,seized item,2024-11-16,Seized
+EVID_00081,CASE_0046,digital export,2023-12-07,Received
+EVID_00082,CASE_0051,seized item,2024-05-01,Received
+EVID_00083,CASE_0056,CCTV summary,2025-08-19,Analyzed
+EVID_00084,CASE_0001,statement,2024-03-30,Seized
+EVID_00085,CASE_0006,bank record,2025-08-21,Received
+EVID_00086,CASE_0011,CCTV summary,2026-03-07,Pending
+EVID_00087,CASE_0016,seized item,2026-03-11,Pending
+EVID_00088,CASE_0021,CCTV summary,2024-01-09,Analyzed
+EVID_00089,CASE_0026,CCTV summary,2025-04-10,Analyzed
+EVID_00090,CASE_0031,seized item,2024-10-04,Received
+EVID_00091,CASE_0036,digital export,2025-06-21,Analyzed
+EVID_00092,CASE_0041,mobile device,2024-09-07,Received
+EVID_00093,CASE_0046,bank record,2022-12-04,Received
+EVID_00094,CASE_0051,mobile device,2026-01-06,Analyzed
+EVID_00095,CASE_0056,statement,2025-01-23,Pending
+EVID_00096,CASE_0001,mobile device,2024-02-03,Analyzed
+EVID_00097,CASE_0006,mobile device,2026-05-14,Received
+EVID_00098,CASE_0011,digital export,2026-06-12,Analyzed
+EVID_00099,CASE_0016,mobile device,2025-03-02,Pending
+EVID_00100,CASE_0021,mobile device,2025-03-28,Seized
+EVID_00101,CASE_0026,statement,2026-01-10,Seized
+EVID_00102,CASE_0031,bank record,2025-07-04,Analyzed
+EVID_00103,CASE_0036,CCTV summary,2025-03-13,Seized
+EVID_00104,CASE_0041,mobile device,2024-05-14,Analyzed
+EVID_00105,CASE_0046,mobile device,2023-07-22,Seized
+EVID_00106,CASE_0051,statement,2026-04-04,Received
+EVID_00107,CASE_0056,bank record,2024-01-20,Analyzed
+EVID_00108,CASE_0001,bank record,2024-04-11,Seized
+EVID_00109,CASE_0006,digital export,2026-06-28,Pending
+EVID_00110,CASE_0011,seized item,2024-11-10,Analyzed
+EVID_00111,CASE_0016,seized item,2024-08-20,Pending
+EVID_00112,CASE_0021,vehicle document,2024-06-24,Pending
+EVID_00113,CASE_0026,statement,2025-03-14,Received
+EVID_00114,CASE_0031,bank record,2026-04-27,Pending
+EVID_00115,CASE_0036,bank record,2026-04-15,Pending
+EVID_00116,CASE_0041,CCTV summary,2025-02-15,Analyzed
+EVID_00117,CASE_0046,digital export,2024-04-18,Pending
+EVID_00118,CASE_0051,bank record,2026-06-29,Pending
+EVID_00119,CASE_0056,bank record,2025-11-18,Seized
+EVID_00120,CASE_0001,digital export,2025-08-06,Analyzed
+EVID_00121,CASE_0006,statement,2025-08-08,Pending
+EVID_00122,CASE_0011,statement,2024-06-18,Seized
+EVID_00123,CASE_0016,statement,2026-05-29,Received
+EVID_00124,CASE_0021,property document,2024-08-02,Analyzed
+EVID_00125,CASE_0026,seized item,2023-07-16,Pending
+EVID_00126,CASE_0031,vehicle document,2025-06-03,Received
+EVID_00127,CASE_0036,property document,2024-03-22,Pending
+EVID_00128,CASE_0041,property document,2026-04-12,Analyzed
+EVID_00129,CASE_0046,digital export,2023-10-12,Pending
+EVID_00130,CASE_0051,mobile device,2024-06-14,Pending
+EVID_00131,CASE_0056,property document,2026-03-10,Pending
+EVID_00132,CASE_0001,bank record,2023-12-12,Pending
+EVID_00133,CASE_0006,mobile device,2025-11-15,Seized
+EVID_00134,CASE_0011,property document,2025-03-28,Analyzed
+EVID_00135,CASE_0016,vehicle document,2025-01-12,Pending
+EVID_00136,CASE_0021,vehicle document,2024-02-04,Analyzed
+EVID_00137,CASE_0026,bank record,2024-03-31,Received
+EVID_00138,CASE_0031,bank record,2025-10-08,Received
+EVID_00139,CASE_0036,CCTV summary,2024-02-08,Pending
+EVID_00140,CASE_0041,CCTV summary,2025-04-29,Analyzed
+EVID_00141,CASE_0046,statement,2023-01-20,Received
+EVID_00142,CASE_0051,property document,2025-05-10,Pending
+EVID_00143,CASE_0056,digital export,2024-09-24,Analyzed
+EVID_00144,CASE_0001,mobile device,2025-09-25,Analyzed
+EVID_00145,CASE_0006,digital export,2026-01-03,Seized
+EVID_00146,CASE_0011,seized item,2025-09-18,Analyzed
+EVID_00147,CASE_0016,vehicle document,2026-01-02,Received
+EVID_00148,CASE_0021,property document,2026-03-07,Pending
+EVID_00149,CASE_0026,mobile device,2024-07-05,Seized
+EVID_00150,CASE_0031,mobile device,2025-11-06,Seized
+EVID_00151,CASE_0036,mobile device,2026-03-20,Seized
+EVID_00152,CASE_0041,seized item,2024-01-01,Analyzed
+EVID_00153,CASE_0046,seized item,2024-12-05,Seized
+EVID_00154,CASE_0051,CCTV summary,2024-11-28,Received
+EVID_00155,CASE_0056,statement,2025-11-19,Received
+EVID_00156,CASE_0001,CCTV summary,2026-06-25,Received
+EVID_00157,CASE_0006,mobile device,2025-12-28,Received
+EVID_00158,CASE_0011,property document,2025-11-15,Seized
+EVID_00159,CASE_0016,mobile device,2026-03-26,Seized
+EVID_00160,CASE_0021,bank record,2025-11-16,Received
+EVID_00161,CASE_0026,seized item,2024-12-09,Pending
+EVID_00162,CASE_0031,CCTV summary,2024-12-10,Pending
+EVID_00163,CASE_0036,mobile device,2025-06-10,Seized
+EVID_00164,CASE_0041,statement,2025-09-04,Seized
+EVID_00165,CASE_0046,bank record,2024-06-17,Pending
+EVID_00166,CASE_0051,bank record,2024-04-14,Analyzed
+EVID_00167,CASE_0056,digital export,2026-02-25,Received
+EVID_00168,CASE_0001,digital export,2023-11-21,Analyzed
+EVID_00169,CASE_0006,mobile device,2025-04-16,Pending
+EVID_00170,CASE_0011,CCTV summary,2024-04-30,Analyzed
+EVID_00171,CASE_0016,property document,2025-09-20,Pending
+EVID_00172,CASE_0021,bank record,2026-03-09,Analyzed
+EVID_00173,CASE_0026,seized item,2024-01-27,Received
+EVID_00174,CASE_0031,digital export,2026-03-05,Seized
+EVID_00175,CASE_0036,property document,2024-06-04,Analyzed
+EVID_00176,CASE_0041,mobile device,2024-12-25,Analyzed
+EVID_00177,CASE_0046,property document,2025-04-09,Seized
+EVID_00178,CASE_0051,digital export,2026-03-01,Received
+EVID_00179,CASE_0056,statement,2025-05-17,Seized
+EVID_00180,CASE_0001,statement,2025-07-01,Received
+EVID_00181,CASE_0006,bank record,2025-07-17,Analyzed
+EVID_00182,CASE_0011,mobile device,2026-02-12,Received
+EVID_00183,CASE_0016,statement,2026-05-10,Pending
+EVID_00184,CASE_0021,statement,2024-09-22,Seized
+EVID_00185,CASE_0026,mobile device,2022-11-15,Seized
+EVID_00186,CASE_0031,statement,2024-07-03,Pending
+EVID_00187,CASE_0036,digital export,2026-02-06,Pending
+EVID_00188,CASE_0041,bank record,2025-12-08,Analyzed
+EVID_00189,CASE_0046,property document,2023-10-26,Seized
+EVID_00190,CASE_0051,vehicle document,2024-02-15,Pending
+EVID_00191,CASE_0056,digital export,2026-04-06,Analyzed
+EVID_00192,CASE_0001,bank record,2026-02-26,Analyzed
+EVID_00193,CASE_0006,vehicle document,2025-03-04,Analyzed
+EVID_00194,CASE_0011,bank record,2026-06-10,Analyzed
+EVID_00195,CASE_0016,CCTV summary,2024-07-30,Seized
+EVID_00196,CASE_0021,seized item,2025-11-15,Seized
+EVID_00197,CASE_0026,statement,2026-02-01,Pending
+EVID_00198,CASE_0031,vehicle document,2026-02-11,Analyzed
+EVID_00199,CASE_0036,mobile device,2026-05-29,Seized
+EVID_00200,CASE_0041,statement,2025-03-15,Seized
+EVID_00201,CASE_0046,mobile device,2024-09-15,Analyzed
+EVID_00202,CASE_0051,vehicle document,2026-02-15,Seized
+EVID_00203,CASE_0056,CCTV summary,2024-01-24,Analyzed
+EVID_00204,CASE_0001,property document,2024-01-18,Received
+EVID_00205,CASE_0006,CCTV summary,2025-09-28,Analyzed
+EVID_00206,CASE_0011,seized item,2024-01-09,Analyzed
+EVID_00207,CASE_0016,bank record,2025-11-25,Received
+EVID_00208,CASE_0021,bank record,2026-04-06,Analyzed
+EVID_00209,CASE_0026,mobile device,2022-11-19,Analyzed
+EVID_00210,CASE_0031,CCTV summary,2025-05-17,Seized
+EVID_00211,CASE_0036,property document,2025-05-19,Received
+EVID_00212,CASE_0041,CCTV summary,2024-11-14,Pending
+EVID_00213,CASE_0046,seized item,2023-07-06,Analyzed
+EVID_00214,CASE_0051,property document,2026-06-12,Seized
+EVID_00215,CASE_0056,seized item,2025-09-07,Seized
+EVID_00216,CASE_0001,digital export,2024-09-21,Seized
+EVID_00217,CASE_0006,seized item,2025-04-19,Analyzed
+EVID_00218,CASE_0011,digital export,2025-05-21,Received
+EVID_00219,CASE_0016,mobile device,2025-01-30,Analyzed
+EVID_00220,CASE_0021,vehicle document,2024-05-24,Pending
+EVID_00221,CASE_0026,seized item,2026-04-08,Analyzed
+EVID_00222,CASE_0031,bank record,2024-07-20,Received
+EVID_00223,CASE_0036,CCTV summary,2024-04-11,Pending
+EVID_00224,CASE_0041,property document,2024-12-15,Received
+EVID_00225,CASE_0046,bank record,2024-09-29,Received
+EVID_00226,CASE_0051,digital export,2024-09-30,Received
+EVID_00227,CASE_0056,mobile device,2024-09-17,Analyzed
+EVID_00228,CASE_0001,mobile device,2025-09-11,Analyzed
+EVID_00229,CASE_0006,bank record,2025-08-20,Received
+EVID_00230,CASE_0011,mobile device,2024-05-18,Pending
+EVID_00231,CASE_0016,digital export,2024-07-30,Pending
+EVID_00232,CASE_0021,bank record,2025-09-29,Analyzed
+EVID_00233,CASE_0026,CCTV summary,2026-02-09,Seized
+EVID_00234,CASE_0031,statement,2026-01-01,Seized
+EVID_00235,CASE_0036,bank record,2024-06-05,Analyzed
+EVID_00236,CASE_0041,CCTV summary,2024-10-13,Received
+EVID_00237,CASE_0046,property document,2025-10-16,Pending
+EVID_00238,CASE_0051,statement,2024-07-10,Analyzed
+EVID_00239,CASE_0056,property document,2025-09-02,Received
+EVID_00240,CASE_0001,seized item,2023-06-11,Analyzed
+EVID_00241,CASE_0006,CCTV summary,2025-05-13,Seized
+EVID_00242,CASE_0011,vehicle document,2025-10-07,Received
+EVID_00243,CASE_0016,seized item,2025-08-07,Analyzed
+EVID_00244,CASE_0021,property document,2024-09-16,Received
+EVID_00245,CASE_0026,property document,2025-09-15,Received
+EVID_00246,CASE_0031,CCTV summary,2026-02-10,Seized
+EVID_00247,CASE_0036,vehicle document,2024-06-21,Pending
+EVID_00248,CASE_0041,property document,2024-01-19,Pending
+EVID_00249,CASE_0046,digital export,2024-12-03,Analyzed
+EVID_00250,CASE_0051,CCTV summary,2024-11-13,Analyzed
+EVID_00251,CASE_0056,mobile device,2025-01-08,Pending
+EVID_00252,CASE_0001,vehicle document,2025-12-31,Pending
+EVID_00253,CASE_0006,vehicle document,2025-10-27,Received
+EVID_00254,CASE_0011,digital export,2025-04-03,Pending
+EVID_00255,CASE_0016,statement,2026-05-15,Seized
+EVID_00256,CASE_0021,statement,2024-07-18,Received
+EVID_00257,CASE_0026,statement,2025-02-03,Received
+EVID_00258,CASE_0031,CCTV summary,2024-12-02,Analyzed
+EVID_00259,CASE_0036,seized item,2025-06-17,Received
+EVID_00260,CASE_0041,property document,2025-11-14,Received

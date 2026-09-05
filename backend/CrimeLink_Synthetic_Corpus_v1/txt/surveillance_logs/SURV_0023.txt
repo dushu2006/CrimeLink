@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2021-11-23
+Case: CASE_0014
+Observed reference: Debasish Behera
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

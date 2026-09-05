@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2025-05-16
+Case: CASE_0057
+Observed reference: Kiran Kumar
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

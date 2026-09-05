@@ -1,0 +1,86 @@
+[
+  {
+    "network_id": "EVNET_01",
+    "type": "Hawala-style syndicate",
+    "region": "Hyderabad\u2013Mumbai",
+    "member_count": 28,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_02",
+    "type": "Construction extortion",
+    "region": "Bengaluru",
+    "member_count": 22,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_03",
+    "type": "Vehicle theft/re-registration",
+    "region": "Delhi NCR\u2013UP",
+    "member_count": 18,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_04",
+    "type": "Coastal narcotics distribution",
+    "region": "Coastal AP\u2013inland",
+    "member_count": 25,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_05",
+    "type": "Cyber-fraud call-centre",
+    "region": "Gujarat",
+    "member_count": 20,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_06",
+    "type": "Land/property document fraud",
+    "region": "Telangana",
+    "member_count": 16,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_07",
+    "type": "Loan/insurance fraud",
+    "region": "Kerala",
+    "member_count": 14,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_08",
+    "type": "Counterfeit goods trading",
+    "region": "Tamil Nadu",
+    "member_count": 15,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_09",
+    "type": "Proxy-payment network",
+    "region": "Bihar",
+    "member_count": 19,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_10",
+    "type": "Inter-state smuggling corridor",
+    "region": "Odisha\u2013West Bengal",
+    "member_count": 17,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_11",
+    "type": "Cross-network bridge",
+    "region": "Multi-state",
+    "member_count": 3,
+    "purpose": "evaluation-only"
+  },
+  {
+    "network_id": "EVNET_12",
+    "type": "Legitimate cash-heavy decoy business",
+    "region": "Multi-state",
+    "member_count": 12,
+    "purpose": "evaluation-only"
+  }
+]

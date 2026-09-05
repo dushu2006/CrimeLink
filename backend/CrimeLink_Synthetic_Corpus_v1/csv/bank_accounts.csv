@@ -1,0 +1,481 @@
+account_id,account_number,bank_name,branch_city,account_type
+ACCT_00001,9437638670012685,Suryodaya Commercial Bank,Jaipur,Savings
+ACCT_00002,8130279150201931,Harborline Bank,Bhubaneswar,Savings
+ACCT_00003,9407715244924743,Harborline Bank,Indore,Current
+ACCT_00004,4155022802066572,Suryodaya Commercial Bank,Delhi,Savings
+ACCT_00005,7166279763914263,Suryodaya Commercial Bank,Hyderabad,Salary
+ACCT_00006,0500310074443227,National Meridian Bank,Kolkata,Salary
+ACCT_00007,7552680488309816,Crescent Union Bank,Chennai,Current
+ACCT_00008,2929520429492508,Suryodaya Commercial Bank,Vijayawada,Savings
+ACCT_00009,1800883138093313,Crescent Union Bank,Jaipur,Savings
+ACCT_00010,9125307508909157,Crescent Union Bank,Noida,Savings
+ACCT_00011,7732788053246123,Dakshin Cooperative Bank,Ahmedabad,Current
+ACCT_00012,6502817020625554,Harborline Bank,Ranchi,Savings
+ACCT_00013,7030005593474251,Harborline Bank,Kolkata,Savings
+ACCT_00014,2374055972509674,Harborline Bank,Jaipur,Current
+ACCT_00015,2477468637399762,Crescent Union Bank,Bengaluru,Salary
+ACCT_00016,9350959829615251,Harborline Bank,Delhi,Current
+ACCT_00017,2790259938755881,Harborline Bank,Kochi,Savings
+ACCT_00018,4298048743403798,National Meridian Bank,Mumbai,Savings
+ACCT_00019,4808898138100991,National Meridian Bank,Indore,Salary
+ACCT_00020,3534543425368333,Harborline Bank,Mumbai,Salary
+ACCT_00021,3023509138501373,Dakshin Cooperative Bank,Noida,Salary
+ACCT_00022,8262493875469537,Dakshin Cooperative Bank,Ranchi,Salary
+ACCT_00023,4953640446196289,National Meridian Bank,Hyderabad,Salary
+ACCT_00024,1169819178153938,Dakshin Cooperative Bank,Chennai,Salary
+ACCT_00025,2841370586936702,Crescent Union Bank,Delhi,Current
+ACCT_00026,4144824440245973,National Meridian Bank,Vijayawada,Current
+ACCT_00027,2805713345717628,Dakshin Cooperative Bank,Kolkata,Current
+ACCT_00028,1235028281932440,National Meridian Bank,Jaipur,Current
+ACCT_00029,4532602861760388,Dakshin Cooperative Bank,Ranchi,Current
+ACCT_00030,3039090469997177,Suryodaya Commercial Bank,Vijayawada,Savings
+ACCT_00031,0583304222355703,Harborline Bank,Panaji,Savings
+ACCT_00032,5573629524183879,Crescent Union Bank,Kochi,Current
+ACCT_00033,5362527363574208,Dakshin Cooperative Bank,Bengaluru,Current
+ACCT_00034,9365434502647865,Suryodaya Commercial Bank,Ranchi,Salary
+ACCT_00035,0476685386016474,Suryodaya Commercial Bank,Bengaluru,Savings
+ACCT_00036,1677805170737664,Dakshin Cooperative Bank,Bhubaneswar,Current
+ACCT_00037,8848798375759975,Crescent Union Bank,Panaji,Savings
+ACCT_00038,0316509213030113,Suryodaya Commercial Bank,Hyderabad,Savings
+ACCT_00039,1350664601558696,Dakshin Cooperative Bank,Jaipur,Savings
+ACCT_00040,0667428852708906,Suryodaya Commercial Bank,Bengaluru,Savings
+ACCT_00041,4724033993937825,Suryodaya Commercial Bank,Bengaluru,Salary
+ACCT_00042,2264670187183490,Harborline Bank,Panaji,Current
+ACCT_00043,9687577373556778,Harborline Bank,Indore,Salary
+ACCT_00044,3293204752744977,National Meridian Bank,Bhubaneswar,Savings
+ACCT_00045,2370707689876464,Dakshin Cooperative Bank,Bengaluru,Savings
+ACCT_00046,4025108736043088,National Meridian Bank,Panaji,Salary
+ACCT_00047,8438364900028938,Dakshin Cooperative Bank,Hyderabad,Salary
+ACCT_00048,9763514511306214,Harborline Bank,Patna,Salary
+ACCT_00049,4063784987681931,Harborline Bank,Hyderabad,Savings
+ACCT_00050,9142190061349873,Crescent Union Bank,Mumbai,Salary
+ACCT_00051,1047915484147416,Harborline Bank,Mumbai,Current
+ACCT_00052,0691409916294076,Crescent Union Bank,Delhi,Salary
+ACCT_00053,0553077657374994,Crescent Union Bank,Indore,Salary
+ACCT_00054,8513835657820059,Suryodaya Commercial Bank,Mumbai,Current
+ACCT_00055,2102066226243536,Crescent Union Bank,Kolkata,Savings
+ACCT_00056,6074744196517343,National Meridian Bank,Ranchi,Savings
+ACCT_00057,4311920510033735,Suryodaya Commercial Bank,Indore,Savings
+ACCT_00058,1846250604554578,Harborline Bank,Panaji,Salary
+ACCT_00059,4593273761790229,Suryodaya Commercial Bank,Vijayawada,Savings
+ACCT_00060,0536170071321859,Dakshin Cooperative Bank,Jaipur,Current
+ACCT_00061,2489574303776247,Suryodaya Commercial Bank,Jaipur,Current
+ACCT_00062,2328077132913585,National Meridian Bank,Hyderabad,Salary
+ACCT_00063,4603335895843326,Harborline Bank,Ahmedabad,Current
+ACCT_00064,5052870037501360,Crescent Union Bank,Raipur,Current
+ACCT_00065,9116478402481313,National Meridian Bank,Patna,Savings
+ACCT_00066,5951576206330087,Suryodaya Commercial Bank,Kolkata,Salary
+ACCT_00067,5081864456121656,Crescent Union Bank,Raipur,Current
+ACCT_00068,9288185841611339,Suryodaya Commercial Bank,Patna,Savings
+ACCT_00069,9634126664893439,Harborline Bank,Chennai,Savings
+ACCT_00070,4776809966602831,Harborline Bank,Indore,Savings
+ACCT_00071,8293649975103082,National Meridian Bank,Bengaluru,Salary
+ACCT_00072,3771714846254390,Suryodaya Commercial Bank,Ranchi,Salary
+ACCT_00073,1917807378541145,Dakshin Cooperative Bank,Vijayawada,Savings
+ACCT_00074,3248187511169989,Harborline Bank,Jaipur,Salary
+ACCT_00075,7440947633685298,Harborline Bank,Hyderabad,Current
+ACCT_00076,0346632929865385,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00077,2641164790472396,Crescent Union Bank,Ranchi,Savings
+ACCT_00078,7545222957356085,Dakshin Cooperative Bank,Hyderabad,Savings
+ACCT_00079,4922042999147352,Suryodaya Commercial Bank,Kolkata,Salary
+ACCT_00080,1240583487464418,Suryodaya Commercial Bank,Delhi,Salary
+ACCT_00081,7414480550063395,Crescent Union Bank,Ranchi,Current
+ACCT_00082,4711447920506806,National Meridian Bank,Chennai,Savings
+ACCT_00083,9492333319159397,Suryodaya Commercial Bank,Raipur,Salary
+ACCT_00084,5207903335928561,National Meridian Bank,Panaji,Current
+ACCT_00085,8335333024885693,National Meridian Bank,Patna,Salary
+ACCT_00086,4523311015747349,National Meridian Bank,Indore,Current
+ACCT_00087,4528212596899179,Crescent Union Bank,Delhi,Salary
+ACCT_00088,7074481404606616,Harborline Bank,Bhubaneswar,Salary
+ACCT_00089,3820600684950591,National Meridian Bank,Hyderabad,Savings
+ACCT_00090,4089405445892967,Suryodaya Commercial Bank,Ahmedabad,Current
+ACCT_00091,7784617740805753,Dakshin Cooperative Bank,Ranchi,Salary
+ACCT_00092,5585652188449523,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00093,8598344335973196,Crescent Union Bank,Hyderabad,Savings
+ACCT_00094,3902276625257280,Dakshin Cooperative Bank,Bhubaneswar,Current
+ACCT_00095,0397488562184302,Suryodaya Commercial Bank,Indore,Salary
+ACCT_00096,5287293965650387,Harborline Bank,Delhi,Current
+ACCT_00097,8912177067000537,Suryodaya Commercial Bank,Ahmedabad,Savings
+ACCT_00098,7288046200768851,Dakshin Cooperative Bank,Vijayawada,Current
+ACCT_00099,8318516716370480,Dakshin Cooperative Bank,Indore,Salary
+ACCT_00100,3869793719203037,Suryodaya Commercial Bank,Mumbai,Current
+ACCT_00101,6415032692649020,Harborline Bank,Mumbai,Current
+ACCT_00102,0383904551218007,Crescent Union Bank,Vijayawada,Salary
+ACCT_00103,0115106641706935,Harborline Bank,Panaji,Savings
+ACCT_00104,3724252400124719,Dakshin Cooperative Bank,Patna,Savings
+ACCT_00105,5682332210866975,Harborline Bank,Chennai,Current
+ACCT_00106,0819098132036737,National Meridian Bank,Ranchi,Current
+ACCT_00107,5794733275460526,Dakshin Cooperative Bank,Indore,Current
+ACCT_00108,8221231090348527,Crescent Union Bank,Vijayawada,Savings
+ACCT_00109,3126342948591179,Harborline Bank,Bhubaneswar,Savings
+ACCT_00110,3307551727617635,National Meridian Bank,Chennai,Savings
+ACCT_00111,0107948353732728,Crescent Union Bank,Panaji,Salary
+ACCT_00112,7869830874942985,Harborline Bank,Noida,Savings
+ACCT_00113,1871188762613299,Crescent Union Bank,Indore,Salary
+ACCT_00114,9373664272914897,National Meridian Bank,Bengaluru,Savings
+ACCT_00115,3355011853044174,Crescent Union Bank,Noida,Salary
+ACCT_00116,2343894682261395,Dakshin Cooperative Bank,Bhubaneswar,Savings
+ACCT_00117,6135607124900735,Harborline Bank,Bengaluru,Savings
+ACCT_00118,8726783380024518,Dakshin Cooperative Bank,Chennai,Current
+ACCT_00119,5307864318168911,Harborline Bank,Raipur,Current
+ACCT_00120,6121474881325901,Suryodaya Commercial Bank,Kochi,Current
+ACCT_00121,6453999928232183,Harborline Bank,Ahmedabad,Current
+ACCT_00122,5136811580876680,Dakshin Cooperative Bank,Indore,Savings
+ACCT_00123,6063817093953303,National Meridian Bank,Jaipur,Current
+ACCT_00124,1697402064285994,Dakshin Cooperative Bank,Chennai,Current
+ACCT_00125,7533464669196735,Suryodaya Commercial Bank,Kochi,Current
+ACCT_00126,7135038086919046,National Meridian Bank,Mumbai,Savings
+ACCT_00127,4137170723248392,Harborline Bank,Noida,Salary
+ACCT_00128,5640756394639067,Suryodaya Commercial Bank,Kolkata,Current
+ACCT_00129,2010445266975411,Suryodaya Commercial Bank,Bhubaneswar,Current
+ACCT_00130,3107865172344822,Crescent Union Bank,Kochi,Salary
+ACCT_00131,7353789588736758,Harborline Bank,Ahmedabad,Savings
+ACCT_00132,3719903892710982,National Meridian Bank,Bhubaneswar,Salary
+ACCT_00133,0221558499920214,Crescent Union Bank,Raipur,Savings
+ACCT_00134,4646528006194888,Dakshin Cooperative Bank,Mumbai,Salary
+ACCT_00135,8164456748203307,Dakshin Cooperative Bank,Chennai,Salary
+ACCT_00136,8397421710711342,Harborline Bank,Hyderabad,Current
+ACCT_00137,5751274314638066,Harborline Bank,Panaji,Savings
+ACCT_00138,2443511127158958,National Meridian Bank,Kochi,Current
+ACCT_00139,8104381881677435,Dakshin Cooperative Bank,Bhubaneswar,Salary
+ACCT_00140,8077366577455265,Dakshin Cooperative Bank,Raipur,Savings
+ACCT_00141,1917199726499255,Dakshin Cooperative Bank,Panaji,Salary
+ACCT_00142,9297541605572468,Harborline Bank,Bhubaneswar,Savings
+ACCT_00143,5348266864160556,Suryodaya Commercial Bank,Ranchi,Savings
+ACCT_00144,5019120833966868,National Meridian Bank,Bengaluru,Savings
+ACCT_00145,6449903774046739,Suryodaya Commercial Bank,Indore,Salary
+ACCT_00146,5842543853780166,Harborline Bank,Delhi,Current
+ACCT_00147,2429616557038878,National Meridian Bank,Panaji,Current
+ACCT_00148,0364653777477637,Harborline Bank,Hyderabad,Salary
+ACCT_00149,7376733627019159,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00150,9314006445909803,Dakshin Cooperative Bank,Kochi,Savings
+ACCT_00151,7590564440132215,Crescent Union Bank,Mumbai,Current
+ACCT_00152,2848103924006116,Harborline Bank,Chennai,Savings
+ACCT_00153,2118157723327412,Crescent Union Bank,Hyderabad,Salary
+ACCT_00154,3117952283959515,National Meridian Bank,Bhubaneswar,Salary
+ACCT_00155,0262366128127081,Dakshin Cooperative Bank,Bengaluru,Savings
+ACCT_00156,5178486362635072,National Meridian Bank,Hyderabad,Savings
+ACCT_00157,9995041798336125,Suryodaya Commercial Bank,Vijayawada,Salary
+ACCT_00158,5228937995342179,Crescent Union Bank,Indore,Salary
+ACCT_00159,1776867799905415,Dakshin Cooperative Bank,Chennai,Savings
+ACCT_00160,3132162259992551,Harborline Bank,Vijayawada,Salary
+ACCT_00161,3977040546459326,National Meridian Bank,Ahmedabad,Current
+ACCT_00162,6317852354303226,Suryodaya Commercial Bank,Bengaluru,Savings
+ACCT_00163,5947107549878503,Harborline Bank,Noida,Current
+ACCT_00164,6102775749731659,Crescent Union Bank,Noida,Savings
+ACCT_00165,2993588080596599,National Meridian Bank,Bhubaneswar,Salary
+ACCT_00166,1118478116928246,National Meridian Bank,Panaji,Salary
+ACCT_00167,9082438499849385,Crescent Union Bank,Kolkata,Current
+ACCT_00168,8647195569643483,Suryodaya Commercial Bank,Hyderabad,Salary
+ACCT_00169,1887547102826332,Crescent Union Bank,Mumbai,Current
+ACCT_00170,8889791711429011,Suryodaya Commercial Bank,Jaipur,Current
+ACCT_00171,1854458444819715,Crescent Union Bank,Jaipur,Current
+ACCT_00172,9790529991073229,Dakshin Cooperative Bank,Vijayawada,Current
+ACCT_00173,7051229775629652,Dakshin Cooperative Bank,Mumbai,Salary
+ACCT_00174,0822175486469399,National Meridian Bank,Indore,Salary
+ACCT_00175,8593088457234826,Harborline Bank,Ranchi,Current
+ACCT_00176,6403118343077278,National Meridian Bank,Chennai,Current
+ACCT_00177,0143439122269429,Crescent Union Bank,Indore,Current
+ACCT_00178,9465641328867939,Dakshin Cooperative Bank,Raipur,Salary
+ACCT_00179,3819271196206857,Dakshin Cooperative Bank,Mumbai,Savings
+ACCT_00180,6036691130946840,Harborline Bank,Delhi,Savings
+ACCT_00181,6427316964544624,National Meridian Bank,Mumbai,Savings
+ACCT_00182,2831904071802367,Dakshin Cooperative Bank,Chennai,Salary
+ACCT_00183,5261672508376837,Crescent Union Bank,Bengaluru,Salary
+ACCT_00184,9434485692443261,Dakshin Cooperative Bank,Jaipur,Salary
+ACCT_00185,1716955851562034,Crescent Union Bank,Vijayawada,Salary
+ACCT_00186,0529286201894743,Suryodaya Commercial Bank,Raipur,Salary
+ACCT_00187,5190109821268821,Dakshin Cooperative Bank,Bengaluru,Current
+ACCT_00188,2899391100281163,Suryodaya Commercial Bank,Bengaluru,Savings
+ACCT_00189,9660464834893612,National Meridian Bank,Chennai,Salary
+ACCT_00190,4916987071454656,Suryodaya Commercial Bank,Vijayawada,Salary
+ACCT_00191,5678219403571604,Suryodaya Commercial Bank,Hyderabad,Savings
+ACCT_00192,8362669548721531,Harborline Bank,Jaipur,Savings
+ACCT_00193,1269895641719377,Crescent Union Bank,Indore,Current
+ACCT_00194,7276438949353392,National Meridian Bank,Ranchi,Current
+ACCT_00195,2069577442934645,National Meridian Bank,Panaji,Salary
+ACCT_00196,5165360537677258,Dakshin Cooperative Bank,Mumbai,Current
+ACCT_00197,8528440719424739,Suryodaya Commercial Bank,Ranchi,Savings
+ACCT_00198,8009569599606842,National Meridian Bank,Kolkata,Savings
+ACCT_00199,2453918841511125,Dakshin Cooperative Bank,Hyderabad,Savings
+ACCT_00200,8024251574316309,Dakshin Cooperative Bank,Ahmedabad,Savings
+ACCT_00201,3694105542005508,Dakshin Cooperative Bank,Indore,Current
+ACCT_00202,7610036164927186,Dakshin Cooperative Bank,Kolkata,Salary
+ACCT_00203,3459982577477053,Crescent Union Bank,Indore,Salary
+ACCT_00204,7322915629650479,Suryodaya Commercial Bank,Hyderabad,Current
+ACCT_00205,2478940221670139,Harborline Bank,Delhi,Salary
+ACCT_00206,7607360860351059,Harborline Bank,Ranchi,Current
+ACCT_00207,4694837863707855,Dakshin Cooperative Bank,Panaji,Salary
+ACCT_00208,2965552837869413,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00209,8663290683502505,Dakshin Cooperative Bank,Panaji,Current
+ACCT_00210,3441982888256833,National Meridian Bank,Panaji,Salary
+ACCT_00211,3741325150535575,Suryodaya Commercial Bank,Delhi,Savings
+ACCT_00212,6564155154837147,Harborline Bank,Bengaluru,Salary
+ACCT_00213,4865225655098271,Dakshin Cooperative Bank,Ranchi,Current
+ACCT_00214,0410651611660590,Suryodaya Commercial Bank,Ahmedabad,Salary
+ACCT_00215,9489852148949277,National Meridian Bank,Indore,Savings
+ACCT_00216,3681484418372011,Dakshin Cooperative Bank,Hyderabad,Salary
+ACCT_00217,8486441846980643,National Meridian Bank,Jaipur,Current
+ACCT_00218,8606319643855706,Suryodaya Commercial Bank,Bhubaneswar,Salary
+ACCT_00219,8015763535977331,Harborline Bank,Bhubaneswar,Savings
+ACCT_00220,5881176050215553,Suryodaya Commercial Bank,Bhubaneswar,Current
+ACCT_00221,6351607900927679,Suryodaya Commercial Bank,Panaji,Salary
+ACCT_00222,7351474868838352,Dakshin Cooperative Bank,Kolkata,Salary
+ACCT_00223,3025440562096199,Crescent Union Bank,Vijayawada,Savings
+ACCT_00224,5292719421614440,Suryodaya Commercial Bank,Delhi,Current
+ACCT_00225,2395851054555327,Harborline Bank,Delhi,Savings
+ACCT_00226,9882461883970409,Dakshin Cooperative Bank,Mumbai,Salary
+ACCT_00227,2083002491649061,Crescent Union Bank,Indore,Current
+ACCT_00228,4061085770580378,Crescent Union Bank,Indore,Salary
+ACCT_00229,9837975903697131,National Meridian Bank,Kolkata,Savings
+ACCT_00230,6577862547402808,Crescent Union Bank,Vijayawada,Current
+ACCT_00231,0531976790523137,Crescent Union Bank,Kochi,Savings
+ACCT_00232,8020449936355073,Crescent Union Bank,Kochi,Savings
+ACCT_00233,9694357870500333,Dakshin Cooperative Bank,Bhubaneswar,Current
+ACCT_00234,7498116436695874,Crescent Union Bank,Bengaluru,Savings
+ACCT_00235,0658166971133924,National Meridian Bank,Bengaluru,Savings
+ACCT_00236,6230853094110057,Dakshin Cooperative Bank,Bhubaneswar,Savings
+ACCT_00237,0790206686436738,Suryodaya Commercial Bank,Bhubaneswar,Savings
+ACCT_00238,1476772976328688,Harborline Bank,Indore,Salary
+ACCT_00239,3418684877830230,Crescent Union Bank,Raipur,Current
+ACCT_00240,1699045057481575,Suryodaya Commercial Bank,Ranchi,Salary
+ACCT_00241,1831321002764708,Dakshin Cooperative Bank,Noida,Salary
+ACCT_00242,4122511651435974,National Meridian Bank,Patna,Current
+ACCT_00243,0229775648120199,Harborline Bank,Hyderabad,Salary
+ACCT_00244,4745983403169507,Harborline Bank,Chennai,Salary
+ACCT_00245,3034773706653334,Dakshin Cooperative Bank,Indore,Current
+ACCT_00246,7694322298531752,Suryodaya Commercial Bank,Panaji,Savings
+ACCT_00247,2549574606141280,Dakshin Cooperative Bank,Indore,Savings
+ACCT_00248,5450051564810392,Harborline Bank,Raipur,Savings
+ACCT_00249,6951797138275743,Suryodaya Commercial Bank,Indore,Savings
+ACCT_00250,7006511647933683,National Meridian Bank,Mumbai,Salary
+ACCT_00251,0122765502750321,Crescent Union Bank,Kolkata,Current
+ACCT_00252,5745705038500606,Dakshin Cooperative Bank,Jaipur,Savings
+ACCT_00253,1417807693533631,National Meridian Bank,Panaji,Salary
+ACCT_00254,7182205313572382,Crescent Union Bank,Delhi,Salary
+ACCT_00255,1948329141104135,National Meridian Bank,Hyderabad,Current
+ACCT_00256,5098061064390715,Dakshin Cooperative Bank,Bhubaneswar,Salary
+ACCT_00257,5682968699979324,National Meridian Bank,Noida,Salary
+ACCT_00258,9382991392274691,Suryodaya Commercial Bank,Jaipur,Current
+ACCT_00259,1213830592851233,Crescent Union Bank,Ahmedabad,Current
+ACCT_00260,2218535647420632,Harborline Bank,Noida,Salary
+ACCT_00261,3446179862846328,Crescent Union Bank,Kochi,Savings
+ACCT_00262,0049322795963079,National Meridian Bank,Chennai,Current
+ACCT_00263,8870885792163908,National Meridian Bank,Noida,Salary
+ACCT_00264,7211055261397682,National Meridian Bank,Chennai,Savings
+ACCT_00265,7911050348984456,Suryodaya Commercial Bank,Kochi,Salary
+ACCT_00266,4877443187837388,Dakshin Cooperative Bank,Chennai,Salary
+ACCT_00267,8046685530473036,Suryodaya Commercial Bank,Bengaluru,Savings
+ACCT_00268,4385608401905434,Crescent Union Bank,Indore,Current
+ACCT_00269,8305482921991480,Harborline Bank,Bhubaneswar,Current
+ACCT_00270,5970654034938463,Suryodaya Commercial Bank,Noida,Salary
+ACCT_00271,1318295411822379,Harborline Bank,Panaji,Salary
+ACCT_00272,1276757588408313,Crescent Union Bank,Chennai,Current
+ACCT_00273,7221401795226308,Suryodaya Commercial Bank,Raipur,Savings
+ACCT_00274,7437612465570482,Harborline Bank,Chennai,Salary
+ACCT_00275,9867544149166978,Suryodaya Commercial Bank,Noida,Current
+ACCT_00276,5041164080737255,Harborline Bank,Vijayawada,Current
+ACCT_00277,7994749785947575,Crescent Union Bank,Chennai,Salary
+ACCT_00278,8076362289526021,Suryodaya Commercial Bank,Jaipur,Salary
+ACCT_00279,8683384811761921,Suryodaya Commercial Bank,Delhi,Salary
+ACCT_00280,1913311633378836,Harborline Bank,Patna,Savings
+ACCT_00281,9185094327888039,National Meridian Bank,Bhubaneswar,Current
+ACCT_00282,8393637877168138,Suryodaya Commercial Bank,Indore,Current
+ACCT_00283,5881169028897104,National Meridian Bank,Bengaluru,Salary
+ACCT_00284,6582432672161501,Suryodaya Commercial Bank,Vijayawada,Salary
+ACCT_00285,0318884119374754,Crescent Union Bank,Indore,Salary
+ACCT_00286,4839214064894367,Crescent Union Bank,Indore,Current
+ACCT_00287,3919449500677150,Crescent Union Bank,Chennai,Savings
+ACCT_00288,4451683852357891,Harborline Bank,Kochi,Salary
+ACCT_00289,9446188548889102,Dakshin Cooperative Bank,Hyderabad,Current
+ACCT_00290,2268402308511086,Crescent Union Bank,Ahmedabad,Salary
+ACCT_00291,8029314020865645,Harborline Bank,Bhubaneswar,Savings
+ACCT_00292,9826779182277939,Suryodaya Commercial Bank,Ahmedabad,Savings
+ACCT_00293,4650072970069421,Suryodaya Commercial Bank,Patna,Salary
+ACCT_00294,3919709926660979,Dakshin Cooperative Bank,Hyderabad,Salary
+ACCT_00295,3554030586768610,Crescent Union Bank,Ranchi,Current
+ACCT_00296,5879336439748192,National Meridian Bank,Hyderabad,Salary
+ACCT_00297,6464235630239161,Suryodaya Commercial Bank,Indore,Salary
+ACCT_00298,4184901581925565,Harborline Bank,Jaipur,Savings
+ACCT_00299,4804054047764297,Crescent Union Bank,Bhubaneswar,Salary
+ACCT_00300,8131632958166196,Harborline Bank,Patna,Current
+ACCT_00301,2711505023848404,Crescent Union Bank,Ahmedabad,Current
+ACCT_00302,3974539996440144,Crescent Union Bank,Raipur,Savings
+ACCT_00303,2742598639158195,Crescent Union Bank,Delhi,Salary
+ACCT_00304,0847983933657325,National Meridian Bank,Noida,Salary
+ACCT_00305,0568331870431361,Harborline Bank,Indore,Savings
+ACCT_00306,8013925557563560,National Meridian Bank,Chennai,Current
+ACCT_00307,7487603281331779,Harborline Bank,Vijayawada,Salary
+ACCT_00308,5879981747309300,Crescent Union Bank,Noida,Current
+ACCT_00309,5600724109007104,Dakshin Cooperative Bank,Patna,Salary
+ACCT_00310,6445201088693929,National Meridian Bank,Vijayawada,Savings
+ACCT_00311,7893420180131115,Dakshin Cooperative Bank,Indore,Current
+ACCT_00312,5817505151116247,Suryodaya Commercial Bank,Kolkata,Current
+ACCT_00313,1401996262527071,Dakshin Cooperative Bank,Vijayawada,Savings
+ACCT_00314,3669399372862724,Suryodaya Commercial Bank,Hyderabad,Current
+ACCT_00315,7241009855056517,Dakshin Cooperative Bank,Ahmedabad,Current
+ACCT_00316,1166349994219217,Crescent Union Bank,Panaji,Savings
+ACCT_00317,4232501024413773,Suryodaya Commercial Bank,Delhi,Savings
+ACCT_00318,6028254254301246,Dakshin Cooperative Bank,Indore,Savings
+ACCT_00319,5060849087447354,Crescent Union Bank,Vijayawada,Salary
+ACCT_00320,5218737615746957,Suryodaya Commercial Bank,Patna,Current
+ACCT_00321,8149127774656409,Dakshin Cooperative Bank,Kochi,Salary
+ACCT_00322,8605840329409577,Suryodaya Commercial Bank,Panaji,Savings
+ACCT_00323,6883161885585432,Crescent Union Bank,Indore,Current
+ACCT_00324,0363832737995606,Suryodaya Commercial Bank,Indore,Current
+ACCT_00325,7640704148191707,National Meridian Bank,Hyderabad,Salary
+ACCT_00326,4409842101921125,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00327,9874884598537921,Crescent Union Bank,Kolkata,Current
+ACCT_00328,7624560049202038,Suryodaya Commercial Bank,Mumbai,Salary
+ACCT_00329,0260125998858507,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00330,0671998946693262,Crescent Union Bank,Ranchi,Savings
+ACCT_00331,3273351617698562,Suryodaya Commercial Bank,Indore,Salary
+ACCT_00332,0250355384695990,National Meridian Bank,Bengaluru,Salary
+ACCT_00333,3047861142863497,Crescent Union Bank,Raipur,Salary
+ACCT_00334,4719237949955941,Crescent Union Bank,Patna,Current
+ACCT_00335,2609365467115820,Crescent Union Bank,Bhubaneswar,Salary
+ACCT_00336,1767724559382214,Crescent Union Bank,Vijayawada,Savings
+ACCT_00337,7748728233618482,Suryodaya Commercial Bank,Noida,Current
+ACCT_00338,9394709716664703,Dakshin Cooperative Bank,Patna,Current
+ACCT_00339,6189101762643694,National Meridian Bank,Vijayawada,Savings
+ACCT_00340,1923651000064778,Dakshin Cooperative Bank,Hyderabad,Salary
+ACCT_00341,6400251499261529,Dakshin Cooperative Bank,Raipur,Current
+ACCT_00342,7262736873047138,Suryodaya Commercial Bank,Vijayawada,Savings
+ACCT_00343,2837050017305497,National Meridian Bank,Noida,Savings
+ACCT_00344,4858185412336278,Harborline Bank,Mumbai,Salary
+ACCT_00345,5692494211063879,Crescent Union Bank,Bhubaneswar,Savings
+ACCT_00346,5522235723559273,Crescent Union Bank,Delhi,Savings
+ACCT_00347,7197986449611034,Suryodaya Commercial Bank,Noida,Savings
+ACCT_00348,5934795620310410,Harborline Bank,Bhubaneswar,Salary
+ACCT_00349,9460644058106973,Suryodaya Commercial Bank,Delhi,Current
+ACCT_00350,2668923940225406,Suryodaya Commercial Bank,Patna,Savings
+ACCT_00351,0900869763519988,Crescent Union Bank,Kolkata,Savings
+ACCT_00352,1889507210059604,Dakshin Cooperative Bank,Noida,Savings
+ACCT_00353,2627148389820481,Dakshin Cooperative Bank,Ahmedabad,Savings
+ACCT_00354,0440735346653128,Dakshin Cooperative Bank,Delhi,Savings
+ACCT_00355,2582069881106532,Crescent Union Bank,Ahmedabad,Salary
+ACCT_00356,3766136293238070,Suryodaya Commercial Bank,Patna,Savings
+ACCT_00357,7128597051270178,Dakshin Cooperative Bank,Ahmedabad,Savings
+ACCT_00358,7985393165034325,Dakshin Cooperative Bank,Ahmedabad,Salary
+ACCT_00359,2305164406192217,National Meridian Bank,Mumbai,Salary
+ACCT_00360,5848246084657310,Suryodaya Commercial Bank,Mumbai,Current
+ACCT_00361,1937064407079476,Suryodaya Commercial Bank,Jaipur,Savings
+ACCT_00362,1832412047832527,Harborline Bank,Indore,Salary
+ACCT_00363,4779466760789782,Crescent Union Bank,Bhubaneswar,Salary
+ACCT_00364,9555288966296639,Crescent Union Bank,Noida,Salary
+ACCT_00365,2642882978360811,National Meridian Bank,Bengaluru,Savings
+ACCT_00366,6173249671897733,National Meridian Bank,Vijayawada,Salary
+ACCT_00367,2125825908243625,Harborline Bank,Panaji,Savings
+ACCT_00368,4118658334138472,Suryodaya Commercial Bank,Indore,Current
+ACCT_00369,0730754021467909,Crescent Union Bank,Kochi,Current
+ACCT_00370,9503567874645804,Dakshin Cooperative Bank,Panaji,Savings
+ACCT_00371,1531539323631540,Harborline Bank,Hyderabad,Savings
+ACCT_00372,8908526945731090,Suryodaya Commercial Bank,Raipur,Salary
+ACCT_00373,0155593746901078,Harborline Bank,Panaji,Savings
+ACCT_00374,9785927449705961,Dakshin Cooperative Bank,Delhi,Salary
+ACCT_00375,1651725123341931,National Meridian Bank,Delhi,Salary
+ACCT_00376,0003101367216307,Crescent Union Bank,Raipur,Salary
+ACCT_00377,1472321553833652,Crescent Union Bank,Delhi,Salary
+ACCT_00378,5642666974183503,Crescent Union Bank,Bhubaneswar,Current
+ACCT_00379,2930224017018541,Harborline Bank,Vijayawada,Current
+ACCT_00380,2875115812344032,National Meridian Bank,Chennai,Salary
+ACCT_00381,1779145664061205,Harborline Bank,Panaji,Savings
+ACCT_00382,5039927778558019,Harborline Bank,Panaji,Current
+ACCT_00383,2294966151705250,Suryodaya Commercial Bank,Mumbai,Salary
+ACCT_00384,3983040144023207,Dakshin Cooperative Bank,Vijayawada,Salary
+ACCT_00385,0780552627297190,Harborline Bank,Jaipur,Current
+ACCT_00386,6153591692879171,Suryodaya Commercial Bank,Noida,Savings
+ACCT_00387,1579842273244594,Dakshin Cooperative Bank,Hyderabad,Current
+ACCT_00388,6650829675683789,Crescent Union Bank,Panaji,Current
+ACCT_00389,9200069248170175,Dakshin Cooperative Bank,Kochi,Current
+ACCT_00390,7584329810353054,Suryodaya Commercial Bank,Jaipur,Savings
+ACCT_00391,7511101354773300,National Meridian Bank,Hyderabad,Savings
+ACCT_00392,3069797957905729,National Meridian Bank,Bengaluru,Salary
+ACCT_00393,7393651256345021,Suryodaya Commercial Bank,Kochi,Savings
+ACCT_00394,4723130917161083,National Meridian Bank,Mumbai,Current
+ACCT_00395,4376248859373064,Suryodaya Commercial Bank,Chennai,Salary
+ACCT_00396,4411685957010545,National Meridian Bank,Ahmedabad,Current
+ACCT_00397,6718328028674524,Suryodaya Commercial Bank,Kochi,Savings
+ACCT_00398,6946378686730954,Suryodaya Commercial Bank,Chennai,Savings
+ACCT_00399,2423694022033301,Suryodaya Commercial Bank,Ranchi,Current
+ACCT_00400,5473593539229663,Dakshin Cooperative Bank,Noida,Current
+ACCT_00401,0112008968119606,National Meridian Bank,Ranchi,Salary
+ACCT_00402,7768214130865023,Suryodaya Commercial Bank,Raipur,Savings
+ACCT_00403,1957734234400417,Crescent Union Bank,Bengaluru,Current
+ACCT_00404,1192786006002010,National Meridian Bank,Kochi,Savings
+ACCT_00405,5349027064898335,Dakshin Cooperative Bank,Mumbai,Current
+ACCT_00406,2345085204375391,National Meridian Bank,Noida,Salary
+ACCT_00407,4342968408785410,Suryodaya Commercial Bank,Delhi,Current
+ACCT_00408,1997400220758658,Dakshin Cooperative Bank,Mumbai,Salary
+ACCT_00409,3383790957122784,Dakshin Cooperative Bank,Panaji,Savings
+ACCT_00410,4192957340353122,Suryodaya Commercial Bank,Hyderabad,Salary
+ACCT_00411,4198817235826853,Crescent Union Bank,Bhubaneswar,Salary
+ACCT_00412,5933610047493944,National Meridian Bank,Patna,Savings
+ACCT_00413,0963184656509339,National Meridian Bank,Raipur,Salary
+ACCT_00414,6230340034325570,Suryodaya Commercial Bank,Kolkata,Current
+ACCT_00415,1512381703395066,Dakshin Cooperative Bank,Jaipur,Current
+ACCT_00416,0901077792524947,Dakshin Cooperative Bank,Kolkata,Current
+ACCT_00417,4437739498617822,Dakshin Cooperative Bank,Vijayawada,Current
+ACCT_00418,3523501841784710,Crescent Union Bank,Patna,Salary
+ACCT_00419,2334811731851464,National Meridian Bank,Indore,Savings
+ACCT_00420,8618115687818545,Dakshin Cooperative Bank,Noida,Savings
+ACCT_00421,3861279376181915,Suryodaya Commercial Bank,Delhi,Salary
+ACCT_00422,3066312772536967,Crescent Union Bank,Panaji,Savings
+ACCT_00423,5454428033209002,National Meridian Bank,Ahmedabad,Savings
+ACCT_00424,5334274280056645,Crescent Union Bank,Indore,Salary
+ACCT_00425,2998091187753248,National Meridian Bank,Indore,Salary
+ACCT_00426,1154020597625023,Crescent Union Bank,Raipur,Savings
+ACCT_00427,1488980623577639,Crescent Union Bank,Hyderabad,Salary
+ACCT_00428,3653497731677134,Suryodaya Commercial Bank,Bhubaneswar,Current
+ACCT_00429,5125640079968370,Dakshin Cooperative Bank,Bhubaneswar,Savings
+ACCT_00430,6175093607620246,Suryodaya Commercial Bank,Kolkata,Current
+ACCT_00431,1662560306246212,National Meridian Bank,Indore,Savings
+ACCT_00432,9887594558864381,Harborline Bank,Indore,Savings
+ACCT_00433,6041223906120238,National Meridian Bank,Panaji,Savings
+ACCT_00434,6432080131684591,Dakshin Cooperative Bank,Mumbai,Current
+ACCT_00435,4687556649274691,Crescent Union Bank,Jaipur,Salary
+ACCT_00436,8441665571357024,Suryodaya Commercial Bank,Bengaluru,Salary
+ACCT_00437,6662708859375559,National Meridian Bank,Ranchi,Savings
+ACCT_00438,8641993086056488,Crescent Union Bank,Hyderabad,Savings
+ACCT_00439,6857117029774093,Dakshin Cooperative Bank,Hyderabad,Savings
+ACCT_00440,8953044994564034,Dakshin Cooperative Bank,Kolkata,Current
+ACCT_00441,2829192633445084,Dakshin Cooperative Bank,Bhubaneswar,Savings
+ACCT_00442,3694840246272902,Dakshin Cooperative Bank,Bengaluru,Current
+ACCT_00443,7206188948883888,Suryodaya Commercial Bank,Vijayawada,Current
+ACCT_00444,7817205362457291,National Meridian Bank,Raipur,Savings
+ACCT_00445,4963555352686028,Dakshin Cooperative Bank,Ranchi,Current
+ACCT_00446,8511319681816769,National Meridian Bank,Delhi,Current
+ACCT_00447,3393514425542048,National Meridian Bank,Delhi,Savings
+ACCT_00448,9793978578229500,National Meridian Bank,Vijayawada,Savings
+ACCT_00449,0553545997904361,Dakshin Cooperative Bank,Kochi,Current
+ACCT_00450,3285639124241717,Dakshin Cooperative Bank,Kolkata,Salary
+ACCT_00451,7177972265766490,Dakshin Cooperative Bank,Mumbai,Current
+ACCT_00452,4572262016967919,National Meridian Bank,Bhubaneswar,Savings
+ACCT_00453,9510862313589857,Dakshin Cooperative Bank,Chennai,Savings
+ACCT_00454,2853649573222546,Harborline Bank,Mumbai,Current
+ACCT_00455,9553920222074413,Dakshin Cooperative Bank,Patna,Savings
+ACCT_00456,7090444101333691,National Meridian Bank,Kolkata,Savings
+ACCT_00457,4210505535034003,Harborline Bank,Kolkata,Savings
+ACCT_00458,1827588610207876,Harborline Bank,Panaji,Savings
+ACCT_00459,4560042065354748,Harborline Bank,Kolkata,Salary
+ACCT_00460,3521389820244067,Dakshin Cooperative Bank,Mumbai,Savings
+ACCT_00461,9471510193317564,Suryodaya Commercial Bank,Hyderabad,Salary
+ACCT_00462,4731391961372908,Crescent Union Bank,Jaipur,Current
+ACCT_00463,1613604942935536,Dakshin Cooperative Bank,Panaji,Current
+ACCT_00464,3054137424729970,Crescent Union Bank,Noida,Savings
+ACCT_00465,5468140309400679,Crescent Union Bank,Bhubaneswar,Savings
+ACCT_00466,4783590373864029,Crescent Union Bank,Vijayawada,Savings
+ACCT_00467,4317254393749129,Crescent Union Bank,Raipur,Current
+ACCT_00468,6700738197204272,Suryodaya Commercial Bank,Noida,Salary
+ACCT_00469,8765393914345116,Crescent Union Bank,Ahmedabad,Salary
+ACCT_00470,4422058122431649,Harborline Bank,Hyderabad,Savings
+ACCT_00471,9179844448105118,National Meridian Bank,Patna,Current
+ACCT_00472,8423024952026254,Suryodaya Commercial Bank,Indore,Savings
+ACCT_00473,8437810155735409,Crescent Union Bank,Patna,Current
+ACCT_00474,4723931515921155,National Meridian Bank,Patna,Current
+ACCT_00475,0772737347175166,Harborline Bank,Patna,Salary
+ACCT_00476,9336456660289125,Suryodaya Commercial Bank,Raipur,Savings
+ACCT_00477,8007783892487834,National Meridian Bank,Chennai,Savings
+ACCT_00478,4320724123959707,Harborline Bank,Bengaluru,Savings
+ACCT_00479,2368361135525655,Harborline Bank,Raipur,Savings
+ACCT_00480,7296128806365949,Crescent Union Bank,Kochi,Salary

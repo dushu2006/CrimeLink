@@ -1,0 +1,33 @@
+{
+  "persons": 450,
+  "organizations": 55,
+  "phones": 650,
+  "bank_accounts": 480,
+  "vehicles": 230,
+  "addresses": 480,
+  "locations": 120,
+  "cases": 60,
+  "firs": 38,
+  "evidence": 260,
+  "transactions": 9000,
+  "calls": 14000,
+  "sms": 2500,
+  "vehicle_sightings": 700,
+  "travel": 400,
+  "name_two_word_pct": 0.98,
+  "name_three_word_pct": 0.02,
+  "same_name_pairs": 3,
+  "aadhar_complete_12_digit": true,
+  "bank_accounts_complete_16_digit": true,
+  "phone_complete_10_digit": true,
+  "file_counts": {
+    ".md": 1,
+    ".json": 95,
+    ".csv": 28,
+    ".pdf": 480,
+    ".xlsx": 30,
+    ".docx": 60,
+    ".txt": 340
+  },
+  "status": "PASS \u2014 structural and realism-target checks completed"
+}

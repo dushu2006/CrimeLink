@@ -1,0 +1,13 @@
+pattern_id,network_id,pattern,expected_behavior
+PAT_EVNET_01,EVNET_01,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_02,EVNET_02,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_03,EVNET_03,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_04,EVNET_04,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_05,EVNET_05,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_06,EVNET_06,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_07,EVNET_07,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_08,EVNET_08,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_09,EVNET_09,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_10,EVNET_10,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_12,EVNET_12,multi-hop temporal relationship structure,discoverable from investigator-facing records
+PAT_EVNET_11,EVNET_11,multi-hop temporal relationship structure,discoverable from investigator-facing records

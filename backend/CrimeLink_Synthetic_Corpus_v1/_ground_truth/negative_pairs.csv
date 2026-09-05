@@ -1,0 +1,4 @@
+person_a,person_b,same_person,reason
+PERSON_00027,PERSON_00173,False,same surface name but different KYC identity
+PERSON_00091,PERSON_00244,False,same surface name but different KYC identity
+PERSON_00112,PERSON_00319,False,same surface name but different KYC identity

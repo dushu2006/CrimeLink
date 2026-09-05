@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2026-02-17
+Case: CASE_0051
+Observed reference: Mahesh Gowda
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

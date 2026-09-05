@@ -1,0 +1,7 @@
+{
+  "two_word_names_target": 0.9,
+  "three_word_names_target": 0.02,
+  "major_same_name_pairs": 3,
+  "aadhaar_is_strong_identifier": true,
+  "aadhaar_not_universal": true
+}

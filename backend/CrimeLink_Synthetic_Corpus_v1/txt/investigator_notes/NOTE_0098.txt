@@ -1,0 +1,10 @@
+Investigator Note
+Date: 2026-06-24
+Case: CASE_0059
+Subject mentioned: Pawan Singh
+
+Initial observation: the name appears in more than one source, but the available material does not by itself establish that every reference concerns the same individual. Phone, address and KYC identifiers should be checked before consolidation.
+
+The subject also has ordinary employment and household records. These should not be treated as suspicious without a specific linkage to the incident.
+
+Follow-up: compare dates, identifiers and source provenance.

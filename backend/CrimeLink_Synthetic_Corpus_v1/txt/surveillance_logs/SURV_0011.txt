@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2021-08-11
+Case: CASE_0002
+Observed reference: Ravi Reddy
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.

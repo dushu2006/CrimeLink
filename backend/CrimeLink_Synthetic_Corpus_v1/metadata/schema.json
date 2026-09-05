@@ -1,8 +1,0 @@
-{
-  "structured_sources": "CSV",
-  "unstructured_sources": [
-    "TXT"
-  ],
-  "metadata": "JSON",
-  "ground_truth": "JSON (isolated)"
-}

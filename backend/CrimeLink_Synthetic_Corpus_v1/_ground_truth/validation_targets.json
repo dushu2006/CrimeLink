@@ -1,0 +1,7 @@
+{
+  "referential_integrity": 1.0,
+  "document_world_consistency_min": 0.98,
+  "entity_resolution_precision_min": 0.85,
+  "entity_resolution_recall_min": 0.75,
+  "civilian_false_positive_max": 0.05
+}

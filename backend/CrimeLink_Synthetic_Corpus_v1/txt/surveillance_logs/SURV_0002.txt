@@ -1,0 +1,5 @@
+Surveillance Log
+Date: 2022-01-22
+Case: CASE_0023
+Observed reference: Ashok Sahu
+Activity: person entered/leaved a commercial or residential location. Observation duration was limited. Vehicle and identity could not always be confirmed visually. Subsequent identification, if any, requires documentary corroboration.
