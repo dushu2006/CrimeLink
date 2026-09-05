@@ -227,4 +227,6 @@ var/
 # Frontend build output and installed packages
 frontend/dist/
 frontend/node_modules/
+!frontend/src/lib/
+!frontend/src/lib/**
 *.tsbuildinfo

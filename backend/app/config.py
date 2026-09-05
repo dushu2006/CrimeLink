@@ -21,6 +21,7 @@ layers are byte-for-byte identical in both profiles.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -101,7 +102,7 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 30
     rate_limit_per_minute: int = 100
     rate_limit_auth_per_minute: int = 10
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: str | list[str] = Field(default_factory=lambda: ["*"])
 
     # ------------------------------------------------------------------- nlp
     # "auto" -> NIM when an API key is present, else the deterministic+heuristic
@@ -148,7 +149,7 @@ class Settings(BaseSettings):
     ai_extraction_api_key: str | None = None
     ai_extraction_base_url: str | None = None
 
-    ai_reasoning_model: str = "deepseek-ai/deepseek-r1"
+    ai_reasoning_model: str = "deepseek-ai/deepseek-v4-pro-0813"
     ai_reasoning_provider: str = "default"
     ai_reasoning_api_key: str | None = None
     ai_reasoning_base_url: str | None = None
@@ -246,9 +247,25 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return ["*"]
+        if isinstance(v, list):
+            return [str(part).strip() for part in v if str(part).strip()]
         if isinstance(v, str):
-            return [part.strip() for part in v.split(",") if part.strip()]
-        return v
+            text = v.strip()
+            if not text:
+                return ["*"]
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(part).strip() for part in parsed if str(part).strip()]
+                    if isinstance(parsed, str):
+                        return [parsed.strip()] if parsed.strip() else ["*"]
+                except json.JSONDecodeError:
+                    pass
+            return [part.strip() for part in text.split(",") if part.strip()] or ["*"]
+        return [str(v).strip()] if str(v).strip() else ["*"]
 
     @field_validator(
         "synthetic_missing_field_rate",
