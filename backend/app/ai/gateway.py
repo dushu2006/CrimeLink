@@ -145,7 +145,7 @@ class AIGateway:
 
     async def ask(self, *, question: str, case_id: str, user_id: str | None = None,
                   principal_id: str | None = None,
-                  depth: int = 2) -> AIResponse:
+                  depth: int = 2, target_key: str | None = None) -> AIResponse:
         """Answer an investigator question scoped to ``case_id``.
 
         The query runs through retrieval, minimization, pseudonymization,
@@ -155,7 +155,9 @@ class AIGateway:
         started = utcnow()
         try:
             # 1. Retrieve a relevant subgraph from the graph store
-            nodes, edges = await self._retrieve_subgraph(case_id, depth=depth)
+            nodes, edges = await self._retrieve_subgraph(
+                case_id, depth=depth, target_key=target_key
+            )
 
             # 2. Data minimization: strip sensitive display fields before any
             #    pseudonymization step.
@@ -274,14 +276,16 @@ class AIGateway:
 
     # ----------------------------------------------------- retrieval / context
 
-    async def _retrieve_subgraph(self, case_id: str, *, depth: int = 2) -> tuple[list[dict], list[dict]]:
+    async def _retrieve_subgraph(
+        self, case_id: str, *, depth: int = 2, target_key: str | None = None
+    ) -> tuple[list[dict], list[dict]]:
         """Retrieve a subgraph for the case, bounded by configured max depth."""
         from app.container import get_container
         from app.domain.models import CaseGraphSnapshot
 
         container = get_container()
         graph = container.graph_store
-        depth = min(depth, self.settings.graph_max_expand_depth)
+        depth = max(1, min(depth, self.settings.graph_max_expand_depth + 1))
         try:
             snap: CaseGraphSnapshot = await asyncio.to_thread(graph.get_case_snapshot, case_id)
         except Exception:
@@ -289,16 +293,31 @@ class AIGateway:
                 snap = graph.get_case_snapshot(case_id)
             except Exception:
                 return [], []
+        max_nodes = self.settings.ai_max_context_nodes
+        max_edges = self.settings.ai_max_context_edges
+        keys = (
+            self._neighbourhood_keys(snap, target_key, depth=depth, limit=max_nodes)
+            if target_key and target_key in snap.nodes
+            else set(snap.nodes)
+        )
         nodes: list[dict] = []
-        for key, node in snap.nodes.items():
+        for key in sorted(keys):
+            node = snap.nodes[key]
+            if node.label == "Case":
+                continue
             nodes.append({
                 "provenance_key": key,
                 "label": node.label,
                 "properties": dict(node.properties),
                 "confidence": node.properties.get("confidence", 1.0),
             })
+            if len(nodes) >= max_nodes:
+                break
+        keep = {node["provenance_key"] for node in nodes}
         edges: list[dict] = []
         for e in snap.edges:
+            if e.source_key not in keep or e.target_key not in keep:
+                continue
             props = dict(e.properties)
             edges.append({
                 "source_key": e.source_key,
@@ -308,7 +327,29 @@ class AIGateway:
                 "timestamp": props.get("timestamp") or props.get("last_ts"),
                 "source_doc_ids": props.get("source_doc_ids", [props.get("source_doc_id")]),
             })
+            if len(edges) >= max_edges:
+                break
         return nodes, edges
+
+    @staticmethod
+    def _neighbourhood_keys(snap, root_key: str, *, depth: int, limit: int) -> set[str]:
+        adjacency: dict[str, list[str]] = {}
+        for edge in snap.edges:
+            adjacency.setdefault(edge.source_key, []).append(edge.target_key)
+            adjacency.setdefault(edge.target_key, []).append(edge.source_key)
+        seen = {root_key}
+        frontier = {root_key}
+        for _ in range(max(1, depth)):
+            next_frontier: set[str] = set()
+            for node_key in sorted(frontier):
+                for neighbour in adjacency.get(node_key, []):
+                    if neighbour not in seen and len(seen) < limit:
+                        seen.add(neighbour)
+                        next_frontier.add(neighbour)
+            frontier = next_frontier
+            if not frontier:
+                break
+        return seen
 
     @staticmethod
     def _minimize_node(n: dict) -> dict:
@@ -333,15 +374,14 @@ class AIGateway:
                 kept[k] = props[k]
         return kept
 
-    @staticmethod
-    def _build_reasoning_context(nodes: list[dict], edges: list[dict], question: str) -> str:
+    def _build_reasoning_context(self, nodes: list[dict], edges: list[dict], question: str) -> str:
         """Render a JSON-serialized minimized subgraph into a prompt.
 
         This is the InvestigationReasoningContext (§21).
         """
         # trim edge/node lists to the configured limits to keep the prompt bounded
-        nodes_limited = nodes[:500]
-        edges_limited = edges[:1500]
+        nodes_limited = nodes[: self.settings.ai_max_context_nodes]
+        edges_limited = edges[: self.settings.ai_max_context_edges]
         payload = {
             "question": question,
             "nodes": nodes_limited,

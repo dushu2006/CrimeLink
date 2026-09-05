@@ -62,20 +62,35 @@ def configure_for_tests(url: str) -> None:
     _sync_sessionmaker = None
 
 
+def _async_engine_kwargs(url: str, settings: Settings) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
+    if url.startswith("sqlite"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        kwargs.update(
+            pool_size=settings.postgres_pool_size,
+            max_overflow=settings.postgres_max_overflow,
+        )
+    return kwargs
+
+
+def create_dedicated_async_engine(settings: Settings | None = None) -> AsyncEngine:
+    """Build an async engine owned exclusively by one event loop."""
+    settings = settings or get_settings()
+    url = async_url(settings)
+    engine = create_async_engine(url, **_async_engine_kwargs(url, settings))
+    if url.startswith("sqlite"):
+        _configure_sqlite_pragmas(engine, sync=False)
+    log.info("db.dedicated_engine_ready", url=_redact(url))
+    return engine
+
+
 def get_async_engine(settings: Settings | None = None) -> AsyncEngine:
     global _async_engine
     if _async_engine is None:
         settings = settings or get_settings()
         url = async_url(settings)
-        kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
-        if url.startswith("sqlite"):
-            kwargs["connect_args"] = {"check_same_thread": False}
-        else:
-            kwargs.update(
-                pool_size=settings.postgres_pool_size,
-                max_overflow=settings.postgres_max_overflow,
-            )
-        _async_engine = create_async_engine(url, **kwargs)
+        _async_engine = create_async_engine(url, **_async_engine_kwargs(url, settings))
         if url.startswith("sqlite"):
             _configure_sqlite_pragmas(_async_engine, sync=False)
         log.info("db.async_engine_ready", url=_redact(url))
@@ -334,22 +349,34 @@ def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]
 
 
 async def _bootstrap_postgres(engine: AsyncEngine) -> None:
-    """PostgreSQL-only hardening: pg_trgm and append-only audit table."""
-    statements = [
+    """Apply optional extensions and audit hardening in independent transactions."""
+    extensions = [
         "CREATE EXTENSION IF NOT EXISTS pg_trgm",
         "CREATE EXTENSION IF NOT EXISTS btree_gin",
-        # Append-only audit: even an application bug cannot rewrite history.
+    ]
+    revokes = [
         "REVOKE UPDATE, DELETE ON audit_logs FROM PUBLIC",
         "REVOKE UPDATE, DELETE ON audit_logs FROM crimelink",
         "REVOKE UPDATE, DELETE ON audit_chain_head FROM PUBLIC",
         "REVOKE UPDATE, DELETE ON audit_chain_head FROM crimelink",
     ]
-    async with engine.begin() as conn:
-        for statement in statements:
+    async with engine.connect() as conn:
+        for statement in extensions:
             try:
                 await conn.execute(text(statement))
+                await conn.commit()
+                log.info("db.extension_ready", statement=statement)
             except Exception as exc:  # pragma: no cover - grant-dependent
-                log.warning("db.bootstrap_statement_skipped", statement=statement, error=str(exc))
+                await conn.rollback()
+                log.warning("db.extension_unavailable", statement=statement, error=str(exc))
+        for statement in revokes:
+            try:
+                await conn.execute(text(statement))
+                await conn.commit()
+                log.info("db.audit_hardening_applied", statement=statement)
+            except Exception as exc:  # pragma: no cover - grant-dependent
+                await conn.rollback()
+                log.error("db.audit_hardening_failed", statement=statement, error=str(exc))
 
 
 async def dispose_engines() -> None:

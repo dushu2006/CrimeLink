@@ -26,7 +26,9 @@ test meaningful.
 from __future__ import annotations
 
 import json
+import os
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -83,6 +85,37 @@ def _union(existing: Any, incoming: Any) -> Any:
     return out
 
 
+def _lock_path(snapshot_path: Path) -> Path:
+    return snapshot_path.with_name(snapshot_path.name + ".lock")
+
+
+def _acquire_process_lock(snapshot_path: Path):
+    path = _lock_path(snapshot_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    try:
+        if os.name == "nt":  # pragma: no cover - Windows fallback
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise RuntimeError(
+            "Embedded graph store is single-writer: another process already holds "
+            f"the lock for {snapshot_path}. Switch the graph backend to Neo4j for "
+            "concurrent writers."
+        ) from exc
+    return handle
+
+
 class EmbeddedGraphStore:
     """In-process graph with write-through JSON persistence."""
 
@@ -92,10 +125,12 @@ class EmbeddedGraphStore:
         self.settings = settings or get_settings()
         self.persist = persist
         self._lock = threading.RLock()
+        self._lock_file = None
         self._graph: nx.MultiDiGraph = nx.MultiDiGraph()
         self._version = 0
         if self.persist:
             self.settings.ensure_directories()
+            self._lock_file = _acquire_process_lock(self.snapshot_path)
             self._load()
 
     # ------------------------------------------------------------------ io
@@ -132,9 +167,21 @@ class EmbeddedGraphStore:
                 for u, v, k, data in self._graph.edges(keys=True, data=True)
             ],
         }
-        tmp = self.snapshot_path.with_suffix(self.snapshot_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.snapshot_path)
+        tmp = self.snapshot_path.with_name(
+            f"{self.snapshot_path.name}.tmp-{os.getpid()}-"
+            f"{threading.get_ident()}-{uuid.uuid4().hex}"
+        )
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.snapshot_path)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
     def version(self) -> int:
         return self._version
@@ -518,6 +565,12 @@ class EmbeddedGraphStore:
                     self.snapshot_path.unlink()
                 except OSError:
                     pass
+
+    def close(self) -> None:
+        """Release the inter-process writer lock."""
+        if self._lock_file is not None:
+            handle, self._lock_file = self._lock_file, None
+            handle.close()
 
     def list_nodes(self, label: str | None = None, limit: int = 100, offset: int = 0) -> dict:
         """Paginated node listing for the admin DB-inspection UI."""

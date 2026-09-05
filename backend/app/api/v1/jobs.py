@@ -7,7 +7,7 @@ import json
 import threading
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.container import get_container
 from app.db.session import get_db_session
@@ -146,6 +146,8 @@ class _WSNotAuthenticated(Exception):
 
 _auth_loop: asyncio.AbstractEventLoop | None = None
 _auth_loop_lock = threading.Lock()
+_auth_engine: AsyncEngine | None = None
+_auth_sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def _get_auth_loop() -> asyncio.AbstractEventLoop:
@@ -162,13 +164,43 @@ def _get_auth_loop() -> asyncio.AbstractEventLoop:
     return _auth_loop
 
 
+def _get_auth_engine() -> AsyncEngine:
+    global _auth_engine
+    if _auth_engine is None:
+        from app.db.session import create_dedicated_async_engine
+
+        _auth_engine = create_dedicated_async_engine()
+    return _auth_engine
+
+
+def _get_auth_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    global _auth_sessionmaker
+    if _auth_sessionmaker is None:
+        _auth_sessionmaker = async_sessionmaker(
+            _get_auth_engine(), expire_on_commit=False, autoflush=False
+        )
+    return _auth_sessionmaker
+
+
+async def dispose_auth_engine() -> None:
+    global _auth_engine, _auth_sessionmaker
+    if _auth_engine is not None:
+        engine, _auth_engine = _auth_engine, None
+        _auth_sessionmaker = None
+        try:
+            await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(engine.dispose(), _get_auth_loop())
+            )
+        except Exception:  # pragma: no cover - best-effort teardown
+            pass
+
+
 async def _authorize_websocket(user_sub: str, case_id: str) -> None:
     """The REST authorization chain, verbatim, on the dedicated auth loop."""
     from app.db.models import User
-    from app.db.session import async_session
     from app.services import cases as case_service
 
-    async with async_session() as session:
+    async with _get_auth_sessionmaker()() as session:
         user = await session.get(User, user_sub)
         if user is None or not user.is_active:
             raise _WSNotAuthenticated()

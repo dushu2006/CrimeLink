@@ -65,7 +65,13 @@ async def lifespan(app: FastAPI):
         broker=settings.effective_broker_backend,
     )
     yield
+    graph_store = get_container().graph_store
+    if hasattr(graph_store, "close"):
+        graph_store.close()
     await dispose_engines()
+    from app.api.v1.jobs import dispose_auth_engine
+
+    await dispose_auth_engine()
     log.info("crimelink.stopped")
 
 
