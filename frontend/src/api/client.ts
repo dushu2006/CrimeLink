@@ -494,6 +494,345 @@ export function jobSocket(
 }
 
 // ---------------------------------------------------------------------------
+// Dataset / graph-build jobs
+//
+// Long-running work returns a job id immediately; the UI then watches that job
+// over a WebSocket and, if the socket cannot be held open, over polling.  The
+// two carry the *same* payload — `GET /datasets/jobs/{id}` returns what the
+// socket pushes — so falling back changes the latency and nothing else.
+//
+// The rule this section exists to enforce: an investigator must never be
+// stranded on a permanent "building…" because a proxy ate a WebSocket upgrade.
+// ---------------------------------------------------------------------------
+
+export interface DatasetJob {
+  id: string;
+  dataset_id: string | null;
+  kind: string;
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+  stage: string | null;
+  progress_pct: number;
+  message: string | null;
+  steps: { stage: string; message?: string | null; at: string }[];
+  result: Record<string, unknown>;
+  error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  finished_at: string | null;
+  terminal: boolean;
+}
+
+export interface DatasetSummary {
+  id: string;
+  name: string;
+  version: string;
+  status: string;
+  is_active: boolean;
+  source_kind: string;
+  stage: string;
+  error: string | null;
+  stats: Record<string, unknown>;
+  graph_built_at: string | null;
+  created_at: string | null;
+  activated_at: string | null;
+}
+
+export function listDatasets(): Promise<{ items: DatasetSummary[] }> {
+  return api("/datasets");
+}
+
+export function activeDataset(): Promise<{ active: DatasetSummary | null }> {
+  return api("/datasets/active");
+}
+
+/**
+ * Make a dataset the active one.
+ *
+ * The server also starts a graph rebuild so the graph follows the tables, and
+ * returns its `job_id`; the console watches it like any other job.
+ */
+export function activateDataset(
+  datasetId: string,
+): Promise<DatasetSummary & { job_id: string | null; job?: DatasetJob }> {
+  return api(`/datasets/${datasetId}/activate`, { method: "POST" });
+}
+
+/**
+ * Upload and import a dataset.
+ *
+ * Takes whatever the file picker produced: one file, many files, a ZIP, or a
+ * whole folder. When the browser supplies `webkitRelativePath` (a folder
+ * pick), the layout is sent alongside the files so provenance survives the
+ * upload — the server treats those paths as untrusted and re-derives safe
+ * ones, but the structure is real information and worth preserving.
+ *
+ * Resolves with a `job_id` as soon as the upload lands; the import itself is
+ * watched with `watchDatasetJob`.
+ */
+export function importDatasetFiles(
+  files: File[],
+  options: { name?: string; version?: string; activate?: boolean; buildGraph?: boolean } = {},
+): Promise<{ job_id: string; job: DatasetJob; files_received: number }> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file, file.name);
+    // Parallel array: index i of `paths` describes index i of `files`.
+    const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    form.append("paths", relative || file.name);
+  }
+  if (options.name) form.append("name", options.name);
+  if (options.version) form.append("version", options.version);
+  form.append("activate", String(options.activate ?? true));
+  form.append("build_graph", String(options.buildGraph ?? true));
+  return api("/datasets/import", { method: "POST", body: form });
+}
+
+/** Import a dataset that already sits on the server's disk (e.g. a mounted corpus). */
+export function importDatasetFromPath(
+  path: string,
+  options: { name?: string; version?: string; activate?: boolean } = {},
+): Promise<{ job_id: string; job: DatasetJob; source: string }> {
+  return api("/datasets/import/path", {
+    method: "POST",
+    body: JSON.stringify({
+      path,
+      name: options.name,
+      version: options.version,
+      activate: options.activate ?? true,
+    }),
+  });
+}
+
+/** Start a graph rebuild. Resolves as soon as the job exists, not when it ends. */
+export function rebuildDatasetGraph(
+  datasetId: string,
+): Promise<{ job_id: string; job: DatasetJob }> {
+  return api(`/datasets/${datasetId}/graph/rebuild`, { method: "POST" });
+}
+
+/** The authoritative job state. Polling and the socket both resolve to this. */
+export function getDatasetJob(jobId: string): Promise<DatasetJob> {
+  return api(`/datasets/jobs/${jobId}`);
+}
+
+/**
+ * How one tabular file was mapped onto the canonical schema.
+ *
+ * Column mapping is inference. When the values under a header contradict it —
+ * a `person_id` column full of dates, an `amount` column full of person keys —
+ * the mapper believes the values and says so here, so an operator can accept
+ * the result or fix the source rather than meeting the damage later as a
+ * nonsense row on the People page.
+ */
+export interface DatasetMapping {
+  file_id: string;
+  path: string;
+  filename: string;
+  semantic_type: string;
+  confidence: number;
+  row_count: number;
+  sheets: string[];
+  unmapped_columns: string[];
+  columns: Record<string, { column: string; canonical: string | null; confidence: number; basis: string }[]>;
+  notes: {
+    sheet: string;
+    semantic_type: string;
+    confidence: number;
+    needs_review: boolean;
+    contradictions: string[];
+    notes: string[];
+  }[];
+  needs_review: boolean;
+  accepted_at: string | null;
+  accepted_by: string | null;
+}
+
+export function listDatasetMappings(
+  datasetId: string,
+  options: { needsReview?: boolean } = {},
+): Promise<{ dataset_id: string; items: DatasetMapping[]; total: number; review_pending: number }> {
+  const query = options.needsReview ? "?needs_review=true" : "";
+  return api(`/datasets/${datasetId}/mappings${query}`);
+}
+
+/** Record operator sign-off on inferred mappings. Empty list means "all of them". */
+export function acceptDatasetMappings(
+  datasetId: string,
+  fileIds: string[] = [],
+): Promise<{ dataset_id: string; accepted: number }> {
+  return api(`/datasets/${datasetId}/mappings/accept`, {
+    method: "POST",
+    body: JSON.stringify({ file_ids: fileIds }),
+  });
+}
+
+/** How the UI is currently receiving progress, reported honestly. */
+export type JobWatchTransport =
+  | { transport: "websocket" }
+  | { transport: "polling"; reason: string };
+
+/** Poll cadence when the socket is unavailable. Fast enough to feel live. */
+const JOB_POLL_INTERVAL_MS = 1500;
+/** Socket attempts before giving up on it and polling instead. */
+const JOB_WS_MAX_ATTEMPTS = 2;
+
+/**
+ * Watch one dataset/graph job to completion.
+ *
+ * Tries the WebSocket first. If the handshake fails, the socket closes
+ * abnormally, or the token is rejected beyond renewal, it switches to polling
+ * the same job — and says so through `onTransport` rather than pretending the
+ * feed is live.
+ *
+ * Guarantees:
+ *  - exactly one transport is active at a time (no duplicate subscriptions);
+ *  - the returned function cancels everything and is safe to call twice;
+ *  - `onUpdate` always receives the terminal state before the watch ends,
+ *    whichever transport delivered it;
+ *  - nothing here can cancel or fail the job itself — it is a read-only view.
+ */
+export function watchDatasetJob(
+  jobId: string,
+  onUpdate: (job: DatasetJob) => void,
+  onTransport?: (status: JobWatchTransport) => void,
+): () => void {
+  let stopped = false;
+  let socket: WebSocket | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempts = 0;
+  let authRetries = 0;
+  let finished = false;
+
+  const finish = (job: DatasetJob) => {
+    onUpdate(job);
+    if (job.terminal) {
+      finished = true;
+      cleanup();
+    }
+  };
+
+  const cleanup = () => {
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (socket) {
+      socket.onclose = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      try {
+        socket.close();
+      } catch {
+        /* already closing */
+      }
+      socket = null;
+    }
+  };
+
+  const poll = (reason: string) => {
+    if (stopped || finished || pollTimer !== null) return;
+    onTransport?.({ transport: "polling", reason });
+    const tick = () => {
+      if (stopped || finished) return;
+      void getDatasetJob(jobId)
+        .then((job) => {
+          if (stopped || finished) return;
+          finish(job);
+          if (!job.terminal) pollTimer = setTimeout(tick, JOB_POLL_INTERVAL_MS);
+        })
+        .catch(() => {
+          // A transient API error must not end the watch: the job is still
+          // running on the server and the next tick may well succeed.
+          if (!stopped && !finished) pollTimer = setTimeout(tick, JOB_POLL_INTERVAL_MS);
+        });
+    };
+    tick();
+  };
+
+  const connect = () => {
+    if (stopped || finished) return;
+    const token = tokenStore.access;
+    if (!token) {
+      poll("not_signed_in");
+      return;
+    }
+    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    let candidate: WebSocket;
+    try {
+      candidate = new WebSocket(
+        `${scheme}://${window.location.host}/api/v1/jobs/ws/job/${encodeURIComponent(
+          jobId,
+        )}?token=${encodeURIComponent(token)}`,
+      );
+    } catch {
+      poll("websocket_unavailable");
+      return;
+    }
+    socket = candidate;
+
+    candidate.onopen = () => {
+      attempts = 0;
+      if (pollTimer !== null) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+      onTransport?.({ transport: "websocket" });
+    };
+    candidate.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as DatasetJob & { type?: string };
+        if (payload && typeof payload.status === "string") finish(payload);
+      } catch {
+        /* ignore malformed frames */
+      }
+    };
+    candidate.onclose = (event) => {
+      socket = null;
+      if (stopped || finished) return;
+      if (event.code === 1000) {
+        // Clean close: the server signalled the job ended. Confirm once via
+        // the API so the UI lands on the authoritative terminal state even if
+        // the final frame was lost in transit.
+        void getDatasetJob(jobId).then(finish).catch(() => poll("socket_closed"));
+        return;
+      }
+      if (event.code === 4401 && authRetries < 2) {
+        authRetries += 1;
+        void refreshSession().then((renewed) => {
+          if (stopped || finished) return;
+          if (renewed) connect();
+          else poll("session_expired");
+        });
+        return;
+      }
+      attempts += 1;
+      if (attempts >= JOB_WS_MAX_ATTEMPTS) {
+        poll(`websocket_closed_code_${event.code || 1006}`);
+        return;
+      }
+      setTimeout(connect, 500 * attempts);
+    };
+  };
+
+  // Fetch the current state straight away so the UI is never blank while the
+  // handshake is in flight, then attach the live transport.
+  void getDatasetJob(jobId)
+    .then((job) => {
+      if (stopped) return;
+      finish(job);
+      if (!job.terminal) connect();
+    })
+    .catch(() => {
+      if (!stopped) connect();
+    });
+
+  return () => {
+    stopped = true;
+    cleanup();
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Investigation workflow (PRD 21: explicit, gated stages — never page-load
 // side effects).  Every function maps to one investigation endpoint.
 // ---------------------------------------------------------------------------
@@ -588,9 +927,17 @@ export interface GraphEdgeRow {
 
 export interface PersonNetwork {
   case_id: string;
-  target: GraphNodeRow;
+  /** The depth that was requested (echoed back). */
   depth: number;
+  requested_depth: number;
+  /** The deepest layer that actually produced nodes. */
+  max_depth_reached: number;
+  /** True when traversal ran out of graph before it ran out of hops. */
+  exhausted: boolean;
+  target: GraphNodeRow;
   truncated: boolean;
+  node_limit: number | null;
+  /** Layer index -> node count. Sparse: only layers that exist appear. */
   layers: Record<string, number>;
   counts: {
     nodes: number;
@@ -602,13 +949,28 @@ export interface PersonNetwork {
   edges: GraphEdgeRow[];
 }
 
+/** Default hop depth — a starting point, not a ceiling. */
+export const DEFAULT_NETWORK_DEPTH = 3;
+
+/**
+ * Fetch the person-centric network out to `depth` hops.
+ *
+ * `depth` is an arbitrary positive integer: 3, 13, 26 and 100 are all valid.
+ * The backend walks as far as the graph actually reaches and reports
+ * `exhausted` when the whole connected component has been returned, so a
+ * request for more hops than exist is answered honestly rather than refused.
+ */
 export function personNetwork(
   caseId: string,
   personKey: string,
-  depth: 1 | 2 | 3 = 1,
+  depth: number = DEFAULT_NETWORK_DEPTH,
+  limit?: number,
 ): Promise<PersonNetwork> {
+  const hops = Math.max(1, Math.floor(Number(depth) || DEFAULT_NETWORK_DEPTH));
+  const params = new URLSearchParams({ depth: String(hops) });
+  if (limit && limit > 0) params.set("limit", String(Math.floor(limit)));
   return api(
-    `/cases/${caseId}/network/${encodeURIComponent(personKey)}?depth=${depth}`,
+    `/cases/${caseId}/network/${encodeURIComponent(personKey)}?${params.toString()}`,
   );
 }
 

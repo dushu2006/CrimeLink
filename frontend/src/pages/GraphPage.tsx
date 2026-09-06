@@ -18,6 +18,7 @@ import {
   api,
   caseGraph,
   casePersons,
+  DEFAULT_NETWORK_DEPTH,
   investigationState,
   personFindings,
   personNetwork,
@@ -114,7 +115,13 @@ export default function GraphPage() {
   // ---- person graph state ----
   const [persons, setPersons] = useState<PersonTarget[] | null>(null);
   const [targetKey, setTargetKey] = useState<string>("");
-  const [depth, setDepth] = useState<1 | 2 | 3>(1);
+  // Hop depth is an exploration parameter, not a limit on the graph: three is
+  // the starting point, any positive integer is accepted, and the backend
+  // returns everything reachable when the request exceeds the actual
+  // connectivity.  `depthDraft` backs the free-text box so a partially typed
+  // number never fires a request.
+  const [depth, setDepth] = useState<number>(DEFAULT_NETWORK_DEPTH);
+  const [depthDraft, setDepthDraft] = useState<string>(String(DEFAULT_NETWORK_DEPTH));
   const [network, setNetwork] = useState<PersonNetwork | null>(null);
   const [personFindingItems, setPersonFindingItems] = useState<Finding[]>([]);
 
@@ -161,7 +168,7 @@ export default function GraphPage() {
   }, [caseId]);
 
   const loadNetwork = useCallback(
-    (key: string, hop: 1 | 2 | 3) => {
+    (key: string, hop: number) => {
       if (!key) return;
       setError(null);
       personNetwork(caseId, key, hop)
@@ -611,19 +618,61 @@ export default function GraphPage() {
             <div className="graph-controls">
               <span className="muted">{t("graph.target")}:</span>
               <strong>{network.target.name}</strong>
+              {/*
+                Hop depth: presets for the common cases plus a free numeric
+                field, because the graph is not limited to three hops and the
+                control should not pretend otherwise.  Nothing here caps the
+                value — the backend walks as far as the data goes.
+              */}
               <div className="depth-buttons" role="group" aria-label={t("graph.depth")}>
-                {([1, 2, 3] as const).map((hop) => (
+                {[1, 2, 3, 5, 10].map((hop) => (
                   <button
                     key={hop}
                     type="button"
                     className={`btn btn-sm ${depth === hop ? "btn-primary" : ""}`}
-                    disabled={hop > 1 && network.layers[String(hop - 1)] === 0}
-                    onClick={() => setDepth(hop)}
+                    onClick={() => {
+                      setDepth(hop);
+                      setDepthDraft(String(hop));
+                    }}
                   >
                     {hop}-hop
                   </button>
                 ))}
+                <input
+                  className="depth-input"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={depthDraft}
+                  aria-label={`${t("graph.depth")} (hops)`}
+                  title="Any positive number of hops. Traversal stops when the depth is reached or nothing further is connected."
+                  onChange={(event) => setDepthDraft(event.target.value)}
+                  onBlur={() => {
+                    const parsed = Math.floor(Number(depthDraft));
+                    if (Number.isFinite(parsed) && parsed >= 1) setDepth(parsed);
+                    else setDepthDraft(String(depth));
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      (event.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  style={{ width: "5.5rem" }}
+                />
               </div>
+              <span className="muted">
+                {network.counts.nodes} nodes · {network.counts.edges} edges ·
+                reached {network.max_depth_reached} of {network.requested_depth} hops
+              </span>
+              {network.exhausted && (
+                <span
+                  className="badge"
+                  title="Every node connected to this person has been returned; there is nothing deeper to find."
+                >
+                  fully explored
+                </span>
+              )}
               {network.truncated && (
                 <span className="badge badge-warn">{t("graph.truncated")}</span>
               )}

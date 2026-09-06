@@ -37,7 +37,7 @@ class FakeRouter:
 def _gateway(settings, monkeypatch, router) -> AIGateway:
     gateway = AIGateway(settings=settings, router=router)
 
-    async def no_subgraph(case_id: str, *, depth: int = 2):
+    async def no_subgraph(case_id: str, *, depth: int = 2, target_key: str | None = None):
         return [], []
 
     monkeypatch.setattr(gateway, "_retrieve_subgraph", no_subgraph)

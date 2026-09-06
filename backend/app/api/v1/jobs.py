@@ -53,6 +53,92 @@ async def list_jobs(
     return {"items": [await document_service.job_row(session, job) for job in jobs]}
 
 
+@router.websocket("/jobs/ws/job/{job_id}")
+async def dataset_job_stream(websocket: WebSocket, job_id: str) -> None:
+    """Live progress for one dataset/graph job.
+
+    Registered *before* ``/jobs/ws/{case_id}`` so the literal ``job`` segment
+    wins over the case-id parameter; otherwise every job subscription would be
+    interpreted as a case named "job" and closed as unauthorized.
+
+    The contract is deliberately identical to the polling endpoint
+    (``GET /api/v1/datasets/jobs/{job_id}``) so a client can move between the
+    two without translating anything:
+
+    * on connect the **current** state is sent immediately, so a client that
+      subscribes after the job started is never left with an empty progress
+      bar waiting for the next tick;
+    * every subsequent change arrives as it happens;
+    * when the job reaches a terminal state a final frame is sent and the
+      socket is closed with 1000, which tells the client the stream ended on
+      purpose and no reconnect is needed.
+
+    Nothing in this handler can affect the job itself: it only reads the job
+    row and subscribes to a notification channel.  Dropping the socket, or
+    never opening it, leaves the rebuild running.
+    """
+    from app.security.tokens import decode_access_token
+
+    await websocket.accept()
+
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401)
+        return
+    try:
+        payload = decode_access_token(token)
+    except Exception:  # noqa: BLE001
+        await websocket.close(code=4401)
+        return
+
+    try:
+        await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                _authorize_job_websocket(str(payload.get("sub"))), _get_auth_loop()
+            )
+        )
+    except _WSNotAuthenticated:
+        await websocket.close(code=4401)
+        return
+
+    from app.services import dataset_jobs
+
+    current = await dataset_jobs.get_job(job_id)
+    if current is None:
+        # An unknown job id is a client bug, not an auth failure: say so
+        # distinctly instead of leaving the console retrying forever.
+        await websocket.close(code=4404)
+        return
+
+    # Snapshot first: late subscribers must not miss the progress so far.
+    await websocket.send_text(
+        json.dumps({"type": "job_snapshot", "job_id": job_id, **current}, default=str)
+    )
+    if current.get("terminal"):
+        await websocket.close(code=1000)
+        return
+
+    container = get_container()
+    try:
+        async for message in container.event_bus.subscribe(
+            dataset_jobs.job_channel(job_id)
+        ):
+            try:
+                await websocket.send_text(json.dumps(message, default=str))
+            except (WebSocketDisconnect, RuntimeError):
+                break
+            if message.get("terminal") or message.get("type") == "job_finished":
+                await websocket.close(code=1000)
+                break
+    except asyncio.CancelledError:  # pragma: no cover
+        raise
+    except Exception:  # noqa: BLE001
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # pragma: no cover
+            pass
+
+
 @router.websocket("/jobs/ws/{case_id}")
 async def job_stream(websocket: WebSocket, case_id: str) -> None:
     """Push per-document pipeline stage progress to the UI.
@@ -143,7 +229,6 @@ async def job_stream(websocket: WebSocket, case_id: str) -> None:
 class _WSNotAuthenticated(Exception):
     """Signed token, but the identity behind it is gone or inactive."""
 
-
 _auth_loop: asyncio.AbstractEventLoop | None = None
 _auth_loop_lock = threading.Lock()
 _auth_engine: AsyncEngine | None = None
@@ -207,3 +292,19 @@ async def _authorize_websocket(user_sub: str, case_id: str) -> None:
         principal = Principal(user)
         scope = await get_scope(principal, session)
         await case_service.require_case(session, scope, case_id)
+
+
+async def _authorize_job_websocket(user_sub: str) -> None:
+    """Authenticate a dataset-job subscriber.
+
+    A dataset job is not case-scoped, so there is no case to check against;
+    the requirement is simply an active, authenticated user.  The job payload
+    carries only progress metadata -- stage names, counts and timestamps --
+    never case content, so this is the right boundary.
+    """
+    from app.db.models import User
+
+    async with _get_auth_sessionmaker()() as session:
+        user = await session.get(User, user_sub)
+        if user is None or not user.is_active:
+            raise _WSNotAuthenticated()
