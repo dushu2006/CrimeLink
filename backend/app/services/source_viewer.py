@@ -76,8 +76,7 @@ def dataset_root() -> Path:
 
 
 def resolve_in_dataset(relative_path: str, *, root: Path | None = None) -> Path:
-    """Resolve a dataset-relative path, refusing anything outside the root."""
-    base = (root or dataset_root()).resolve()
+    """Resolve a dataset-relative path, refusing anything outside allowed roots."""
     cleaned = (relative_path or "").strip().replace("\\", "/")
     # A reference may address a slice of a table as "operational/cdr.csv#C0001";
     # the fragment identifies the slice, not the file.
@@ -87,14 +86,77 @@ def resolve_in_dataset(relative_path: str, *, root: Path | None = None) -> Path:
     if cleaned.startswith("/") or (len(cleaned) > 1 and cleaned[1] == ":"):
         raise SourceAccessError("Source paths must be relative to the dataset root.")
 
+    base = (root or dataset_root()).resolve()
+
+    # If an explicit root was provided (e.g. in tests), resolve directly against it
+    if root is not None:
+        candidate = (base / cleaned).resolve()
+        if not candidate.is_relative_to(base):
+            raise SourceAccessError(
+                f"Refusing to read '{relative_path}': it resolves outside the dataset root."
+            )
+        if candidate.exists() and candidate.is_file():
+            return candidate
+        # Fallback: check stripped subpaths
+        parts = cleaned.split("/")
+        for i in range(1, len(parts)):
+            subpath = "/".join(parts[i:])
+            cand = (base / subpath).resolve()
+            if cand.is_file() and cand.is_relative_to(base):
+                return cand
+        raise NotFoundError(f"Source file not found in the dataset: {cleaned}")
+
+    # Root is not explicitly specified: search standard locations
+    # 1. Base synthetic data root
     candidate = (base / cleaned).resolve()
     if not candidate.is_relative_to(base):
         raise SourceAccessError(
             f"Refusing to read '{relative_path}': it resolves outside the dataset root."
         )
-    if not candidate.exists() or not candidate.is_file():
-        raise NotFoundError(f"Source file not found in the dataset: {cleaned}")
-    return candidate
+    if candidate.exists() and candidate.is_file():
+        return candidate
+
+    # 2. Imported datasets directory
+    settings = get_settings()
+    datasets_root = (settings.data_dir / "datasets").resolve()
+    if datasets_root.exists():
+        cand = (datasets_root / cleaned).resolve()
+        if cand.is_file() and cand.is_relative_to(datasets_root):
+            return cand
+        try:
+            for ds_dir in datasets_root.iterdir():
+                if ds_dir.is_dir():
+                    cand = (ds_dir / cleaned).resolve()
+                    if cand.is_file() and cand.is_relative_to(ds_dir):
+                        return cand
+        except Exception:
+            pass
+
+    # 3. Uploads directory
+    uploads_root = (settings.data_dir / "uploads").resolve()
+    if uploads_root.exists():
+        cand = (uploads_root / cleaned).resolve()
+        if cand.is_file() and cand.is_relative_to(uploads_root):
+            return cand
+
+    # 4. Subpath fallback (e.g. path starts with upload staging UUID or corpus dir)
+    parts = cleaned.split("/")
+    for i in range(1, len(parts)):
+        subpath = "/".join(parts[i:])
+        cand = (base / subpath).resolve()
+        if cand.is_file() and cand.is_relative_to(base):
+            return cand
+        if datasets_root.exists():
+            try:
+                for ds_dir in datasets_root.iterdir():
+                    if ds_dir.is_dir():
+                        cand = (ds_dir / subpath).resolve()
+                        if cand.is_file() and cand.is_relative_to(ds_dir):
+                            return cand
+            except Exception:
+                pass
+
+    raise NotFoundError(f"Source file not found in the dataset: {cleaned}")
 
 
 def _clamp_window(target: int | None, total: int, context: int) -> tuple[int, int]:
@@ -114,12 +176,13 @@ def read_csv_window(
     context: int = DEFAULT_CONTEXT,
     limit: int | None = None,
     relative: str = "",
+    delimiter: str = ",",
 ) -> SourceWindow:
-    """Read a window of CSV rows around ``row`` (1-based, header = line 1)."""
+    """Read a window of CSV/TSV rows around ``row`` (1-based, header = line 1)."""
     from app.domain.models import ORIGIN_COLUMN
 
     text = path.read_text(encoding="utf-8-sig", errors="replace")
-    reader = csv.reader(io.StringIO(text))
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     try:
         header = next(reader)
     except StopIteration:
@@ -152,6 +215,82 @@ def read_csv_window(
     return SourceWindow(
         file=relative or path.name,
         source_type="csv",
+        total_units=total_lines,
+        unit_label="row",
+        start=start,
+        end=end,
+        highlight=[row] if row else [],
+        columns=columns,
+        rows=rows,
+        lines=[],
+        truncated=(end - start + 1) < (total_lines - 1),
+        size_bytes=path.stat().st_size,
+    )
+
+
+def read_xlsx_window(
+    path: Path,
+    *,
+    row: int | None = None,
+    context: int = DEFAULT_CONTEXT,
+    limit: int | None = None,
+    relative: str = "",
+) -> SourceWindow:
+    """Read a window of rows from an XLSX workbook around ``row`` (1-based, header = row 1)."""
+    import openpyxl
+    from app.domain.models import ORIGIN_COLUMN
+
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheet = workbook.active or workbook.worksheets[0]
+        iterator = sheet.iter_rows(values_only=True)
+        try:
+            raw_header = next(iterator)
+        except StopIteration:
+            raw_header = ()
+        header = [
+            str(c).strip() if c is not None else f"column_{idx + 1}"
+            for idx, c in enumerate(raw_header)
+        ]
+        keep = [i for i, name in enumerate(header) if name != ORIGIN_COLUMN]
+        columns = [header[i] for i in keep]
+
+        all_rows: list[list[Any]] = []
+        for r in iterator:
+            all_rows.append(list(r))
+    finally:
+        try:
+            workbook.close()
+        except Exception:
+            pass
+
+    total_lines = len(all_rows) + 1  # +1 for header
+
+    if limit is not None:
+        start, end = 1, min(total_lines, max(2, limit + 1))
+    else:
+        start, end = _clamp_window(row, total_lines, context)
+        if start < 2:
+            start = 2 if total_lines > 1 else 1
+    if end - start + 1 > MAX_WINDOW:
+        end = start + MAX_WINDOW - 1
+
+    rows: list[dict[str, Any]] = []
+    for line_no in range(max(2, start), end + 1):
+        raw = all_rows[line_no - 2] if line_no - 2 < len(all_rows) else []
+        values = {
+            columns[pos]: (
+                str(raw[idx]).strip()
+                if idx < len(raw) and raw[idx] is not None
+                else ""
+            )
+            for pos, idx in enumerate(keep)
+        }
+        rows.append({"row": line_no, "values": values})
+
+    return SourceWindow(
+        file=relative or path.name,
+        source_type="table",
         total_units=total_lines,
         unit_label="row",
         start=start,
@@ -248,8 +387,17 @@ def read_window(
     path = resolve_in_dataset(relative_path, root=root)
     clean = relative_path.split("#", 1)[0]
     suffix = path.suffix.lower()
-    if suffix == ".csv":
+    if suffix in {".csv", ".tsv"}:
         return read_csv_window(
+            path,
+            row=row,
+            context=context,
+            limit=limit,
+            relative=clean,
+            delimiter="\t" if suffix == ".tsv" else ",",
+        )
+    if suffix in {".xlsx", ".xls", ".xlsm"}:
+        return read_xlsx_window(
             path, row=row, context=context, limit=limit, relative=clean
         )
     if suffix == ".json":
@@ -257,3 +405,4 @@ def read_window(
     return read_text_window(
         path, line_start=line_start, line_end=line_end, context=context, relative=clean
     )
+

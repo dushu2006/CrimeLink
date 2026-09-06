@@ -100,6 +100,9 @@ async def dataset_job_stream(websocket: WebSocket, job_id: str) -> None:
     except _WSNotAuthenticated:
         await websocket.close(code=4401)
         return
+    except Exception:  # noqa: BLE001
+        await websocket.close(code=1011)
+        return
 
     from app.services import dataset_jobs
 
@@ -207,6 +210,9 @@ async def job_stream(websocket: WebSocket, case_id: str) -> None:
         return
     except (NotFoundError, JurisdictionDeniedError, PermissionDeniedError):
         await websocket.close(code=4403)
+        return
+    except Exception:  # noqa: BLE001
+        await websocket.close(code=1011)
         return
 
     container = get_container()

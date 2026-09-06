@@ -16,10 +16,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.config import get_settings
 from app.datasets import registry
@@ -39,7 +40,6 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 #: Anything that could escape the staging directory is stripped from an
 #: uploaded path. A browser is not a trusted source of file paths.
 _UNSAFE_SEGMENT = re.compile(r"^\.+$")
-MAX_UPLOAD_FILES = 5000
 UPLOAD_CHUNK = 1024 * 1024
 
 
@@ -122,13 +122,7 @@ async def get_dataset_job(
 
 @router.post("/import")
 async def import_dataset(
-    files: list[UploadFile] = File(..., description="Any mix of files, or a ZIP."),
-    name: str = Form(""),
-    version: str = Form("1"),
-    paths: list[str] | None = Form(None),
-    activate: bool = Form(True),
-    build_graph: bool = Form(True),
-    jurisdiction_id: str = Form(DEFAULT_JURISDICTION),
+    request: Request,
     principal: Principal = Depends(require_roles("ADMIN")),
 ) -> dict:
     """Upload and import a dataset. Returns a ``job_id`` to watch.
@@ -140,13 +134,26 @@ async def import_dataset(
     because it lacks an ``operational/`` directory would be an artificial
     failure, and users do not organise their evidence for our convenience.
     """
+    form = await request.form(max_files=float("inf"), max_fields=float("inf"))
+    files = [item for item in form.getlist("files") if isinstance(item, UploadFile)]
+    paths = [str(item) for item in form.getlist("paths")]
+    name = str(form.get("name") or "")
+    version = str(form.get("version") or "1")
+    activate = str(form.get("activate") or "true").lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+    build_graph = str(form.get("build_graph") or "true").lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+    jurisdiction_id = str(form.get("jurisdiction_id") or DEFAULT_JURISDICTION)
     if not files:
         raise ValidationFailedError("Select at least one file to import.")
-    if len(files) > MAX_UPLOAD_FILES:
-        raise ValidationFailedError(
-            f"{len(files)} files is more than this endpoint accepts "
-            f"({MAX_UPLOAD_FILES}). Upload them as a ZIP archive instead."
-        )
 
     settings = get_settings()
     staging = Path(settings.data_dir) / "uploads" / new_uuid()

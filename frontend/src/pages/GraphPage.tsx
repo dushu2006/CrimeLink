@@ -827,9 +827,9 @@ export default function GraphPage() {
                     {t("graph.setFocus")}
                   </button>
                 )}
-              <p>
+              <div className="evidence-link-row">
                 <EvidencePointerLink pointer={selected.evidence} />
-              </p>
+              </div>
               {mode === "person" &&
                 selected.label === "PERSON" &&
                 personFindingItems.length > 0 && (
@@ -867,9 +867,9 @@ export default function GraphPage() {
                   </div>
                 ))}
               </dl>
-              <p>
+              <div className="evidence-link-row">
                 <EvidencePointerLink pointer={selectedEdge.evidence} />
-              </p>
+              </div>
             </div>
           )}
           {!selected && !selectedEdge && (

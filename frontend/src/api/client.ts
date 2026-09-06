@@ -487,7 +487,23 @@ export function jobSocket(
     if (socket) {
       socket.onclose = null;
       socket.onmessage = null;
-      socket.close();
+      socket.onerror = null;
+      if (socket.readyState === WebSocket.CONNECTING) {
+        const s = socket;
+        s.onopen = () => {
+          try {
+            s.close(1000, "unmounted");
+          } catch {
+            /* ignore */
+          }
+        };
+      } else {
+        try {
+          socket.close(1000, "unmounted");
+        } catch {
+          /* ignore */
+        }
+      }
       socket = null;
     }
   };
@@ -720,10 +736,21 @@ export function watchDatasetJob(
       socket.onclose = null;
       socket.onmessage = null;
       socket.onerror = null;
-      try {
-        socket.close();
-      } catch {
-        /* already closing */
+      if (socket.readyState === WebSocket.CONNECTING) {
+        const s = socket;
+        s.onopen = () => {
+          try {
+            s.close(1000, "unmounted");
+          } catch {
+            /* ignore */
+          }
+        };
+      } else {
+        try {
+          socket.close(1000, "unmounted");
+        } catch {
+          /* already closing */
+        }
       }
       socket = null;
     }

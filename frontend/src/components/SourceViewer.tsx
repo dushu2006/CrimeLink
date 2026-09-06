@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { Empty, ErrorState, Spinner } from "./Status";
 
@@ -283,7 +284,7 @@ export default function SourceViewer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  const modal = (
     <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
       <div className="modal source-modal" onClick={(event) => event.stopPropagation()}>
         <header className="modal-head">
@@ -302,4 +303,6 @@ export default function SourceViewer({
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(modal, document.body) : modal;
 }
