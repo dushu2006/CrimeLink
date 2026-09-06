@@ -280,19 +280,40 @@ async def set_threshold(
 
 
 async def counts(session: AsyncSession) -> dict[str, int]:
+    """Platform overview counts.
+
+    Every count follows the same isolation rule as every investigator read:
+    cases, documents and derived review queues are counted for the ACTIVE
+    dataset only (plus hand-created rows). A replaced dataset keeps existing
+    for audit purposes, but the overview — the first number an operator sees
+    after an import — must describe what the platform is *working on*, not
+    everything it has ever held.
+    """
     from app.db.models import Case, CaseDocument, DetectedPattern, EntityResolutionItem
+    from app.datasets import registry
+
+    case_visible = await registry.visibility_filter(session, Case)
+    doc_visible = await registry.visibility_filter(session, CaseDocument)
+    active_case_ids = select(Case.id).where(case_visible)
 
     return {
         "users": int((await session.execute(select(func.count(User.id)))).scalar() or 0),
-        "cases": int((await session.execute(select(func.count(Case.id)))).scalar() or 0),
+        "cases": int(
+            (await session.execute(select(func.count(Case.id)).where(case_visible))).scalar()
+            or 0
+        ),
         "documents": int(
-            (await session.execute(select(func.count(CaseDocument.id)))).scalar() or 0
+            (
+                await session.execute(select(func.count(CaseDocument.id)).where(doc_visible))
+            ).scalar()
+            or 0
         ),
         "pending_matches": int(
             (
                 await session.execute(
                     select(func.count(EntityResolutionItem.id)).where(
-                        EntityResolutionItem.status == "PENDING"
+                        EntityResolutionItem.status == "PENDING",
+                        EntityResolutionItem.case_id.in_(active_case_ids),
                     )
                 )
             ).scalar()
@@ -302,7 +323,8 @@ async def counts(session: AsyncSession) -> dict[str, int]:
             (
                 await session.execute(
                     select(func.count(DetectedPattern.id)).where(
-                        DetectedPattern.status == "NEW"
+                        DetectedPattern.status == "NEW",
+                        DetectedPattern.case_id.in_(active_case_ids),
                     )
                 )
             ).scalar()

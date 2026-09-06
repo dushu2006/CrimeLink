@@ -54,8 +54,15 @@ class GraphService:
 
     # ------------------------------------------------------------- scoping
     async def _allowed_case_ids(self, session: AsyncSession, scope: JurisdictionScope) -> set[str]:
-        rows = (await session.execute(select(Case.id).where(scope.case_filter()))).scalars().all()
-        return set(rows)
+        """Jurisdiction-scoped AND active-dataset-scoped.
+
+        Search and node-scope assertions range over exactly this set, so a
+        replaced dataset is invisible to the whole graph surface at once --
+        not just to the pages that remembered to filter.
+        """
+        from app.services.cases import visible_case_ids
+
+        return await visible_case_ids(session, scope)
 
     async def _assert_node_in_scope(
         self, session: AsyncSession, scope: JurisdictionScope, key: str

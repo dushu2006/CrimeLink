@@ -39,7 +39,7 @@ TABLE_EXTENSIONS = frozenset({".csv", ".tsv", ".xlsx", ".xlsm", ".xls", ".json",
 #: Extensions we can parse into readable text.
 TEXT_EXTENSIONS = frozenset({".txt", ".md", ".text", ".log", ".rtf"})
 #: Extensions that are documents with an internal structure (pages/paragraphs).
-DOCUMENT_EXTENSIONS = frozenset({".pdf", ".docx", ".doc"})
+DOCUMENT_EXTENSIONS = frozenset({".pdf", ".docx", ".doc", ".pptx"})
 ARCHIVE_EXTENSIONS = frozenset({".zip"})
 
 SUPPORTED_EXTENSIONS = (
@@ -60,6 +60,8 @@ MEDIA_TYPES: dict[str, str] = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".ppt": "application/vnd.ms-powerpoint",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
     ".xls": "application/vnd.ms-excel",

@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import time
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from app.ai.pseudonymize import PseudonymMap, apply_pseudonymization_to_context
 from app.ai.router import AIModelRouter, get_router
@@ -136,41 +138,301 @@ def unavailable_summary(role: str, reason: str | None) -> str:
     return f"{role_label} is currently unavailable ({reason})."
 
 
+# ---------------------------------------------------------------------------
+# Intent triage -- the fast path for non-investigative messages
+#
+# "Hi" must cost the platform nothing: no graph read, no retrieval, no model
+# call, no pseudonymization pass. Before this existed every greeting walked
+# the full case-retrieval pipeline, which is what made trivial messages feel
+# hung. The classifier is intentionally a *shape* test over punctuation- and
+# case-stripped words -- no corpus, no case identifier, and nothing specific
+# to any dataset can make a message look investigative by accident.
+# ---------------------------------------------------------------------------
+
+#: Whole short phrases that are chat about nothing. Matching whole strings
+#: (after punctuation folding) -- not prefixes -- so "hi, who stole the ledger"
+#: can never be fast-pathed by a greeting-shaped opening.
+_CHITCHAT_PHRASES = frozenset(
+    {
+        "hi", "hii", "hiii", "hlo", "hello", "helo", "hallo", "hey", "heya", "hai",
+        "yo", "namaste", "namaskar", "salaam", "salam", "assalamualaikum",
+        "hi there", "hey there", "hello there", "good morning", "good afternoon",
+        "good evening", "how are you", "how r u", "kaise ho", "kaise hain aap",
+        "thanks", "thank you", "thankyou", "thanku", "thank you so much",
+        "thanks a lot", "thx", "ty", "ok", "okay", "alright",
+        "cool", "nice", "great", "perfect", "awesome", "got it", "noted",
+        "understood", "bye", "goodbye", "see you", "see ya", "that's all",
+        "that is all", "who are you", "who r u", "what are you",
+        "what can you do", "what can u do", "help", "testing", "test", "ping",
+    }
+)
+_REPEATED_LETTERS = re.compile(r"^(h+i+|h+e+l+o+|h+e+y+|b+y+e+|t+h+a+n+k+s*|o+k+y?)$")
+#: Identifier-looking tokens (CASE_0001, ACCT_0002, TS09AB1234, phone numbers)
+#: make a message investigative no matter how short it is.
+_IDENTIFIER_SHAPES = re.compile(
+    r"\b([A-Z][A-Z0-9]{1,14}_\d{2,8}|\+?\d{10,13}|[A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{4})\b"
+)
+
+
+def is_conversational(text: str) -> bool:
+    """Whether a message is pure chat (greeting/thanks/identity) about nothing.
+
+    Deliberately conservative in the *safe* direction: any message that names
+    an identifier, carries investigation vocabulary, or is not built
+    exclusively out of whole known chat phrases goes down the full retrieval
+    path. A greeting that accidentally skipped retrieval would be a wrong
+    answer; a "thanks" that accidentally retrieved is merely a slower no-op
+    -- so the classifier only ever fast-paths what it is sure about.
+    """
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 80:
+        return False
+    if _IDENTIFIER_SHAPES.search(stripped):
+        return False
+    # Fold punctuation, case and stray emoji into single spaces, then require
+    # every remaining word to be a known chat phrase ("hi there" survives the
+    # multi-word set; "hi who did it" does not).
+    body = re.sub(r"[^a-z0-9'\u0900-\u097F]+", " ", stripped.lower()).strip()
+    if not body:
+        return False
+    sentences = [part for part in body.split(" ") if part]
+    if not sentences:
+        return False
+    # Multi-word phrases: try greedy two/three-word groupings first.
+    i = 0
+    while i < len(sentences):
+        matched = False
+        for size in (4, 3, 2, 1):
+            candidate = " ".join(sentences[i : i + size])
+            if candidate and candidate in _CHITCHAT_PHRASES:
+                i += size
+                matched = True
+                break
+        if matched:
+            continue
+        if _REPEATED_LETTERS.match(sentences[i]):
+            i += 1
+            continue
+        return False
+    return True
+
+
+#: The answer for the fast path. Deliberately not produced by a model: a
+#: greeting answered by a 2000-token reasoning call over the whole case graph
+#: is the exact failure this triage exists to prevent.
+CONVERSATIONAL_REPLY = (
+    "Hello — I'm CrimeLink's case analysis assistant. I answer questions about "
+    "the active investigation from the evidence this platform ingested: who is "
+    "connected to whom, what the call, money and movement records show, and "
+    "which finding each claim rests on. Ask me something about this case, for "
+    "example: \"Who appears to coordinate the financial activity?\" or "
+    "\"What links the accounts in this case?\""
+)
+
+
+class StageTimer:
+    """Per-stage latency bookkeeping for one AI request.
+
+    Requirement #12 asked to *measure* before tuning: every number the stream
+    and the response carry comes from here, so a slow stage is identifiable
+    rather than inferable from a single total.
+    """
+
+    def __init__(self) -> None:
+        self._started = time.perf_counter()
+        self._mark = self._started
+        self.stages: dict[str, int] = {}
+
+    def stage(self, name: str) -> None:
+        now = time.perf_counter()
+        self.stages[name] = self.stages.get(name, 0) + int((now - self._mark) * 1000)
+        self._mark = now
+
+    def report(self) -> dict[str, Any]:
+        total_ms = int((time.perf_counter() - self._started) * 1000)
+        return {**self.stages, "total_ms": total_ms}
+
+
+EmitFn = Callable[[dict[str, Any]], Any] | None
+
+
 class AIGateway:
     def __init__(self, settings: Settings | None = None, router: AIModelRouter | None = None):
         self.settings = settings or get_settings()
         self.router = router or get_router()
 
-    # ------------------------------------------------------ public entrypoint
+    # ------------------------------------------------------ public entrypoints
 
     async def ask(self, *, question: str, case_id: str, user_id: str | None = None,
                   principal_id: str | None = None,
                   depth: int | None = None, target_key: str | None = None,
-                  request_id: str | None = None) -> AIResponse:
-        """Answer an investigator question scoped to ``case_id``.
-
-        The query runs through retrieval, minimization, pseudonymization,
-        model invocation, validation and audit logging before returning.
+                  request_id: str | None = None,
+                  dataset_id: str | None = None,
+                  graph_ready: bool = True) -> AIResponse:
+        """Answer an investigator question scoped to ``case_id`` (and, through
+        the case, to the ACTIVE dataset — replaced data is not retrievable).
 
         Nothing in this method can raise to the caller: a failure anywhere
         becomes an ``AIResponse`` with ``available=False`` and a reason,
         because "the model is unreachable" is an answer the investigator needs
         to see, not a 500.
         """
+        return await self._answer(
+            question=question, case_id=case_id, user_id=user_id,
+            principal_id=principal_id, depth=depth, target_key=target_key,
+            request_id=request_id, dataset_id=dataset_id,
+            graph_ready=graph_ready, emit=None,
+        )
+
+    async def ask_stream(self, *, question: str, case_id: str, user_id: str | None = None,
+                         principal_id: str | None = None,
+                         depth: int | None = None, target_key: str | None = None,
+                         request_id: str | None = None,
+                         dataset_id: str | None = None,
+                         graph_ready: bool = True) -> AsyncIterator[dict[str, Any]]:
+        """Yield NDJSON progress events, then the final ``done`` event.
+
+        Protocol (one JSON object per line)::
+
+            {"type": "ack",        "query_id", "message"}
+            {"type": "stage",      "stage": "retrieving|generating|validating", ...}
+            {"type": "retrieval",  "nodes", "edges", "retrieval_ms"}
+            {"type": "delta",      "text": "..."}          # streamed tokens
+            {"type": "done",       "response": {...full AIResponse...}}
+            {"type": "error",      "code", "message"}      # fatal, ends stream
+
+        The caller receives an ``ack`` before any expensive work happens, so
+        the UI can say "Thinking…" the instant the request is accepted — the
+        difference between *slow* and *indistinguishable from hung*.
+        """
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
+
+        async def emit(event: dict[str, Any]) -> None:
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:  # pragma: no cover - slow client
+                log.warning("ai.stream_queue_full", query_id=request_id)
+
+        task = asyncio.create_task(
+            self._answer(
+                question=question, case_id=case_id, user_id=user_id,
+                principal_id=principal_id, depth=depth, target_key=target_key,
+                request_id=request_id, dataset_id=dataset_id,
+                graph_ready=graph_ready, emit=emit,
+            )
+        )
+        try:
+            while True:
+                if task.done() and queue.empty():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.05)
+                except asyncio.TimeoutError:
+                    continue
+                yield event
+            response = task.result()
+            yield {"type": "done", "response": response.model_dump()}
+        except Exception as exc:  # noqa: BLE001 - a broken stream says why, never hangs
+            log.exception("ai.stream_failed", query_id=request_id, error=str(exc))
+            yield {
+                "type": "error",
+                "code": "gateway_error",
+                "message": "Unable to answer this question. The AI pipeline failed; "
+                           "quote the request id when reporting this.",
+            }
+        finally:
+            if not task.done():
+                task.cancel()
+
+    # --------------------------------------------------------------- the core
+
+    async def _answer(self, *, question: str, case_id: str, user_id: str | None = None,
+                      principal_id: str | None = None,
+                      depth: int | None = None, target_key: str | None = None,
+                      request_id: str | None = None,
+                      dataset_id: str | None = None,
+                      graph_ready: bool = True,
+                      emit: EmitFn = None) -> AIResponse:
+        timer = StageTimer()
         query_id = request_id or str(uuid.uuid4())
         depth = int(depth) if depth else self.settings.ai_retrieval_depth
+
+        async def send(event: dict[str, Any]) -> None:
+            if emit is not None:
+                maybe_awaitable = emit(event)
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
+
         try:
+            await send({
+                "type": "ack", "query_id": query_id,
+                "message": "Request started",
+            })
+            timer.stage("ack_ms")
+
+            # --- 0. Intent triage: greetings never touch retrieval ---------
+            if is_conversational(question):
+                await send({
+                    "type": "stage", "stage": "fast_path",
+                    "message": "Conversational message — answering without case retrieval",
+                })
+                response = AIResponse(
+                    query_id=query_id,
+                    role="conversational",
+                    model=None,
+                    finding=FindingResult(
+                        finding_type="GENERAL",
+                        summary=CONVERSATIONAL_REPLY,
+                        confidence=1.0,
+                        evidence_level="UNKNOWN",
+                        recommended_review=False,
+                    ),
+                    latency_ms=max(1, timer.report()["total_ms"]),
+                    pseudonymized=False,
+                    available=True,
+                    context={
+                        "fast_path": True,
+                        "nodes": 0,
+                        "edges": 0,
+                        "retrieved": False,
+                        "dataset_id": dataset_id,
+                        "case_id": case_id,
+                        "timing": timer.report(),
+                    },
+                )
+                log.info(
+                    "ai.fast_path_answered",
+                    query_id=query_id, case_id=case_id,
+                    **{k: v for k, v in timer.report().items()},
+                )
+                return response
+
             # 1. Retrieve a relevant subgraph from the graph store
+            await send({
+                "type": "stage", "stage": "retrieving",
+                "message": "Retrieving case context…",
+            })
             nodes, edges = await self._retrieve_subgraph(
                 case_id, depth=depth, target_key=target_key
             )
-            context_report = {
+            timer.stage("retrieval_ms")
+            context_report: dict[str, Any] = {
                 "nodes": len(nodes),
                 "edges": len(edges),
                 "depth": depth,
                 "target_key": target_key,
                 "retrieved": bool(nodes or edges),
+                # Isolation proof: retrieval ran against the active dataset's
+                # case (and its graph), not a global id lookup.
+                "dataset_id": dataset_id,
+                "graph_ready": graph_ready,
+                "timing": {},  # filled once below
             }
+            await send({
+                "type": "retrieval",
+                "nodes": len(nodes), "edges": len(edges),
+                "retrieval_ms": timer.stages.get("retrieval_ms", 0),
+            })
             if not nodes and not edges:
                 # An empty case is a real, reportable state — not a model
                 # failure and not something to ask a model to hallucinate over.
@@ -189,18 +451,38 @@ class AIGateway:
                 safe_nodes = nodes_min
                 safe_edges = edges
                 pseudonymized = False
+            timer.stage("context_ms")
 
             # 4. Build model-specific context
             context = self._build_reasoning_context(safe_nodes, safe_edges, question)
 
-            # 5. Ask reasoning model
-            result = await self.router.chat(
-                "investigation_reasoning",
-                system_prompt=SYSTEM_PROMPT_REASONING,
-                user_prompt=context,
-            )
+            # 5. Ask reasoning model (streaming tokens to the UI when a
+            #    progress channel exists)
+            await send({
+                "type": "stage", "stage": "generating",
+                "message": "Generating answer…",
+            })
+
+            async def on_delta(text: str) -> None:
+                await send({"type": "delta", "text": text})
+
+            if emit is not None:
+                result = await self.router.chat_stream(
+                    "investigation_reasoning",
+                    system_prompt=SYSTEM_PROMPT_REASONING,
+                    user_prompt=context,
+                    on_delta=on_delta,
+                )
+            else:
+                result = await self.router.chat(
+                    "investigation_reasoning",
+                    system_prompt=SYSTEM_PROMPT_REASONING,
+                    user_prompt=context,
+                )
+            timer.stage("model_ms")
             if not result.get("available"):
                 finding = self._unavailable_finding("reasoning", result.get("reason"))
+                context_report["timing"] = timer.report()
                 await self._audit(
                     query_id=query_id, case_id=case_id,
                     user_id=principal_id or user_id, role="reasoning",
@@ -213,11 +495,15 @@ class AIGateway:
                     query_id=query_id, role="reasoning", model=None,
                     finding=finding, pseudonymized=pseudonymized,
                     available=False, fallback_reason=result.get("reason"),
+                    latency_ms=max(1, context_report["timing"]["total_ms"]),
                     context=context_report,
                 )
 
             # 6. Parse and validate the structured result
+            await send({"type": "stage", "stage": "validating",
+                        "message": "Validating and attaching evidence…"})
             finding = self._parse_and_validate(result["content"])
+            context_report["timing"] = timer.report()
 
             # 7. Audit
             await self._audit(
@@ -234,6 +520,11 @@ class AIGateway:
                 success=True,
             )
 
+            log.info(
+                "ai.stage_timing",
+                query_id=query_id, case_id=case_id, streamed=bool(result.get("streamed")),
+                **context_report["timing"],
+            )
             return AIResponse(
                 query_id=query_id,
                 role="reasoning",
@@ -267,17 +558,21 @@ class AIGateway:
                 finding=FindingResult(
                     finding_type="GENERAL",
                     summary=(
-                        f"The AI request could not be completed ({type(exc).__name__}: {exc}). "
-                        f"Quote request id {query_id} when reporting this. "
-                        "An investigator must review this case manually."
+                        "The AI service is currently unavailable for this question "
+                        f"(internal error). Quote request id {query_id} when reporting "
+                        "this. An investigator must review this case manually."
                     ),
                     confidence=0.0,
                     evidence_level="UNKNOWN",
                     recommended_review=True,
-                    uncertainties=[str(exc)],
+                    uncertainties=[
+                        "The AI pipeline failed before producing a finding; "
+                        "the server log carries the technical detail."
+                    ],
                 ),
                 available=False,
-                fallback_reason=f"gateway_error: {type(exc).__name__}",
+                fallback_reason="gateway_error",
+                context={"timing": timer.report(), "dataset_id": dataset_id},
             )
 
     # ------------------------------------------------- structured unavailability

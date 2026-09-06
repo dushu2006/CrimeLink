@@ -44,11 +44,12 @@ async def list_queue(
         await require_case(session, scope, case_id)
         stmt = stmt.where(EntityResolutionItem.case_id == case_id)
     else:
-        from app.db.models import Case
+        # The queue follows the visible case set -- jurisdiction AND the
+        # active dataset -- so items queued by a replaced import stop
+        # competing for attention before an investigator ever opens them.
+        from app.services.cases import visible_case_ids
 
-        allowed = set(
-            (await session.execute(select(Case.id).where(scope.case_filter()))).scalars().all()
-        )
+        allowed = await visible_case_ids(session, scope)
         stmt = stmt.where(EntityResolutionItem.case_id.in_(sorted(allowed)) if allowed else False)
     if status:
         stmt = stmt.where(EntityResolutionItem.status == status)

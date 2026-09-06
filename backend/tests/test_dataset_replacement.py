@@ -11,6 +11,7 @@ Each test below replaces a dataset and then checks one read path.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -207,3 +208,136 @@ async def test_two_datasets_may_carry_the_same_case_numbers(
     # The natural key from the source data is preserved untouched, alongside
     # the dataset's container case for records no case claims.
     assert set(keys) == {"C1", "C2", "ALL"}, keys
+
+
+async def test_documents_patterns_and_queues_only_show_the_active_dataset(
+    client, admin_headers, replaced
+):
+    """The derived review queues must follow replacement, not accumulate.
+
+    Rows are planted directly against both datasets' cases: what is under
+    test is the *read path's* scoping — a replaced dataset's evidence and
+    review work must not keep surfacing in Explore or the admin queues.
+    """
+    import uuid as _uuid
+
+    from app.db.base import new_uuid
+    from app.db.models import CaseDocument, DetectedPattern, EntityResolutionItem
+    from app.domain.enums import (
+        DocumentType,
+        IngestionStatus,
+        MatchBasis,
+        PatternStatus,
+        PatternType,
+        ResolutionStatus,
+    )
+
+    first, second = replaced
+    async with async_session() as session:
+        ids = {}
+        for label, dataset in (("old", first), ("new", second)):
+            case_id = (
+                await session.execute(
+                    select(Case.id).where(Case.dataset_id == dataset).limit(1)
+                )
+            ).scalar_one()
+            ids[label] = case_id
+            session.add(
+                CaseDocument(
+                    id=new_uuid(),
+                    case_id=case_id,
+                    dataset_id=dataset,
+                    document_type=DocumentType.FIR,
+                    filename=f"{label}_fir.txt",
+                    storage_key=f"docs/{label}-{_uuid.uuid4().hex}.txt",
+                    content_hash="0" * 64,
+                    ingestion_status=IngestionStatus.COMPLETE,
+                )
+            )
+            session.add(
+                DetectedPattern(
+                    id=new_uuid(),
+                    case_id=case_id,
+                    pattern_type=PatternType.NETWORK_BRIDGE,
+                    confidence=0.9,
+                    entity_keys=[f"{label}-key"],
+                    evidence_doc_ids=[],
+                    explanation=f"planted {label} pattern",
+                    details={},
+                    status=PatternStatus.NEW,
+                )
+            )
+            session.add(
+                EntityResolutionItem(
+                    id=new_uuid(),
+                    case_id=case_id,
+                    source_node_key=f"{label}-a",
+                    target_node_key=f"{label}-b",
+                    similarity_score=0.95,
+                    match_basis=MatchBasis.NAME_FUZZY,
+                    evidence_doc_ids=[],
+                    status=ResolutionStatus.PENDING,
+                )
+            )
+        await session.commit()
+
+    documents = client.get("/api/v1/explore/documents", headers=admin_headers).json()
+    filenames = [doc["filename"] for doc in documents["items"]]
+    assert "new_fir.txt" in filenames, filenames
+    assert "old_fir.txt" not in filenames, filenames
+
+    patterns = client.get("/api/v1/patterns", headers=admin_headers).json()
+    pids = {p["case_id"] for p in patterns["items"]}
+    assert ids["new"] in pids, pids
+    assert ids["old"] not in pids, pids
+
+    queue = client.get("/api/v1/resolution", headers=admin_headers).json()
+    qids = {item["case_id"] for item in queue["items"]}
+    assert ids["new"] in qids, qids
+    assert ids["old"] not in qids, qids
+
+    overview = client.get("/api/v1/admin/overview", headers=admin_headers).json()
+    # The overview must describe what the platform is *working on*: exactly
+    # what the scoped read paths report, never the sum of every dataset ever
+    # imported. (Absolute numbers depend on other tests' hand-created rows, so
+    # the invariant checked here is cross-endpoint consistency.)
+    cases_visible = client.get("/api/v1/cases?limit=500", headers=admin_headers).json()
+    assert overview["cases"] == len(cases_visible["items"]), (overview, cases_visible)
+    assert overview["documents"] == documents["total"], (overview, documents)
+    assert overview["new_patterns"] == len(patterns["items"]), overview
+    assert overview["pending_matches"] == len(queue["items"]), overview
+
+
+async def test_the_sources_listing_is_the_active_dataset_only(
+    client, admin_headers, replaced
+):
+    """The Sources page speaks only the active dataset's manifest.
+
+    ``copy_inputs=False`` keeps each dataset's workspace at the source folder,
+    so relative paths here are flat -- which is also what makes the *content*
+    assertions the real isolation proof: same filenames in both imports, and
+    every read must return the new dataset's bytes.
+    """
+    first, second = replaced
+    body = client.get("/api/v1/sources/files", headers=admin_headers).json()
+    assert body["dataset_id"] == second
+    paths = {item["path"] for item in body["items"]}
+    assert paths == {"cases.csv", "people.csv"}, paths
+
+    # A file that existed only in the replaced dataset is gone.
+    stale = client.get(
+        "/api/v1/sources/preview?path=only_old_dataset_had_this.csv", headers=admin_headers
+    ).json()
+    assert stale["status"] == "NOT_FOUND"
+    stale_raw = client.get(
+        "/api/v1/sources/raw?path=only_old_dataset_had_this.csv", headers=admin_headers
+    )
+    assert stale_raw.status_code == 404
+
+    # Same-named file: the bytes shown are the ACTIVE dataset's people table.
+    listing = client.get(
+        "/api/v1/sources/preview?path=people.csv", headers=admin_headers
+    ).json()
+    text = json.dumps(listing.get("window"))
+    assert "New Person Nine" in text
+    assert "Old Person One" not in text

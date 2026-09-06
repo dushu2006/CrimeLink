@@ -32,11 +32,12 @@ router = APIRouter(prefix="/explore", tags=["explore"])
 
 
 async def _visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> set[str]:
-    # scope.case_filter() also honours active cross-jurisdiction grants, which
-    # a plain jurisdiction match would silently drop -- a granted case would
-    # then be openable by id but invisible in every listing.
-    rows = (await session.execute(select(Case.id).where(scope.case_filter()))).scalars()
-    return set(rows)
+    # Jurisdiction AND active dataset, composed once in case_service so every
+    # explorer shares the same boundary: scope.case_filter() honours approved
+    # cross-jurisdiction grants, and the dataset clause keeps a replaced
+    # dataset's documents and evidence out of every listing -- the leak that
+    # made old data look like new.
+    return await case_service.visible_case_ids(session, scope)
 
 
 @router.get("/documents")

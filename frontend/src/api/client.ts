@@ -254,6 +254,43 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 /**
+ * Forget every in-flight GET dedup slot.
+ *
+ * Called when the active dataset is replaced: a response that is already on
+ * the wire was produced from the OLD dataset's rows, and replaying it to the
+ * next mount would put yesterday's corpus back on screen. Dropping the slots
+ * means the next fetch is a real fetch.
+ */
+export function clearInflight(): void {
+  inflight.clear();
+}
+
+/**
+ * Fetch a binary body (a source file's raw bytes) with the session token.
+ *
+ * PDFs and images are rendered by the browser from their actual bytes — the
+ * pipeline never pipes binary through a text response — so the viewer asks
+ * for a Blob and turns it into an object URL. The same 401-refresh-then-
+ * replay contract as `download()` applies.
+ */
+export async function fetchBlob(path: string): Promise<Blob> {
+  let response = await fetch(`/api/v1${path}`, { headers: authHeaders() });
+  if (response.status === 401 && tokenStore.refresh) {
+    if (await refreshSession()) {
+      response = await fetch(`/api/v1${path}`, { headers: authHeaders() });
+    } else {
+      sessionExpired();
+    }
+  }
+  if (!response.ok) {
+    const detail = await parse(response);
+    const { message } = messageFrom(detail, response.status);
+    throw new ApiError(response.status, String(response.status), message);
+  }
+  return response.blob();
+}
+
+/**
  * Fetch a binary artefact (the watermarked PDF brief) with the session token and
  * hand it to the browser as a download.
  *
@@ -1115,4 +1152,181 @@ export function reviewFinding(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision, note: note ?? null }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Active-dataset staleness guard
+//
+// Replacing the dataset is an admin action that happens in the Administration
+// tab; every other tab holds React state (selected case, graph canvas, search
+// results) that belongs to the PREVIOUS dataset. The backend already refuses
+// those ids — a bookmarked CASE_0001 from dataset A 404s once dataset B is
+// active — but an investigator should not have to discover that by clicking
+// through dead pages. So the console watches which dataset is active and, the
+// moment it changes, drops cached responses and remounts the current view.
+// ---------------------------------------------------------------------------
+
+const DATASET_POLL_MS = 12_000;
+
+/**
+ * Call `onChange` whenever the ACTIVE dataset differs from the one seen at
+ * subscribe time (import completed elsewhere, activation flipped in another
+ * tab). Polling — plus a re-check when the window regains focus — works
+ * through any proxy and needs no server push; the server's visibility rules
+ * stay authoritative either way.
+ */
+export function watchActiveDataset(onChange: (datasetId: string | null) => void): () => void {
+  let stopped = false;
+  let baseline: string | null | undefined; // undefined until first check lands
+
+  const check = async () => {
+    try {
+      const { active } = await activeDataset();
+      const id = active?.id ?? null;
+      if (baseline === undefined) {
+        baseline = id;
+        return;
+      }
+      if (id !== baseline) {
+        baseline = id;
+        if (!stopped) onChange(id);
+      }
+    } catch {
+      /* a transient failure just means we check again on the next beat */
+    }
+  };
+
+  void check();
+  const timer = setInterval(() => void check(), DATASET_POLL_MS);
+  const onFocus = () => void check();
+  window.addEventListener("focus", onFocus);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    window.removeEventListener("focus", onFocus);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Streaming AI answers
+//
+// `POST /ai/cases/{id}/ask/stream` emits NDJSON events (ack → stage →
+// retrieval → delta* → done/error). The stream is the fast, progressive
+// path; the plain `api()` POST remains the fallback whenever streaming is
+// unavailable (proxy buffering, older server, fetch-stream errors) — the UI
+// must never appear frozen just because a transport is missing, which is the
+// same rule the job WebSocket follows with its polling fallback.
+// ---------------------------------------------------------------------------
+
+export interface AiStreamEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface AskStreamHandlers {
+  onAck?: (event: AiStreamEvent) => void;
+  onStage?: (event: AiStreamEvent) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (response: Record<string, unknown>) => void;
+  onError?: (event: AiStreamEvent) => void;
+  /** Streaming died before producing anything usable; caller may fall back. */
+  onFallback?: () => void;
+}
+
+/**
+ * Ask one question with progressive rendering. Resolves when the stream ends
+ * (normally or not); `onFallback` fires at most once if no usable event ever
+ * arrived, so the caller's non-streaming path takes over seamlessly.
+ */
+export async function askCaseStream(
+  caseId: string,
+  question: string,
+  handlers: AskStreamHandlers,
+  extra: { depth?: number; targetKey?: string | null } = {},
+): Promise<void> {
+  const body: Record<string, unknown> = { question };
+  if (extra.depth) body.depth = extra.depth;
+  if (extra.targetKey) body.target_key = extra.targetKey;
+
+  let received = false;
+  const mark = () => {
+    received = true;
+  };
+  const dispatch = (event: AiStreamEvent) => {
+    mark();
+    switch (event.type) {
+      case "ack":
+        handlers.onAck?.(event);
+        break;
+      case "stage":
+      case "retrieval":
+        handlers.onStage?.(event);
+        break;
+      case "delta":
+        handlers.onDelta?.(String(event.text ?? ""));
+        break;
+      case "done":
+        handlers.onDone?.((event.response ?? {}) as Record<string, unknown>);
+        break;
+      case "error":
+        handlers.onError?.(event);
+        break;
+      default:
+        break;
+    }
+  };
+
+  try {
+    let response = await fetch(`/api/v1/ai/cases/${encodeURIComponent(caseId)}/ask/stream`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.status === 401 && tokenStore.refresh) {
+      if (await refreshSession()) {
+        response = await fetch(`/api/v1/ai/cases/${encodeURIComponent(caseId)}/ask/stream`, {
+          method: "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
+    }
+    if (!response.ok || !response.body) {
+      if (!received) handlers.onFallback?.();
+      else if (!response.ok) {
+        handlers.onError?.({ type: "error", message: `Streaming failed (${response.status}).` });
+      }
+      return;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        try {
+          dispatch(JSON.parse(line) as AiStreamEvent);
+        } catch {
+          /* ignore malformed frames; the final `done` event is authoritative */
+        }
+      }
+    }
+    if (buffer.trim()) {
+      try {
+        dispatch(JSON.parse(buffer) as AiStreamEvent);
+      } catch {
+        /* truncated tail frame: the plain POST fallback covers completeness */
+      }
+    }
+    if (!received) handlers.onFallback?.();
+  } catch {
+    if (!received) handlers.onFallback?.();
+    else handlers.onError?.({ type: "error", message: "The answer stream was interrupted." });
+  }
 }

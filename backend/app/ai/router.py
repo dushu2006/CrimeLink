@@ -172,6 +172,112 @@ class AIModelRouter:
             "provider": invocation.provider,
         }
 
+    async def chat_stream(self, task: str, system_prompt: str, user_prompt: str,
+                          *, on_delta: Any = None,
+                          response_format: Any | None = None,
+                          max_tokens: int | None = None) -> dict:
+        """Invoke a chat model *streaming*, forwarding completion deltas to ``on_delta``.
+
+        Same availability contract as :meth:`chat` — a missing key or failed
+        provider is reported, never faked. Differences that matter:
+
+        * as soon as anything goes wrong **before** the first token arrives,
+          the call degrades to the plain :meth:`chat` (a provider without
+          ``stream=True`` support, or a refused handshake, must not make the
+          feature unavailable — it just means no progressive rendering);
+        * once tokens have been shown, there is no silent retry: replaying
+          would duplicate text in the UI. The failure is reported honestly
+          with ``partial: true`` so the caller can append a clear error.
+        """
+        invocation = self.route(task)
+        if not invocation.available:
+            return {"available": False, "reason": f"no_api_key_for_role_{invocation.role}"}
+        client = invocation.client()
+        if client is None:
+            return {"available": False, "reason": "openai_client_unavailable"}
+
+        started = time.perf_counter()
+        pieces: list[str] = []
+        try:
+            kwargs: dict[str, Any] = {
+                "model": invocation.model,
+                "temperature": invocation.temperature,
+                "max_tokens": max_tokens or invocation.max_tokens,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "stream": True,
+            }
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                text = getattr(delta, "content", None) if delta is not None else None
+                if not text:
+                    continue
+                pieces.append(text)
+                if on_delta is not None:
+                    maybe_awaitable = on_delta(text)
+                    if asyncio.iscoroutine(maybe_awaitable):
+                        await maybe_awaitable
+            content = "".join(pieces)
+            if not content.strip():
+                raise RuntimeError("provider returned an empty stream")
+        except Exception as exc:  # noqa: BLE001
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            if pieces:
+                partial_text = "".join(pieces)
+                log.warning(
+                    "ai.stream_interrupted",
+                    role=invocation.role, error=_safe_error(exc),
+                    chars=sum(len(piece) for piece in pieces),
+                )
+                return {
+                    "available": False,
+                    "partial": True,
+                    "content": partial_text,
+                    "reason": f"stream_interrupted: {type(exc).__name__}",
+                    "role": invocation.role, "model": invocation.model,
+                    "provider": invocation.provider, "latency_ms": latency_ms,
+                }
+            log.warning(
+                "ai.stream_unsupported",
+                role=invocation.role, provider=invocation.provider,
+                model=invocation.model, error=_safe_error(exc),
+            )
+            # No token shown yet: degrade to the non-streaming path, which
+            # keeps its own retry policy. Streaming is an optimisation, never
+            # a dependency.
+            return await self.chat(
+                task, system_prompt, user_prompt,
+                response_format=response_format, max_tokens=max_tokens,
+            )
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        log.info(
+            "ai.invocation_ok",
+            role=invocation.role, provider=invocation.provider,
+            model=invocation.model, latency_ms=latency_ms, streamed=True,
+        )
+        return {
+            "available": True,
+            "content": content,
+            "model": invocation.model,
+            "provider": invocation.provider,
+            "role": invocation.role,
+            "latency_ms": latency_ms,
+            "attempts": 1,
+            "streamed": True,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "output_hash": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16],
+        }
+
     async def embed(self, task: str, inputs: list[str]) -> dict:
         """Produce embeddings through the configured embedding role.
 

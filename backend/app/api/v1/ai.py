@@ -18,6 +18,7 @@ Case AI unusable:
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Literal
 
@@ -122,6 +123,26 @@ class AskResponse(BaseModel):
     latency_ms: int
     context: dict[str, Any] = Field(default_factory=dict)
     finding: dict[str, Any]
+    #: Per-stage latency (ack/retrieval/context/model/total, ms) so a slow
+    #: request is *diagnosable* — "the AI is slow" is a guess; "retrieval took
+    #: 4200 ms on a 3000-node case" is a work item.
+    timing: dict[str, Any] = Field(default_factory=dict)
+
+
+async def _dataset_context(session: AsyncSession) -> tuple[str | None, bool]:
+    """(active dataset id, graph readiness) — the isolation scope of the answer.
+
+    AI retrieval walks the case subgraph, and the case is only resolvable
+    while its dataset is active (``require_case`` enforces that).  Reporting
+    the dataset id back with the answer makes the scope verifiable from the
+    UI instead of something the user has to trust.
+    """
+    from app.datasets import registry
+
+    dataset = await registry.active_dataset(session)
+    if dataset is None:
+        return None, False
+    return dataset.id, bool(dataset.graph_built_at)
 
 
 @router.post("/cases/{case_id}/ask", response_model=AskResponse)
@@ -140,9 +161,13 @@ async def ask_case_question(
     endpoint cannot be used to probe for the existence of cases the caller may
     not see.  Previously neither check happened and any case id at all
     returned 200.
+
+    A conversational message ("Hi", "thanks") is answered on a fast path that
+    touches neither the graph nor a model — see :mod:`app.ai.gateway`.
     """
     # 404/403 before any retrieval, model call or audit entry.
     await case_service.require_case(session, scope, case_id)
+    dataset_id, graph_ready = await _dataset_context(session)
 
     request_id = getattr(request.state, "trace_id", None) or str(uuid.uuid4())
     gateway = get_ai_gateway()
@@ -153,6 +178,8 @@ async def ask_case_question(
         depth=payload.depth,
         target_key=payload.target_key,
         request_id=request_id,
+        dataset_id=dataset_id,
+        graph_ready=graph_ready,
     )
 
     if not response.available:
@@ -167,6 +194,7 @@ async def ask_case_question(
         )
 
     settings = get_settings()
+    provider = settings.role_config(response.role).get("provider") if response.role != "conversational" else "local"
     return AskResponse(
         query_id=response.query_id,
         request_id=request_id,
@@ -174,11 +202,81 @@ async def ask_case_question(
         fallback_reason=response.fallback_reason,
         model=response.model,
         role=response.role,
-        provider=settings.role_config(response.role).get("provider"),
+        provider=provider,
         pseudonymized=response.pseudonymized,
         latency_ms=response.latency_ms,
         context=response.context,
         finding=response.finding.model_dump(),
+        timing=dict((response.context or {}).get("timing") or {}),
+    )
+
+
+@router.post("/cases/{case_id}/ask/stream")
+async def ask_case_question_stream(
+    case_id: str,
+    payload: AskRequest,
+    request: Request,
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """NDJSON progress stream for one question — the interactive path.
+
+    Events (see :meth:`AIGateway.ask_stream`): ``ack`` lands immediately so
+    the UI can show "Thinking…" without waiting for the model; ``stage`` and
+    ``retrieval`` explain what is happening while it happens; ``delta``
+    carries answer tokens as the provider generates them; ``done`` carries
+    the exact payload the non-streaming endpoint would have returned, so a
+    client can treat the stream as an enhancement and the POST as the
+    fallback without reconciling two formats.
+
+    Auth/validation failures stay plain HTTP status codes *before* the stream
+    opens; once streaming starts, everything — including a dead provider —
+    arrives as events, never as a half-open connection that looks frozen.
+    """
+    await case_service.require_case(session, scope, case_id)
+    dataset_id, graph_ready = await _dataset_context(session)
+
+    request_id = getattr(request.state, "trace_id", None) or str(uuid.uuid4())
+    gateway = get_ai_gateway()
+
+    from fastapi.responses import StreamingResponse
+
+    async def lines():
+        try:
+            async for event in gateway.ask_stream(
+                question=payload.question,
+                case_id=case_id,
+                principal_id=principal.id,
+                depth=payload.depth,
+                target_key=payload.target_key,
+                request_id=request_id,
+                dataset_id=dataset_id,
+                graph_ready=graph_ready,
+            ):
+                yield json.dumps(event, default=str) + "\n"
+        except Exception as exc:  # noqa: BLE001 - the stream must end with a reason
+            log.exception("ai.stream_endpoint_failed", request_id=request_id, error=str(exc))
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "code": "stream_failed",
+                    "request_id": request_id,
+                    "message": (
+                        "Unable to answer this question. The AI service failed "
+                        "while streaming. Quote the request id when reporting this."
+                    ),
+                }
+            ) + "\n"
+
+    return StreamingResponse(
+        lines(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # nginx: do not buffer the stream
+            "X-Request-Id": request_id,
+        },
     )
 
 
