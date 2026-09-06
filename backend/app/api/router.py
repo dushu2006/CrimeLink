@@ -17,6 +17,7 @@ from app.api.v1 import (
     auth,
     cases,
     database,
+    datasets,
     documents,
     explore,
     export,
@@ -47,6 +48,7 @@ api_router.include_router(patterns.router)
 api_router.include_router(access.router)
 api_router.include_router(admin.router)
 api_router.include_router(database.router)
+api_router.include_router(datasets.router)
 api_router.include_router(ai.router)
 api_router.include_router(investigation.router)
 

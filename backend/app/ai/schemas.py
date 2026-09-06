@@ -65,3 +65,6 @@ class AIResponse(BaseModel):
     pseudonymized: bool = True
     available: bool = True
     fallback_reason: str | None = None
+    #: What retrieval actually found, so the UI can distinguish "the model had
+    #: nothing to work with" from "the model was unavailable".
+    context: dict = Field(default_factory=dict)

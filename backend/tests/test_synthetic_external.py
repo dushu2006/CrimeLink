@@ -747,6 +747,17 @@ async def test_crimelink_ingest_creates_dataset_cases(db, container, tmp_path: P
 
 
 def test_local_dataset_is_detected_when_present():
+    """The bundled corpus is discoverable, and owned by the dataset pipeline.
+
+    This adapter still performs the *scan* the source browser and the preview
+    endpoint rely on, so that half is asserted here. Its record-emitting path
+    is not exercised against this corpus on purpose: it can only read the
+    layout and column headings of the corpus it was written for, which is
+    exactly the coupling the dataset pipeline exists to remove. Importing the
+    bundled corpus goes through :mod:`app.datasets` instead, so the assertions
+    below check that *that* route understands it -- no per-corpus header table
+    required.
+    """
     from app.config import BACKEND_ROOT
 
     root = BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"
@@ -760,11 +771,23 @@ def test_local_dataset_is_detected_when_present():
     assert summary["ground_truth_excluded"] is True
     assert "cases.csv" in summary["schema_tables"]
     assert not any(f.relative_path.startswith("ground_truth") for f in scan.accepted)
-    records = list(ExternalSyntheticCorpusAdapter(root=root).records_from_scan(scan))
-    assert records
-    assert all(r.case_number.startswith("FIR/") for r in records)
-    assert all(r.is_synthetic() for r in records)
-    assert {r.metadata.get("external_case_id") for r in records if r.metadata.get("external_case_id")}
+
+    # The supported import route: discovery finds the files wherever they sit,
+    # and the schema mapper recognises them from their columns alone.
+    from app.datasets import discovery, readers
+    from app.datasets import schema_map as sm
+
+    found = discovery.discover(root)
+    assert len(found.usable) >= 15, found.summary()
+
+    cases_csv = next(
+        file for file in found.usable if file.filename == "cases.csv"
+    )
+    table = readers.read_tables(cases_csv.path)[0]
+    mapping = sm.map_table(table.columns, table.rows)
+    assert mapping.semantic_type == "CASE_TABLE", mapping.semantic_type
+    assert mapping.confidence >= sm.CONFIDENT_THRESHOLD, mapping.confidence
+    assert not mapping.needs_review
 
 
 async def test_admin_synthetic_status_endpoint(client, admin_headers, container):

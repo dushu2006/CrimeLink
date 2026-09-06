@@ -36,6 +36,11 @@ log = get_logger("crimelink.services.graph")
 _centrality_cache: dict[tuple[str, int], CentralityResult] = {}
 _CACHE_LIMIT = 32
 
+#: Default hop depth for the person-centric network.  A *default*, not a cap:
+#: the investigator can ask for any depth and the traversal will go as far as
+#: the graph actually reaches.  See ``person_centric_network``.
+DEFAULT_PERSON_NETWORK_DEPTH = 3
+
 
 def canonical_person(node: GraphNode) -> bool:
     """True when the node is a person under either label convention."""
@@ -302,18 +307,40 @@ class GraphService:
         case_id: str,
         person_key: str,
         *,
-        depth: int = 1,
-        limit: int = 400,
+        depth: int = DEFAULT_PERSON_NETWORK_DEPTH,
+        limit: int | None = None,
     ) -> dict[str, Any]:
-        """Target person + typed neighbourhood to ``depth`` hops.
+        """Target person + typed neighbourhood out to ``depth`` hops.
 
-        This is the answer to "how is this person connected to the rest of the
-        network" — not a dump of every entity in the case.  Traversal is a
-        plain BFS over the backend-independent snapshot, so the behaviour is
-        identical on the embedded store and on Neo4j.  When the hop budget is
-        exhausted, edges that directly involve a PERSON are kept in preference
-        to entity-to-entity edges, because person-to-person and
-        person-to-asset links are what an investigator expands first.
+        **The hop count is an exploration parameter, not a ceiling on the
+        graph.**  ``depth`` defaults to three because that is a useful first
+        view, but an investigator may ask for 5, 26 or 100 hops and the
+        traversal will honour it; there is no arbitrary maximum.  Traversal
+        stops for exactly two reasons, both of them honest:
+
+        1. the requested depth has been reached, or
+        2. the frontier is empty -- everything reachable has been reached.
+
+        The second case is reported as ``exhausted``, so asking for 100 hops
+        on a network that is only 7 hops deep returns the whole component and
+        says so, rather than pretending there is more to find.
+
+        Safety comes from the algorithm rather than from a cap: this is a
+        breadth-first search that records the layer at which each node was
+        first seen and never revisits it, so a cycle is walked once and only
+        once, and each edge is emitted at most once.  Cost is therefore
+        O(V + E) in the case subgraph no matter how large ``depth`` is --
+        depth 1000 on a 7-hop network costs the same as depth 8.
+
+        Dataset isolation is inherited, not re-implemented: the snapshot is
+        built for one case, cases belong to one dataset, and ``require_case``
+        plus ``_assert_node_in_scope`` gate access before any traversal runs.
+
+        ``limit`` is optional and, when omitted, nothing is truncated.  It
+        exists only so a caller that is rendering to a small canvas can ask
+        for a bounded slice; when it does bite, ``truncated`` says so and
+        person-involving edges are kept in preference to entity-to-entity
+        ones.
         """
         from app.services.cases import require_case
 
@@ -323,14 +350,16 @@ class GraphService:
         if person_key not in snapshot.nodes:
             raise NotFoundError("That person is not part of this case graph.")
 
-        depth = max(1, min(int(depth), 3))
+        requested_depth = max(1, int(depth))
+        node_budget = int(limit) if limit and int(limit) > 0 else None
+
         adjacency: dict[str, list[tuple[str, Any]]] = {}
         for edge in snapshot.edges:
             adjacency.setdefault(edge.source_key, []).append((edge.target_key, edge))
             adjacency.setdefault(edge.target_key, []).append((edge.source_key, edge))
 
         def edge_priority(edge) -> int:
-            # Person-involving relations first when we must drop something.
+            # Person-involving relations first when a budget forces a choice.
             person_rels = {
                 "USES_PHONE", "OWNS_VEHICLE", "OWNS_ACCOUNT", "CALLED",
                 "ASSOCIATE_OF", "RELATIVE_OF", "ARRESTED_WITH",
@@ -339,52 +368,78 @@ class GraphService:
             }
             return 0 if edge.rel_type in person_rels else 1
 
+        def edge_identity(edge) -> str:
+            return (
+                getattr(edge, "key", "")
+                or f"{edge.source_key}|{edge.rel_type}|{edge.target_key}"
+            )
+
+        # ``layer_of`` is the visited set *and* the BFS layer index: a node
+        # already in it is never expanded again, which is what makes cycles
+        # terminate.  ``seen_edges`` does the same job for edges.
         layer_of: dict[str, int] = {person_key: 0}
-        frontier = {person_key}
+        seen_edges: set[str] = set()
         kept_edges: list[Any] = []
+        frontier: list[str] = [person_key]
         truncated = False
-        for current_depth in range(1, depth + 1):
-            next_frontier: set[str] = set()
+        max_depth_reached = 0
+        exhausted = False
+
+        for current_depth in range(1, requested_depth + 1):
+            next_frontier: list[str] = []
             for node_key in sorted(frontier):
                 candidates = sorted(
                     adjacency.get(node_key, []),
-                    key=lambda item: (
-                        edge_priority(item[1]),
-                        item[0],
-                    ),
+                    key=lambda item: (edge_priority(item[1]), item[0]),
                 )
                 for neighbour, edge in candidates:
-                    if len(layer_of) >= limit and neighbour not in layer_of:
+                    is_new_node = neighbour not in layer_of
+                    if is_new_node and node_budget is not None and len(layer_of) >= node_budget:
                         truncated = True
                         continue
-                    kept_edges.append(edge)
-                    if neighbour not in layer_of:
+                    identity = edge_identity(edge)
+                    if identity not in seen_edges:
+                        seen_edges.add(identity)
+                        kept_edges.append(edge)
+                    if is_new_node:
                         layer_of[neighbour] = current_depth
-                        next_frontier.add(neighbour)
+                        next_frontier.append(neighbour)
+            if next_frontier:
+                max_depth_reached = current_depth
             frontier = next_frontier
             if not frontier:
+                # Nothing new is reachable: the component is fully explored.
+                exhausted = True
                 break
 
         keys = set(layer_of)
         nodes = [snapshot.nodes[k] for k in keys if k in snapshot.nodes]
-        # De-duplicate edges (a visited pair may be reached from both sides).
-        unique_edges: dict[str, Any] = {}
-        for edge in kept_edges:
-            if edge.source_key in keys and edge.target_key in keys:
-                unique_edges[getattr(edge, "key", "") or f"{edge.source_key}|{edge.rel_type}|{edge.target_key}"] = edge
+        unique_edges: dict[str, Any] = {
+            edge_identity(edge): edge
+            for edge in kept_edges
+            if edge.source_key in keys and edge.target_key in keys
+        }
+
+        layers: dict[str, int] = {}
+        for value in layer_of.values():
+            if value == 0:
+                continue
+            layers[str(value)] = layers.get(str(value), 0) + 1
 
         by_label = dict(Counter(canonical_label(n.label) for n in nodes))
         by_rel = dict(Counter(e.rel_type for e in unique_edges.values()))
         return {
             "case_id": case_id,
             "target": _node_row(snapshot.nodes[person_key]),
-            "depth": depth,
+            # What the investigator asked for, and what the graph could give.
+            "depth": requested_depth,
+            "requested_depth": requested_depth,
+            "max_depth_reached": max_depth_reached,
+            # True when traversal ran out of graph before it ran out of hops.
+            "exhausted": exhausted,
             "truncated": truncated,
-            "layers": {
-                "1": sum(1 for v in layer_of.values() if v == 1),
-                "2": sum(1 for v in layer_of.values() if v == 2),
-                "3": sum(1 for v in layer_of.values() if v == 3),
-            },
+            "node_limit": node_budget,
+            "layers": layers,
             "counts": {
                 "nodes": len(nodes),
                 "edges": len(unique_edges),

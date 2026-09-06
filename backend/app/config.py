@@ -21,10 +21,11 @@ layers are byte-for-byte identical in both profiles.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -169,6 +170,19 @@ class Settings(BaseSettings):
     ai_embedding_provider: str = "default"
     ai_embedding_api_key: str | None = None
     ai_embedding_base_url: str | None = None
+
+    # --- context budget -----------------------------------------------------
+    # How much of a case subgraph may be sent to a model in one request.  These
+    # bound the *prompt*, not the graph: retrieval walks the case and then
+    # keeps the highest-value slice that fits.  They were referenced by the
+    # gateway long before they existed here, which made every Case AI request
+    # fail with an AttributeError before it ever reached a provider.
+    ai_max_context_nodes: int = 300
+    ai_max_context_edges: int = 600
+    #: Default hop depth used when retrieving context around a target entity.
+    ai_retrieval_depth: int = 2
+    #: Retries for a transient provider failure (timeouts, 5xx, rate limits).
+    ai_max_retries: int = 2
 
     # ------------------------------------------------------ synthetic corpus
     synthetic_corpus_enabled: bool = False
@@ -365,6 +379,53 @@ class Settings(BaseSettings):
 
     def ai_role_available(self, role: str) -> bool:
         return bool(self.role_config(role).get("api_key"))
+
+    #: Every AI role the platform declares.  Used by the health check so the
+    #: Administration screen can report each one independently instead of
+    #: implying a single global "AI is on/off" switch.
+    AI_ROLES: ClassVar[tuple[str, ...]] = (
+        "extraction",
+        "reasoning",
+        "explanation",
+        "classification",
+        "embedding",
+    )
+
+    def ai_role_report(self, role: str) -> dict[str, Any]:
+        """Non-secret description of how a role is configured.
+
+        Deliberately returns ``key_present``/``key_fingerprint`` rather than
+        the key: this feeds an API response, and an API response must never be
+        able to carry credential material.  The fingerprint is a truncated
+        hash, enough to tell two keys apart in a support conversation and
+        useless to an attacker.
+        """
+        config = self.role_config(role)
+        key = config.get("api_key") or ""
+        fingerprint = (
+            hashlib.sha256(key.encode("utf-8")).hexdigest()[:8] if key else None
+        )
+        return {
+            "role": role,
+            "provider": config["provider"],
+            "model": config["model"],
+            "base_url": config["base_url"],
+            "key_present": bool(key),
+            "key_fingerprint": fingerprint,
+            "key_source": self._ai_key_source(role),
+            "temperature": config["temperature"],
+            "max_tokens": config["max_tokens"],
+            "timeout_s": config["timeout"],
+            "available": bool(key),
+        }
+
+    def _ai_key_source(self, role: str) -> str | None:
+        """Which environment variable supplied this role's key."""
+        if getattr(self, f"ai_{role}_api_key", None):
+            return f"CRIMELINK_AI_{role.upper()}_API_KEY"
+        if self.ai_api_key:
+            return "CRIMELINK_AI_API_KEY"
+        return None
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

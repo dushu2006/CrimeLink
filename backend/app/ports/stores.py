@@ -49,8 +49,19 @@ class GraphStore(Protocol):
     def upsert_edges(self, edges: list[Any]) -> int:
         """Insert or aggregate edges keyed by their deterministic edge key."""
 
-    def ensure_case_node(self, case_id: str, case_number: str, jurisdiction_id: str) -> None:
-        """Create/refresh the ``(:Case)`` anchor node for a case."""
+    def ensure_case_node(
+        self,
+        case_id: str,
+        case_number: str,
+        jurisdiction_id: str,
+        dataset_id: str | None = None,
+    ) -> None:
+        """Create/refresh the ``(:Case)`` anchor node for a case.
+
+        ``dataset_id`` is what makes the anchor node purgeable along with the
+        rest of its dataset; a case node without one is an orphan that no
+        rebuild can ever clean up.
+        """
 
     # ----------------------------------------------------------------- reads
     def get_node(self, provenance_key: str) -> Any | None: ...
@@ -117,6 +128,26 @@ class GraphStore(Protocol):
 
     # --------------------------------------------------------------- caching
     def invalidate_cache(self, case_id: str) -> None: ...
+
+    def purge_dataset(self, dataset_id: str) -> int:
+        """Remove every node and edge belonging to ``dataset_id``.
+
+        Called when a dataset is re-imported or replaced.  Without it, a
+        rebuild leaves the previous projection behind and the graph shows two
+        datasets at once -- the precise failure this method exists to prevent.
+        Returns the number of nodes removed.
+        """
+        ...
+
+    def purge_other_datasets(self, keep_dataset_id: str) -> int:
+        """Remove every dataset-owned node except ``keep_dataset_id``'s.
+
+        The graph shows the active dataset and nothing else. Activating a
+        replacement therefore evicts the previous projection, which is what
+        stops a browser refresh from resurrecting the data the operator just
+        replaced. Returns the number of nodes removed.
+        """
+        ...
 
 
 @runtime_checkable

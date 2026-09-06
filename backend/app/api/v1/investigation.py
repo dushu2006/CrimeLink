@@ -26,7 +26,7 @@ from app.errors import NotFoundError
 from app.security.deps import JurisdictionScope, Principal, get_principal, get_scope, require_roles
 from app.services import cases as case_service
 from app.services import investigation
-from app.services.graph_service import GraphService
+from app.services.graph_service import DEFAULT_PERSON_NETWORK_DEPTH, GraphService
 
 router = APIRouter(tags=["investigation"])
 
@@ -102,7 +102,26 @@ async def case_persons(
 async def person_network(
     case_id: str,
     person_key: str,
-    depth: int = Query(1, ge=1, le=3),
+    depth: int = Query(
+        DEFAULT_PERSON_NETWORK_DEPTH,
+        ge=1,
+        description=(
+            "How many hops to explore outward from the person. Three by "
+            "default; there is deliberately no upper bound, because the hop "
+            "count is an exploration parameter and not a property of the "
+            "graph. Traversal stops when the depth is reached or when nothing "
+            "further is reachable, whichever comes first."
+        ),
+    ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Optional cap on the number of nodes returned. Omit it — the "
+            "default — to receive everything reachable within the requested "
+            "depth."
+        ),
+    ),
     scope: JurisdictionScope = Depends(get_scope),
     session: AsyncSession = Depends(get_db_session),
     principal: Principal = Depends(get_principal),
@@ -110,7 +129,7 @@ async def person_network(
     """The person-centric investigation graph: target + typed neighbourhood."""
     await case_service.require_case(session, scope, case_id)
     return await GraphService().person_centric_network(
-        session, scope, case_id, person_key, depth=depth
+        session, scope, case_id, person_key, depth=depth, limit=limit
     )
 
 

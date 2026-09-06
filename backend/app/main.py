@@ -107,6 +107,10 @@ def create_app() -> FastAPI:
     async def trace_and_metrics(request: Request, call_next):
         trace_id = request.headers.get("x-trace-id") or new_trace_id()
         set_trace_id(trace_id)
+        # Also expose it on the request so a handler can quote it back in a
+        # response body.  A user reporting "the AI failed" can then give us the
+        # id that is already on the log line.
+        request.state.trace_id = trace_id
         started = time.perf_counter()
         response: Response | None = None
         try:

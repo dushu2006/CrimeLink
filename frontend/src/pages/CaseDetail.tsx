@@ -330,7 +330,19 @@ export default function CaseDetail() {
         )}
         {aiResult && (
           <div className="evidence">
-            <p>{aiResult.available ? "Model response" : "AI unavailable"}</p>
+            <p>
+              {aiResult.available ? "Model response" : "AI unavailable"}
+              {aiResult.available && aiResult.model ? (
+                <span className="muted">
+                  {" "}
+                  — {String(aiResult.model)}
+                  {aiResult.provider ? ` via ${String(aiResult.provider)}` : ""}
+                  {typeof aiResult.latency_ms === "number"
+                    ? ` (${aiResult.latency_ms} ms)`
+                    : ""}
+                </span>
+              ) : null}
+            </p>
             {!aiResult.available && (
               <p className="muted">{aiUnavailableMessage(aiResult.fallback_reason)}</p>
             )}
@@ -340,6 +352,33 @@ export default function CaseDetail() {
                   "No finding returned.",
               )}
             </blockquote>
+            {/*
+              Retrieval is reported separately from availability: "the model
+              had no case data to read" and "the model could not be reached"
+              are different problems and the investigator has to be able to
+              tell them apart.
+            */}
+            {(() => {
+              const ctx = aiResult.context as
+                | { nodes?: number; edges?: number; depth?: number }
+                | undefined;
+              if (!ctx) return null;
+              return (
+                <p className="hint">
+                  Context: {ctx.nodes ?? 0} entities, {ctx.edges ?? 0} relationships
+                  {ctx.depth ? `, ${ctx.depth} hops` : ""}
+                  {ctx.nodes === 0 && ctx.edges === 0
+                    ? " — this case has no graph data yet, so the answer cannot be evidence-backed."
+                    : ""}
+                </p>
+              );
+            })()}
+            {aiResult.request_id ? (
+              <p className="hint">
+                Request id <code>{String(aiResult.request_id)}</code> — quote this
+                when reporting a problem.
+              </p>
+            ) : null}
           </div>
         )}
       </section>

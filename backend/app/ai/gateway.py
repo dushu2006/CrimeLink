@@ -145,19 +145,36 @@ class AIGateway:
 
     async def ask(self, *, question: str, case_id: str, user_id: str | None = None,
                   principal_id: str | None = None,
-                  depth: int = 2, target_key: str | None = None) -> AIResponse:
+                  depth: int | None = None, target_key: str | None = None,
+                  request_id: str | None = None) -> AIResponse:
         """Answer an investigator question scoped to ``case_id``.
 
         The query runs through retrieval, minimization, pseudonymization,
         model invocation, validation and audit logging before returning.
+
+        Nothing in this method can raise to the caller: a failure anywhere
+        becomes an ``AIResponse`` with ``available=False`` and a reason,
+        because "the model is unreachable" is an answer the investigator needs
+        to see, not a 500.
         """
-        query_id = str(uuid.uuid4())
-        started = utcnow()
+        query_id = request_id or str(uuid.uuid4())
+        depth = int(depth) if depth else self.settings.ai_retrieval_depth
         try:
             # 1. Retrieve a relevant subgraph from the graph store
             nodes, edges = await self._retrieve_subgraph(
                 case_id, depth=depth, target_key=target_key
             )
+            context_report = {
+                "nodes": len(nodes),
+                "edges": len(edges),
+                "depth": depth,
+                "target_key": target_key,
+                "retrieved": bool(nodes or edges),
+            }
+            if not nodes and not edges:
+                # An empty case is a real, reportable state — not a model
+                # failure and not something to ask a model to hallucinate over.
+                log.info("ai.empty_context", query_id=query_id, case_id=case_id)
 
             # 2. Data minimization: strip sensitive display fields before any
             #    pseudonymization step.
@@ -196,6 +213,7 @@ class AIGateway:
                     query_id=query_id, role="reasoning", model=None,
                     finding=finding, pseudonymized=pseudonymized,
                     available=False, fallback_reason=result.get("reason"),
+                    context=context_report,
                 )
 
             # 6. Parse and validate the structured result
@@ -224,6 +242,7 @@ class AIGateway:
                 latency_ms=result.get("latency_ms", 0),
                 pseudonymized=pseudonymized,
                 available=True,
+                context=context_report,
             )
         except Exception as exc:
             log.exception("ai.gateway_failed", query_id=query_id, error=str(exc))
@@ -247,7 +266,11 @@ class AIGateway:
                 model=None,
                 finding=FindingResult(
                     finding_type="GENERAL",
-                    summary=f"AI processing failed: {type(exc).__name__}. An investigator must review this case manually.",
+                    summary=(
+                        f"The AI request could not be completed ({type(exc).__name__}: {exc}). "
+                        f"Quote request id {query_id} when reporting this. "
+                        "An investigator must review this case manually."
+                    ),
                     confidence=0.0,
                     evidence_level="UNKNOWN",
                     recommended_review=True,
@@ -279,19 +302,28 @@ class AIGateway:
     async def _retrieve_subgraph(
         self, case_id: str, *, depth: int = 2, target_key: str | None = None
     ) -> tuple[list[dict], list[dict]]:
-        """Retrieve a subgraph for the case, bounded by configured max depth."""
+        """Retrieve context for the case, bounded by the *context budget*.
+
+        The bound is the prompt size (``ai_max_context_nodes`` /
+        ``ai_max_context_edges``), not an arbitrary hop ceiling: retrieval
+        walks as far as ``depth`` asks and stops early only when the budget is
+        full or the subgraph is exhausted.  Clamping the hop count here used
+        to silently narrow every question to two hops regardless of what the
+        caller requested.
+        """
         from app.container import get_container
         from app.domain.models import CaseGraphSnapshot
 
         container = get_container()
         graph = container.graph_store
-        depth = max(1, min(depth, self.settings.graph_max_expand_depth + 1))
+        depth = max(1, int(depth))
         try:
             snap: CaseGraphSnapshot = await asyncio.to_thread(graph.get_case_snapshot, case_id)
         except Exception:
             try:
                 snap = graph.get_case_snapshot(case_id)
             except Exception:
+                log.warning("ai.retrieval_failed", case_id=case_id)
                 return [], []
         max_nodes = self.settings.ai_max_context_nodes
         max_edges = self.settings.ai_max_context_edges

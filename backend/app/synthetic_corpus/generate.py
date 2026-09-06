@@ -1531,13 +1531,30 @@ async def get_corpus_stats() -> dict[str, Any]:
         User,
     )
 
+    from app.datasets import registry
+
     stats: dict[str, Any] = {"postgres": {}, "graph": {}, "infra": {}}
     async with async_session() as session:
+        # Counted the way every page counts: within the active dataset. An
+        # administration screen that reports 62 cases while the Cases page
+        # lists 61 is the same "stale data" bug wearing a different hat.
+        visible_cases = await registry.visibility_filter(session, Case)
+        visible_documents = await registry.visibility_filter(session, CaseDocument)
         stats["postgres"] = {
             "users": int((await session.execute(select(func.count(User.id)))).scalar() or 0),
-            "cases": int((await session.execute(select(func.count(Case.id)))).scalar() or 0),
+            "cases": int(
+                (
+                    await session.execute(select(func.count(Case.id)).where(visible_cases))
+                ).scalar()
+                or 0
+            ),
             "documents": int(
-                (await session.execute(select(func.count(CaseDocument.id)))).scalar() or 0
+                (
+                    await session.execute(
+                        select(func.count(CaseDocument.id)).where(visible_documents)
+                    )
+                ).scalar()
+                or 0
             ),
             "pending_resolutions": int(
                 (await session.execute(

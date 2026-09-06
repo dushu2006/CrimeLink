@@ -1511,3 +1511,95 @@ button.chip.active {
   border-color: #f0c58f;
   color: var(--warn, #b45309);
 }
+
+/* ------------------------------------------------------- dataset job progress
+ * A build takes minutes. The operator needs to see which stage is running, how
+ * far it has got, and — if the live socket is unavailable — that the console
+ * has fallen back to polling rather than stopped working. Flat shapes and the
+ * existing palette only, per PRD 14.
+ */
+.job-progress {
+  border: 1px solid var(--line);
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.job-progress-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.progress-track {
+  height: 8px;
+  background: var(--navy-soft);
+  border: 1px solid var(--line);
+  margin: 10px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--navy);
+  transition: width 200ms linear;
+}
+
+.progress-fill-failed {
+  background: var(--bad);
+}
+
+.stage-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.stage-dot {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  display: inline-block;
+}
+
+.stage-done .stage-dot {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.stage-done {
+  color: var(--ok);
+}
+
+.stage-active .stage-dot {
+  background: var(--navy);
+  border-color: var(--navy);
+}
+
+.stage-active {
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.stage-failed .stage-dot {
+  background: var(--bad);
+  border-color: var(--bad);
+}
+
+.stage-failed {
+  color: var(--bad);
+}
+
+.row-active > td {
+  background: var(--navy-soft);
+}

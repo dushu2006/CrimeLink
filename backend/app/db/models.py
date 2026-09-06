@@ -108,11 +108,27 @@ class RefreshToken(Base):
 
 class Case(Base):
     __tablename__ = "cases"
+    # A case number is a natural identifier owned by the source data, so two
+    # datasets -- v1 and v2 of the same corpus, most obviously -- legitimately
+    # carry the same one. Uniqueness therefore belongs to (dataset, number),
+    # not to the number alone; a global unique made re-importing a corpus
+    # impossible, which is the exact workflow this system exists to support.
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "case_number", name="uq_cases_dataset_case_number"),
+    )
 
     id: Mapped[str] = pk_column()
-    case_number: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    case_number: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     jurisdiction_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: The dataset this case belongs to.  NULL means "created by hand in the
+    #: console", which is always visible; a dataset-owned case is only visible
+    #: while its dataset is the ACTIVE one.  That is what stops a previous
+    #: import's cases from reappearing after a browser refresh.
+    dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    #: Natural key inside the dataset (e.g. "CASE_0007"), used to resolve
+    #: dataset relationships back onto real case rows.
+    dataset_case_key: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     status: Mapped[CaseStatus] = mapped_column(
         _enum(CaseStatus, "case_status"), default=CaseStatus.OPEN, nullable=False
     )
@@ -135,6 +151,8 @@ class CaseDocument(Base):
     case_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    #: Dataset this document was imported with (NULL for manual uploads).
+    dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     document_type: Mapped[DocumentType] = mapped_column(
         _enum(DocumentType, "document_type"), nullable=False
     )
@@ -250,8 +268,10 @@ class SourceReference(Base):
         nullable=False, index=True,
     )
     case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-
-    # --- where it came from -----------------------------------------------
+    #: Dataset that owns ``origin_file``.  The source resolver uses it to find
+    #: the dataset root, so a reference stays openable no matter how the
+    #: dataset was organised on disk.
+    dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     origin_file: Mapped[str] = mapped_column(
         Text, nullable=False,
         comment="Path relative to the dataset root, e.g. 'operational/cdr.csv'",
@@ -576,3 +596,202 @@ class AuditAnchor(Base):
     head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# Dataset registry and canonical operational data model
+#
+# CrimeLink is a dataset-driven platform: everything an investigator sees --
+# cases, people, relationships, the graph, search, AI answers -- derives from
+# exactly ONE dataset, the one marked ACTIVE.  These tables are the registry
+# and the canonical store that make that single source of truth explicit and
+# queryable, instead of implicit in whatever happened to be ingested last.
+# ---------------------------------------------------------------------------
+
+
+class Dataset(Base):
+    """One imported dataset version.
+
+    Exactly one row is normally ``is_active`` -- every dataset-aware query
+    resolves through it.  Replacing a dataset therefore never means "edit the
+    pages"; it means importing a new row and activating it.
+    """
+
+    __tablename__ = "datasets"
+
+    id: Mapped[str] = pk_column()
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False, default="1")
+    #: UPLOADED | VALIDATING | NORMALIZING | INGESTING | BUILDING_RELATIONSHIPS
+    #: | BUILDING_GRAPH | INDEXING | READY | FAILED | ARCHIVED
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="UPLOADED")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    #: "folder" | "zip" | "files" | "builtin"
+    source_kind: Mapped[str] = mapped_column(String(24), nullable=False, default="folder")
+    #: Absolute path of the dataset's own workspace root.  Every source file the
+    #: dataset owns lives under it, which is what makes provenance resolvable
+    #: without any assumption about `operational/` or `documents/`.
+    root_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Free-form description of where the dataset came from (upload, CLI, path).
+    origin_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Progress bookkeeping so the UI can say which stage is running and why a
+    #: stage failed, rather than showing a spinner with no content.
+    stage_detail: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    graph_built_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    search_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    ai_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+    __table_args__ = (Index("ix_datasets_status", "status"),)
+
+
+class DatasetFile(Base):
+    """Every file discovered inside a dataset, with what we made of it.
+
+    This is the dataset manifest the source resolver reads.  A source is found
+    by ``(dataset_id, relative_path)`` -- never by guessing a folder name -- so
+    a dataset uploaded as ``data/vehicle_sightings.csv`` resolves exactly as
+    well as one uploaded as ``operational/vehicle_sightings.csv``.
+    """
+
+    __tablename__ = "dataset_files"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    #: Posix path relative to the dataset root (unique within the dataset).
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    extension: Mapped[str] = mapped_column(String(24), nullable=False, default="")
+    media_type: Mapped[str] = mapped_column(String(160), nullable=False, default="application/octet-stream")
+    #: "table" | "text" | "document" | "archive" | "unknown"
+    file_kind: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown")
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    #: Where this file came from if it was extracted out of an archive.
+    container_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Semantic classification, e.g. PERSON_TABLE / CDR / FIR / EVIDENCE_INDEX.
+    semantic_type: Mapped[str] = mapped_column(String(48), nullable=False, default="UNKNOWN")
+    classification_confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    #: Detected column -> canonical field mapping (tabular files only).
+    column_mapping: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    #: Columns we could not map, kept so the UI can ask a human.
+    unmapped_columns: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    #: Per-sheet mapping commentary: what was inferred, what the values
+    #: contradicted, how confident the mapper was.  This is what the operator
+    #: reviews and accepts in Administration.
+    mapping_notes: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    #: Set when an operator has looked at a low-confidence or contradicted
+    #: mapping and accepted it.  Never set by the pipeline itself.
+    mapping_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    mapping_accepted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    sheet_names: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    page_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: DISCOVERED | PARSED | NORMALIZED | INGESTED | UNSUPPORTED | CORRUPT | SKIPPED
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="DISCOVERED")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Populated when the file was also uploaded as a CaseDocument.
+    doc_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "relative_path", name="uq_dataset_files_path"),
+        Index("ix_dataset_files_semantic", "dataset_id", "semantic_type"),
+    )
+
+
+class DatasetEntity(Base):
+    """A canonical entity belonging to one dataset.
+
+    ``canonical_id`` is stable within a dataset (``PERSON:PERSON_00042``), so
+    re-running normalization converges instead of duplicating, and two datasets
+    can carry the same natural key without colliding.
+    """
+
+    __tablename__ = "dataset_entities"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    canonical_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: PERSON | PHONE | VEHICLE | ACCOUNT | ADDRESS | LOCATION | ORGANIZATION |
+    #: CASE | EVIDENCE | DOCUMENT | DEVICE | EMAIL | PROPERTY | TRANSACTION | ...
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Normalized identifying value (digits-only phone, upper-case plate, ...).
+    normalized_value: Mapped[str] = mapped_column(String(240), nullable=False, default="")
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    #: dataset_file relative path / row / sheet / page that produced this row.
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "canonical_id", name="uq_dataset_entities_canonical"),
+        Index("ix_dataset_entities_lookup", "dataset_id", "entity_type", "normalized_value"),
+    )
+
+
+class DatasetRelationship(Base):
+    """A canonical, evidenced relationship between two dataset entities.
+
+    ``valid_from``/``valid_to`` are preserved wherever the source states them,
+    which is what lets the graph answer "who owned this vehicle in March 2024?"
+    instead of collapsing history into a single present-tense edge.
+    """
+
+    __tablename__ = "dataset_relationships"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    source_canonical_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    target_canonical_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    rel_type: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    #: Deterministic dedupe key so re-normalization converges.
+    edge_key: Mapped[str] = mapped_column(String(96), nullable=False)
+    valid_from: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    valid_to: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    observed_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    #: Canonical case ids this relationship is relevant to (may be empty).
+    case_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "edge_key", name="uq_dataset_relationships_key"),
+    )
+
+
+class DatasetJob(Base):
+    """A long-running dataset operation (import, graph build, reindex).
+
+    Progress lives in the database rather than only on a WebSocket, so the
+    console can poll when the socket cannot be established -- the channel is an
+    optimisation, never the only way to learn what happened.
+    """
+
+    __tablename__ = "dataset_jobs"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    #: "import" | "build_graph" | "reindex" | "activate"
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="QUEUED")
+    stage: Mapped[str] = mapped_column(String(48), nullable=False, default="QUEUED")
+    progress_pct: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Append-only list of {stage, status, detail, at} so the UI can show the
+    #: checklist the operator expects rather than a single moving bar.
+    steps: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(), default=utcnow, onupdate=utcnow, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)

@@ -15,6 +15,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.datasets import registry
 from app.db.models import (
     Case,
     CaseDocument,
@@ -46,11 +47,26 @@ async def list_cases(
     principal: Principal = Depends(require_roles("ADMIN")),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Scoped to the active dataset like every other view. An inspector that
+    # shows rows no page can reach is how "the old data is still there"
+    # reports start; the dataset each row belongs to is returned so the scope
+    # is visible rather than implied.
+    visible = await registry.visibility_filter(session, Case)
     rows = (
-        (await session.execute(select(Case).order_by(Case.created_at.desc()).limit(limit).offset(offset)))
+        (
+            await session.execute(
+                select(Case)
+                .where(visible)
+                .order_by(Case.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
         .scalars().all()
     )
-    total = (await session.execute(select(func.count(Case.id)))).scalar() or 0
+    total = (
+        await session.execute(select(func.count(Case.id)).where(visible))
+    ).scalar() or 0
     return {
         "items": [
             {
@@ -59,6 +75,7 @@ async def list_cases(
                 "title": c.title,
                 "jurisdiction_id": c.jurisdiction_id,
                 "status": c.status.value if hasattr(c.status, "value") else str(c.status),
+                "dataset_id": c.dataset_id,
                 "created_at": c.created_at.isoformat() if c.created_at else None,
             }
             for c in rows
@@ -111,11 +128,22 @@ async def list_documents(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     from app.db.models import CaseDocument as DCD
+    visible = await registry.visibility_filter(session, DCD)
     rows = (
-        (await session.execute(select(DCD).order_by(DCD.created_at.desc()).limit(limit).offset(offset)))
+        (
+            await session.execute(
+                select(DCD)
+                .where(visible)
+                .order_by(DCD.created_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
         .scalars().all()
     )
-    total = (await session.execute(select(func.count(DCD.id)))).scalar() or 0
+    total = (
+        await session.execute(select(func.count(DCD.id)).where(visible))
+    ).scalar() or 0
     return {
         "items": [
             {

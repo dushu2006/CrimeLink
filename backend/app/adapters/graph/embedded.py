@@ -295,18 +295,31 @@ class EmbeddedGraphStore:
             self._flush()
         return count
 
-    def ensure_case_node(self, case_id: str, case_number: str, jurisdiction_id: str) -> None:
+    def ensure_case_node(
+        self,
+        case_id: str,
+        case_number: str,
+        jurisdiction_id: str,
+        dataset_id: str | None = None,
+    ) -> None:
+        properties = {
+            "case_id": case_id,
+            "case_number": case_number,
+            "jurisdiction_id": jurisdiction_id,
+            "name": case_number,
+            "confidence": 1.0,
+            "is_active": True,
+        }
+        if dataset_id:
+            # Tagged so the case anchor is purged with its dataset rather than
+            # being left behind pointing at rows that no longer exist.
+            properties["dataset_id"] = dataset_id
+            properties["entity_type"] = "CASE"
+            properties["canonical_id"] = f"CASE:{case_id}"
         node = GraphNode(
             provenance_key=f"case:{case_id}",
             label="Case",
-            properties={
-                "case_id": case_id,
-                "case_number": case_number,
-                "jurisdiction_id": jurisdiction_id,
-                "name": case_number,
-                "confidence": 1.0,
-                "is_active": True,
-            },
+            properties=properties,
         )
         self.upsert_nodes([node])
 
@@ -474,6 +487,10 @@ class EmbeddedGraphStore:
                     str(data.get("address", "")),
                     str(data.get("description", "")),
                     " ".join(str(a) for a in (data.get("aliases") or [])),
+                    # Flattened at projection time: a record's other column
+                    # values (bank name, vehicle model, locality, role) so a
+                    # search for what an investigator actually knows hits it.
+                    str(data.get("search_text", "")),
                 ]
                 if any(needle in h.lower() for h in haystacks if h):
                     results.append(self._to_graph_node(pk, data))
@@ -565,6 +582,76 @@ class EmbeddedGraphStore:
                     self.snapshot_path.unlink()
                 except OSError:
                     pass
+
+    def purge_dataset(self, dataset_id: str) -> int:
+        """Drop every node/edge tagged with ``dataset_id``.
+
+        Rebuilding a dataset's projection has to start from a clean slate for
+        that dataset, while leaving any other dataset untouched.  Removing the
+        nodes removes their incident edges with them, so no orphaned edge can
+        survive a rebuild.
+        """
+        if not dataset_id:
+            return 0
+        with self._lock:
+            doomed = [
+                pk
+                for pk, data in self._graph.nodes(data=True)
+                if data.get("dataset_id") == dataset_id
+            ]
+            self._graph.remove_nodes_from(doomed)
+            # Edges whose endpoints survive but which were themselves projected
+            # from this dataset (e.g. a link between two shared nodes).
+            stale = [
+                (u, v, k)
+                for u, v, k, data in self._graph.edges(keys=True, data=True)
+                if data.get("dataset_id") == dataset_id
+            ]
+            for u, v, k in stale:
+                self._graph.remove_edge(u, v, key=k)
+            self._version += 1
+            self._flush()
+        log.info(
+            "graph.dataset_purged",
+            dataset_id=dataset_id,
+            nodes=len(doomed),
+            edges=len(stale),
+        )
+        return len(doomed)
+
+    def purge_other_datasets(self, keep_dataset_id: str) -> int:
+        """Drop every dataset-tagged node that is not ``keep_dataset_id``'s.
+
+        Nodes with no ``dataset_id`` at all are left alone: those are the
+        hand-created and investigator-promoted nodes, which no dataset owns
+        and no dataset import may delete.
+        """
+        if not keep_dataset_id:
+            return 0
+        with self._lock:
+            doomed = [
+                pk
+                for pk, data in self._graph.nodes(data=True)
+                if data.get("dataset_id") and data.get("dataset_id") != keep_dataset_id
+            ]
+            self._graph.remove_nodes_from(doomed)
+            stale = [
+                (u, v, k)
+                for u, v, k, data in self._graph.edges(keys=True, data=True)
+                if data.get("dataset_id") and data.get("dataset_id") != keep_dataset_id
+            ]
+            for u, v, k in stale:
+                self._graph.remove_edge(u, v, key=k)
+            if doomed or stale:
+                self._version += 1
+                self._flush()
+        log.info(
+            "graph.other_datasets_purged",
+            keep=keep_dataset_id,
+            nodes=len(doomed),
+            edges=len(stale),
+        )
+        return len(doomed)
 
     def close(self) -> None:
         """Release the inter-process writer lock."""

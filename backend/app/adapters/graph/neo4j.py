@@ -62,7 +62,7 @@ CONSTRAINTS = (
     "CREATE CONSTRAINT plate_uniq IF NOT EXISTS FOR (v:Vehicle) REQUIRE v.plate IS UNIQUE",
     "CREATE CONSTRAINT acct_uniq IF NOT EXISTS FOR (a:BankAccount) REQUIRE a.number IS UNIQUE",
     "CREATE CONSTRAINT case_uniq IF NOT EXISTS FOR (c:Case) REQUIRE c.case_id IS UNIQUE",
-    "CREATE FULLTEXT INDEX entity_search IF NOT EXISTS FOR (n) ON EACH [n.name, n.aliases]",
+    "CREATE FULLTEXT INDEX entity_search IF NOT EXISTS FOR (n) ON EACH [n.name, n.aliases, n.search_text]",
 )
 
 # Projection used by analytics and by the scheduled pattern pass.  Kept here as
@@ -96,7 +96,8 @@ WHERE ($label IS NULL OR $label IN labels(n))
   AND (toLower(coalesce(n.name, '')) CONTAINS $q
        OR toLower(coalesce(n.number, '')) CONTAINS $q
        OR toLower(coalesce(n.plate, '')) CONTAINS $q
-       OR toLower(coalesce(n.address, '')) CONTAINS $q)
+       OR toLower(coalesce(n.address, '')) CONTAINS $q
+       OR toLower(coalesce(n.search_text, '')) CONTAINS $q)
 RETURN n ORDER BY n.confidence DESC LIMIT $limit
 """
 
@@ -283,20 +284,33 @@ class Neo4jGraphStore:
         self._version += 1
         return len(batch)
 
-    def ensure_case_node(self, case_id: str, case_number: str, jurisdiction_id: str) -> None:
+    def ensure_case_node(
+        self,
+        case_id: str,
+        case_number: str,
+        jurisdiction_id: str,
+        dataset_id: str | None = None,
+    ) -> None:
+        properties: dict[str, Any] = {
+            "case_id": case_id,
+            "case_number": case_number,
+            "jurisdiction_id": jurisdiction_id,
+            "name": case_number,
+            "confidence": 1.0,
+            "is_active": True,
+        }
+        if dataset_id:
+            # Tagged so the case anchor is purged with its dataset instead of
+            # surviving as an orphan that outlives its own rows.
+            properties["dataset_id"] = dataset_id
+            properties["entity_type"] = "CASE"
+            properties["canonical_id"] = f"CASE:{case_id}"
         self.upsert_nodes(
             [
                 GraphNode(
                     provenance_key=f"case:{case_id}",
                     label="Case",
-                    properties={
-                        "case_id": case_id,
-                        "case_number": case_number,
-                        "jurisdiction_id": jurisdiction_id,
-                        "name": case_number,
-                        "confidence": 1.0,
-                        "is_active": True,
-                    },
+                    properties=properties,
                 )
             ]
         )
@@ -532,6 +546,84 @@ class Neo4jGraphStore:
             self._write(_apply)
         except Exception:
             log.exception("graph.neo4j.reset_failed")
+
+    def purge_dataset(self, dataset_id: str) -> int:
+        """Drop every node/relationship tagged with ``dataset_id``.
+
+        Scoped by the ``dataset_id`` property that :mod:`app.datasets.graph_build`
+        stamps onto everything it projects, so re-importing a dataset replaces
+        its projection instead of accumulating a second copy alongside it.
+        """
+        if not dataset_id:
+            return 0
+
+        def _apply(tx):
+            removed = tx.run(
+                "MATCH ()-[r {dataset_id: $ds}]-() DELETE r RETURN count(r) AS n",
+                ds=dataset_id,
+            ).single()
+            edges = int((removed or {}).get("n", 0) or 0)
+            # Batched so a large dataset does not build one enormous transaction.
+            total = 0
+            while True:
+                record = tx.run(
+                    "MATCH (n {dataset_id: $ds}) WITH n LIMIT 5000 "
+                    "DETACH DELETE n RETURN count(n) AS n",
+                    ds=dataset_id,
+                ).single()
+                deleted = int((record or {}).get("n", 0) or 0)
+                total += deleted
+                if deleted == 0:
+                    break
+            log.info("graph.neo4j.dataset_purged", dataset_id=dataset_id, nodes=total, edges=edges)
+            return total
+
+        try:
+            return int(self._write(_apply) or 0)
+        except Exception:
+            log.exception("graph.neo4j.purge_failed", dataset_id=dataset_id)
+            return 0
+
+    def purge_other_datasets(self, keep_dataset_id: str) -> int:
+        """Drop every dataset-tagged node that is not ``keep_dataset_id``'s.
+
+        Nodes with no ``dataset_id`` are untouched: those belong to
+        investigators, not to an import, and no dataset switch may delete them.
+        """
+        if not keep_dataset_id:
+            return 0
+
+        def _apply(tx):
+            removed = tx.run(
+                "MATCH ()-[r]-() WHERE r.dataset_id IS NOT NULL AND r.dataset_id <> $keep "
+                "DELETE r RETURN count(r) AS n",
+                keep=keep_dataset_id,
+            ).single()
+            edges = int((removed or {}).get("n", 0) or 0)
+            total = 0
+            while True:
+                record = tx.run(
+                    "MATCH (n) WHERE n.dataset_id IS NOT NULL AND n.dataset_id <> $keep "
+                    "WITH n LIMIT 5000 DETACH DELETE n RETURN count(n) AS n",
+                    keep=keep_dataset_id,
+                ).single()
+                deleted = int((record or {}).get("n", 0) or 0)
+                total += deleted
+                if deleted == 0:
+                    break
+            log.info(
+                "graph.neo4j.other_datasets_purged",
+                keep=keep_dataset_id,
+                nodes=total,
+                edges=edges,
+            )
+            return total
+
+        try:
+            return int(self._write(_apply) or 0)
+        except Exception:
+            log.exception("graph.neo4j.purge_others_failed", keep=keep_dataset_id)
+            return 0
 
     def list_nodes(self, label: str | None = None, limit: int = 100, offset: int = 0) -> dict:
         def _apply(tx):
