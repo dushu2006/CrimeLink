@@ -430,15 +430,89 @@ def read_docx(path: Path) -> TextDocument:
     return TextDocument(text=text, pages=[text], page_count=1, empty=not text.strip())
 
 
+def read_pptx(path: Path) -> TextDocument:
+    """Extract slide text from a PPTX using the OOXML package directly.
+
+    ``python-pptx`` is deliberately not a dependency: everything CrimeLink
+    needs (slide text, notes) is plain XML inside the ZIP, and a stdlib walk
+    keeps the dependency surface identical between the embedded and the
+    air-gapped production profile.  A slide deck with no extractable text
+    reports ``empty`` rather than failing -- it is a picture deck, not a
+    corrupted file.
+    """
+    import zipfile
+    from xml.etree import ElementTree
+
+    namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    try:
+        with zipfile.ZipFile(path) as package:
+            slide_names = sorted(
+                (
+                    name
+                    for name in package.namelist()
+                    if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+                ),
+                key=lambda name: int(
+                    "".join(ch for ch in name.rsplit("/", 1)[-1] if ch.isdigit()) or 0
+                ),
+            )
+            note_names = {
+                name.rsplit("/", 1)[-1].replace("notesSlide", "slide"): name
+                for name in package.namelist()
+                if name.startswith("ppt/notesSlides/notesSlide")
+            }
+            pages: list[str] = []
+            for name in slide_names:
+                try:
+                    root = ElementTree.fromstring(package.read(name))
+                except Exception:  # noqa: BLE001 - one malformed slide must not kill the deck
+                    pages.append("")
+                    continue
+                texts = [
+                    element.text
+                    for element in root.iter(f"{namespace}t")
+                    if element.text and element.text.strip()
+                ]
+                notes_name = note_names.get(name.rsplit("/", 1)[-1])
+                if notes_name:
+                    try:
+                        notes_root = ElementTree.fromstring(package.read(notes_name))
+                        texts += [
+                            element.text
+                            for element in notes_root.iter(f"{namespace}t")
+                            if element.text and element.text.strip()
+                        ]
+                    except Exception:  # noqa: BLE001
+                        pass
+                pages.append("\n".join(texts))
+    except zipfile.BadZipFile as exc:
+        raise UnreadableSource(
+            f"the PPTX could not be parsed ({type(exc).__name__}: {exc})", code="CORRUPTED"
+        ) from exc
+    except OSError as exc:
+        raise UnreadableSource(f"the file could not be read ({exc})", code="NOT_FOUND") from exc
+    if not pages:
+        raise UnreadableSource(
+            "the presentation contains no slides", code="NO_EXTRACTED_TEXT"
+        )
+    text = "\n\n".join(pages)
+    return TextDocument(
+        text=text, pages=pages, page_count=len(pages), empty=not text.strip()
+    )
+
+
 def read_text(path: Path, extension: str | None = None) -> TextDocument:
     ext = (extension or path.suffix).lower()
     if ext == ".pdf":
         return read_pdf(path)
     if ext == ".docx":
         return read_docx(path)
-    if ext == ".doc":
+    if ext == ".pptx":
+        return read_pptx(path)
+    if ext in {".doc", ".ppt"}:
         raise UnreadableSource(
-            "legacy .doc files are not supported; re-save the file as .docx or PDF",
+            f"legacy {ext} files are not supported; re-save the file as "
+            f"{'.docx' if ext == '.doc' else '.pptx'} or PDF",
             code="UNSUPPORTED",
         )
     return read_plain_text(path)

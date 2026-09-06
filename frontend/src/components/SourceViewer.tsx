@@ -1,19 +1,33 @@
 /**
  * The single source-inspection surface for the whole console.
  *
- * Every evidence reference in CrimeLink — on a case, an entity, a relationship,
- * a detection, a review item or an AI answer — opens this one component. It
- * adapts to the source type (CSV rows/cells, text lines) rather than existing
- * in ten near-identical variants.
+ * Every piece of evidence in CrimeLink — a case row, an entity, a
+ * relationship, an AI answer's citation — opens here. The component renders
+ * a file by what it *is*, not by what the API happened to squeeze its bytes
+ * into:
  *
- * It never renders anything it was not given: no placeholder rows, no invented
- * filenames. When the backend has no exact position, the viewer says so instead
- * of silently opening the top of the file.
+ *   PDF    → the real bytes, natively rendered by the browser
+ *   CSV    → a paginated table
+ *   XLSX   → sheet tabs, each a paginated table
+ *   JSON   → formatted, addressable text
+ *   DOCX   → extracted paragraphs/tables with basic structure preserved
+ *   PPTX   → slides as extracted text
+ *   image  → the real bytes, inline
+ *   other  → an honest "unsupported preview" with metadata, open and download
+ *
+ * The never-allowed case — arbitrary binary decoded as UTF-8 and shown as
+ * garbled symbols or raw `%PDF-1.3` syntax — is structurally impossible
+ * through this path: binary renderers consume raw bytes, text renderers
+ * consume only what the backend sniffed as text.
+ *
+ * Every state is explicit (AVAILABLE / LOADING / UNSUPPORTED / CORRUPTED /
+ * NOT_FOUND / EXTRACTION_FAILED / NO_EXTRACTED_TEXT) with the reason the
+ * backend reported — "No evidence" alone is not a state we show.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../api/client";
+import { api, download, fetchBlob } from "../api/client";
 import { Empty, ErrorState, Spinner } from "./Status";
 
 export interface SourceWindow {
@@ -29,6 +43,8 @@ export interface SourceWindow {
   lines: { line: number; text: string }[];
   truncated: boolean;
   size_bytes: number;
+  sheets?: string[];
+  sheet?: string | null;
 }
 
 export interface SourceReference {
@@ -60,14 +76,48 @@ export type SourceTarget =
       lineEnd?: number | null;
     };
 
-interface Payload {
+export interface PreviewFileMeta {
+  path: string;
+  filename?: string;
+  extension?: string;
+  media_type?: string;
+  size_bytes?: number;
+  dataset_id?: string | null;
+}
+
+export interface PreviewResult {
+  status: string;
+  reason?: string | null;
+  openable?: boolean;
+  render_kind?: string;
+  file?: PreviewFileMeta;
+  window?: SourceWindow | null;
+  pdf?: {
+    page_count: number;
+    text_available: boolean;
+    pages: { page: number; text: string }[];
+    truncated?: boolean;
+  } | null;
+  document_blocks?: ({ type: string; text?: string; level?: number | null; rows?: string[][] } | null)[] | null;
+  slides?: { index: number; title: string; lines: string[] }[] | null;
+  sheets?: string[] | null;
+  sheet?: string | null;
+  raw_url?: string | null;
+  download_url?: string | null;
+}
+
+interface ReferencePayload {
   reference?: SourceReference;
-  window: SourceWindow;
+  window?: SourceWindow | null;
+  status?: string;
+  reason?: string | null;
+  preview_url?: string;
+  raw_url?: string;
   case?: { id: string; case_number: string };
   document?: { id: string; filename: string; document_type: string };
 }
 
-function formatBytes(bytes: number): string {
+function formatBytes(bytes: number | undefined): string {
   if (!bytes) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -75,7 +125,7 @@ function formatBytes(bytes: number): string {
 }
 
 /** Human description of exactly which part of the source is being shown. */
-export function describeLocation(ref?: SourceReference, win?: SourceWindow): string {
+export function describeLocation(ref?: SourceReference, win?: SourceWindow | null): string {
   if (ref?.row_number) return `Row ${ref.row_number}`;
   if (ref?.line_start) {
     return ref.line_end && ref.line_end !== ref.line_start
@@ -92,44 +142,84 @@ export function describeLocation(ref?: SourceReference, win?: SourceWindow): str
   return "Whole file";
 }
 
-function CsvView({ win, fields }: { win: SourceWindow; fields: string[] }) {
+const STATUS_TONE: Record<string, string> = {
+  AVAILABLE: "ok",
+  NO_EXTRACTED_TEXT: "warn",
+  UNSUPPORTED: "muted",
+  CORRUPTED: "bad",
+  NOT_FOUND: "bad",
+  EXTRACTION_FAILED: "bad",
+};
+
+function StatusChip({ status, reason }: { status: string; reason?: string | null }) {
+  return (
+    <span className={`badge badge-${STATUS_TONE[status] ?? "muted"}`} title={reason ?? undefined}>
+      {status.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function CsvView({
+  win,
+  fields,
+  onLoadMore,
+  loadingMore,
+}: {
+  win: SourceWindow;
+  fields: string[];
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
+}) {
   const highlighted = new Set(win.highlight);
   const relevant = new Set(fields);
   return (
-    <div className="source-table-wrap">
-      <table className="source-table">
-        <thead>
-          <tr>
-            <th className="source-gutter">{win.unit_label}</th>
-            {win.columns.map((column) => (
-              <th key={column} className={relevant.has(column) ? "field-relevant" : undefined}>
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {win.rows.map((row) => {
-            const on = highlighted.has(row.row);
-            return (
-              <tr key={row.row} className={on ? "row-highlight" : undefined}>
-                <td className="source-gutter">{row.row}</td>
-                {win.columns.map((column) => (
-                  <td
-                    key={column}
-                    /* Highlight the specific cells the finding depended on, not
-                       merely the row, so the investigator sees *why* it matched. */
-                    className={on && relevant.has(column) ? "cell-highlight" : undefined}
-                  >
-                    {row.values[column] || <span className="muted">—</span>}
-                  </td>
-                ))}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="source-table-wrap">
+        <table className="source-table">
+          <thead>
+            <tr>
+              <th className="source-gutter">{win.unit_label}</th>
+              {win.columns.map((column) => (
+                <th key={column} className={relevant.has(column) ? "field-relevant" : undefined}>
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {win.rows.map((row) => {
+              const on = highlighted.has(row.row);
+              return (
+                <tr key={row.row} className={on ? "row-highlight" : undefined}>
+                  <td className="source-gutter">{row.row}</td>
+                  {win.columns.map((column) => (
+                    <td
+                      key={column}
+                      className={on && relevant.has(column) ? "cell-highlight" : undefined}
+                    >
+                      {row.values[column] || <span className="muted">—</span>}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {win.truncated && (
+        <div className="source-note muted" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span>
+            Showing {win.unit_label}s {win.start}–{win.end} of{" "}
+            {win.total_units.toLocaleString()}.
+          </span>
+          {onLoadMore && (
+            <button className="btn btn-small" onClick={onLoadMore} disabled={loadingMore}>
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -150,6 +240,152 @@ function TextView({ win }: { win: SourceWindow }) {
   );
 }
 
+/**
+ * PDF: the browser is the renderer. The bytes go to an <object> untouched —
+ * no text conversion anywhere near them — and the extractable text layer is
+ * offered alongside for searching/citations.
+ */
+function PdfView({
+  path,
+  preview,
+}: {
+  path: string;
+  preview: PreviewResult | null;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    setUrl(null);
+    setError(null);
+    fetchBlob(`/sources/raw?path=${encodeURIComponent(path)}`)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
+        setUrl(objectUrl);
+      })
+      .catch((err: Error) => {
+        if (active) setError(err.message);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path]);
+
+  const pages = preview?.pdf;
+  return (
+    <div className="pdf-view">
+      {error && <ErrorState message={`The PDF could not be loaded: ${error}`} />}
+      {!error && !url && <Spinner />}
+      {url && (
+        <object data={url} type="application/pdf" aria-label="PDF document" className="pdf-frame">
+          <div className="source-note">
+            This browser cannot display inline PDFs.{" "}
+            <a href={url} target="_blank" rel="noreferrer">
+              Open the PDF in a new tab
+            </a>
+            .
+          </div>
+        </object>
+      )}
+      {pages && (
+        <details className="pdf-text-layer">
+          <summary>
+            Text layer · {pages.page_count.toLocaleString()} page
+            {pages.page_count === 1 ? "" : "s"}
+            {pages.truncated ? " (first 200 shown)" : ""}
+          </summary>
+          {pages.pages.map((page) => (
+            <div key={page.page} className="pdf-page-text">
+              <div className="source-gutter">page {page.page}</div>
+              <pre>{page.text || "— no extractable text —"}</pre>
+            </div>
+          ))}
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ImageFileView({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    fetchBlob(`/sources/raw?path=${encodeURIComponent(path)}`)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path]);
+  if (!url) return <Spinner />;
+  return (
+    <div className="image-view">
+      <img src={url} alt="Source image" style={{ maxWidth: "100%" }} />
+    </div>
+  );
+}
+
+function DocxView({ blocks }: { blocks: NonNullable<PreviewResult["document_blocks"]> }) {
+  return (
+    <article className="docx-view">
+      {blocks.map((block, index) => {
+        if (!block) return null;
+        if (block.type === "table" && block.rows) {
+          return (
+            <table className="source-table" key={index}>
+              <tbody>
+                {block.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, cellIndex) => (
+                      <td key={cellIndex}>{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          );
+        }
+        if (block.type === "heading") {
+          const level = Math.min(6, Math.max(1, block.level ?? 1));
+          const Heading = `h${level}` as "h1";
+          return <Heading key={index}>{block.text}</Heading>;
+        }
+        return <p key={index}>{block.text}</p>;
+      })}
+    </article>
+  );
+}
+
+function PptxView({ slides }: { slides: NonNullable<PreviewResult["slides"]> }) {
+  return (
+    <div className="pptx-view">
+      {slides.map((slide) => (
+        <section className="pptx-slide" key={slide.index}>
+          <header>
+            <span className="source-gutter">slide {slide.index}</span>
+            <strong>{slide.title}</strong>
+          </header>
+          <ul>
+            {slide.lines.map((line, index) => (
+              <li key={index}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function SourceViewerBody({
   target,
   context = 3,
@@ -157,76 +393,162 @@ export function SourceViewerBody({
 }: {
   target: SourceTarget;
   context?: number;
-  onLoaded?: (payload: Payload) => void;
+  onLoaded?: (payload: ReferencePayload | PreviewResult) => void;
 }) {
-  const [payload, setPayload] = useState<Payload | null>(null);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [reference, setReference] = useState<SourceReference | undefined>(undefined);
+  const [caseRef, setCaseRef] = useState<{ id: string; case_number: string } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewingFile, setViewingFile] = useState<string | null>(null);
+
+  const effectiveTarget: SourceTarget = viewingFile
+    ? { kind: "file", path: viewingFile }
+    : target;
 
   const key =
-    target.kind === "reference"
-      ? `ref:${target.referenceId}`
-      : `file:${target.path}:${target.row ?? ""}:${target.lineStart ?? ""}:${target.lineEnd ?? ""}`;
+    effectiveTarget.kind === "reference"
+      ? `ref:${effectiveTarget.referenceId}`
+      : `file:${effectiveTarget.path}`;
 
   const load = useCallback(() => {
-    setPayload(null);
+    setPreview(null);
     setError(null);
-    const path =
-      target.kind === "reference"
-        ? `/sources/reference/${encodeURIComponent(target.referenceId)}?context=${context}`
-        : (() => {
-            const params = new URLSearchParams({ path: target.path, context: String(context) });
-            if (target.row) params.set("row", String(target.row));
-            if (target.lineStart) params.set("line_start", String(target.lineStart));
-            if (target.lineEnd) params.set("line_end", String(target.lineEnd));
-            return `/sources/file?${params.toString()}`;
-          })();
-
-    api<Payload | SourceWindow>(path)
+    if (effectiveTarget.kind === "reference") {
+      api<ReferencePayload>(
+        `/sources/reference/${encodeURIComponent(effectiveTarget.referenceId)}?context=${context}`,
+      )
+        .then((data) => {
+          setReference(data.reference);
+          setCaseRef(data.case ?? null);
+          const windowKindBySource: Record<string, string> = {
+            csv: "csv",
+            table: "xlsx",
+            json: "json",
+            txt: "text",
+            document: "text",
+          };
+          setPreview({
+            status: data.status ?? (data.window ? "AVAILABLE" : "NOT_FOUND"),
+            reason: data.reason ?? null,
+            window: data.window ?? null,
+            openable: Boolean(data.window),
+            render_kind: windowKindBySource[data.window?.source_type ?? ""] ?? "text",
+            file: { path: data.reference?.origin_file ?? "" },
+            raw_url: data.raw_url ?? null,
+          });
+          onLoaded?.(data);
+        })
+        .catch((err: Error) => setError(err.message));
+      return;
+    }
+    const params = new URLSearchParams({ path: effectiveTarget.path, context: String(context) });
+    if (effectiveTarget.row) params.set("row", String(effectiveTarget.row));
+    if (effectiveTarget.lineStart) params.set("line_start", String(effectiveTarget.lineStart));
+    if (effectiveTarget.lineEnd) params.set("line_end", String(effectiveTarget.lineEnd));
+    api<PreviewResult>(`/sources/preview?${params.toString()}`)
       .then((data) => {
-        // /sources/file returns a bare window; /sources/reference wraps it.
-        const normalised: Payload =
-          "window" in (data as Payload)
-            ? (data as Payload)
-            : { window: data as SourceWindow };
-        setPayload(normalised);
-        onLoaded?.(normalised);
+        setPreview(data);
+        onLoaded?.(data);
       })
       .catch((err: Error) => setError(err.message));
-    // `key` collapses the target into a stable dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, context]);
 
   useEffect(load, [load]);
 
   if (error) return <ErrorState message={error} onRetry={load} />;
-  if (!payload) return <Spinner />;
+  if (!preview) return <Spinner />;
 
-  const { window: win, reference } = payload;
+  const win = preview.window ?? null;
   const fields = reference?.field_names ?? [];
-  const hasContent = win.rows.length > 0 || win.lines.length > 0;
+  const path = preview.file?.path ?? "";
+  const renderKind = preview.render_kind ?? "none";
+  const status = preview.status ?? "AVAILABLE";
+  const hasWindowContent = Boolean(win && (win.rows.length > 0 || win.lines.length > 0));
+
+  const loadMore = () => {
+    if (!win) return;
+    setLoadingMore(true);
+    const params = new URLSearchParams({ path, offset: String(win.end + 1), limit: "500" });
+    api<PreviewResult>(`/sources/preview?${params.toString()}`)
+      .then((data) => {
+        if (data.window && preview.window) {
+          setPreview({
+            ...data,
+            window: { ...data.window, rows: [...preview.window.rows, ...data.window.rows] },
+          });
+        } else {
+          setPreview(data);
+        }
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoadingMore(false));
+  };
 
   return (
     <div className="source-body">
       <div className="source-meta">
         <div>
-          <span className="source-label">Source location</span>
-          <strong>{describeLocation(reference, win)}</strong>
+          <span className="source-label">State</span>
+          <StatusChip status={status} reason={preview.reason} />
         </div>
         <div>
           <span className="source-label">File</span>
-          <strong>{win.file}</strong>
+          <strong>{path}</strong>
         </div>
         <div>
-          <span className="source-label">
-            {win.unit_label === "row" ? "Rows" : "Lines"}
-          </span>
-          <strong>{win.total_units.toLocaleString()}</strong>
+          <span className="source-label">Type</span>
+          <strong>{preview.file?.media_type ?? "—"}</strong>
         </div>
         <div>
           <span className="source-label">Size</span>
-          <strong>{formatBytes(win.size_bytes)}</strong>
+          <strong>{formatBytes(preview.file?.size_bytes)}</strong>
+        </div>
+        {win && (
+          <div>
+            <span className="source-label">{win.unit_label === "row" ? "Rows" : "Lines"}</span>
+            <strong>{win.total_units.toLocaleString()}</strong>
+          </div>
+        )}
+        {win && win.rows.length > 0 && (
+          <div>
+            <span className="source-label">Position</span>
+            <strong>{describeLocation(reference, win)}</strong>
+          </div>
+        )}
+        {caseRef && (
+          <div>
+            <span className="source-label">Case</span>
+            <strong>{caseRef.case_number}</strong>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {path && (
+            <button
+              className="btn btn-small"
+              type="button"
+              onClick={() => void download(`/sources/raw?path=${encodeURIComponent(path)}&download=true`, preview.file?.filename ?? "source-file")}
+            >
+              Download
+            </button>
+          )}
+          {target.kind === "reference" && reference?.origin_file && !viewingFile && (
+            <button className="btn btn-small" type="button" onClick={() => setViewingFile(reference.origin_file)}>
+              Open full file
+            </button>
+          )}
+          {viewingFile && (
+            <button className="btn btn-small" type="button" onClick={() => setViewingFile(null)}>
+              Back to reference
+            </button>
+          )}
         </div>
       </div>
+
+      {preview.reason && (
+        <p className="source-note muted">{preview.reason}</p>
+      )}
 
       {reference?.record_id && (
         <div className="source-record">
@@ -244,20 +566,77 @@ export function SourceViewerBody({
         </div>
       )}
 
-      {!hasContent ? (
-        <Empty message="This source has no readable content at the requested position." />
-      ) : win.source_type === "csv" ? (
-        <CsvView win={win} fields={fields} />
-      ) : (
-        <TextView win={win} />
+      {renderKind === "pdf" && path && <PdfView path={path} preview={preview} />}
+      {renderKind === "image" && path && <ImageFileView path={path} />}
+      {renderKind === "csv" && win && (
+        <CsvView win={win} fields={fields} onLoadMore={win.truncated ? loadMore : undefined} loadingMore={loadingMore} />
       )}
+      {renderKind === "xlsx" && win && (
+        <>
+          {preview.sheets && preview.sheets.length > 1 && (
+            <div className="sheet-tabs" role="tablist">
+              {preview.sheets.map((sheet) => (
+                <button
+                  key={sheet}
+                  role="tab"
+                  type="button"
+                  className={sheet === preview.sheet ? "sheet-tab on" : "sheet-tab"}
+                  onClick={() => {
+                    // Sheet switching is a fresh load at the top of that sheet.
+                    const params = new URLSearchParams({ path, sheet });
+                    void api<PreviewResult>(`/sources/preview?${params.toString()}`).then(setPreview);
+                  }}
+                >
+                  {sheet}
+                </button>
+              ))}
+            </div>
+          )}
+          <CsvView win={win} fields={fields} onLoadMore={win.truncated ? loadMore : undefined} loadingMore={loadingMore} />
+        </>
+      )}
+      {renderKind === "docx" && preview.document_blocks && preview.document_blocks.length > 0 && (
+        <DocxView blocks={preview.document_blocks} />
+      )}
+      {renderKind === "pptx" && preview.slides && preview.slides.length > 0 && (
+        <PptxView slides={preview.slides} />
+      )}
+      {(renderKind === "text" || renderKind === "json") && win && <TextView win={win} />}
+      {renderKind === "document" && win && <TextView win={win} />}
 
-      {win.truncated && (
-        <p className="source-note muted">
-          Showing {win.unit_label}s {win.start}–{win.end} of{" "}
-          {win.total_units.toLocaleString()}. Only the relevant range is loaded.
-        </p>
+      {status === "UNSUPPORTED" && (
+        <Empty
+          message={
+            preview.reason ??
+            "Unsupported file preview — the file is part of the evidence set, but there is no viewer for this format."
+          }
+        />
       )}
+      {status === "NOT_FOUND" && (
+        <Empty message={preview.reason ?? "The file is no longer stored with this dataset."} />
+      )}
+      {status === "CORRUPTED" && (
+        <Empty message={preview.reason ?? "The file could not be parsed; it may be damaged."} />
+      )}
+      {status === "EXTRACTION_FAILED" && (
+        <Empty message={preview.reason ?? "Content extraction failed for this file."} />
+      )}
+      {status === "NO_EXTRACTED_TEXT" && renderKind !== "pdf" && (
+        <Empty message={preview.reason ?? "This document has no extractable text (it may be a scan)."} />
+      )}
+      {renderKind === "binary" && (
+        <div className="unsupported-view">
+          <Empty message="Unsupported file preview" />
+          <p className="hint">
+            CrimeLink does not decode unknown binary formats as text. The original file is
+            available for download and retains its provenance metadata above.
+          </p>
+        </div>
+      )}
+      {!hasWindowContent &&
+        status === "AVAILABLE" &&
+        !["pdf", "image", "docx", "pptx"].includes(renderKind) &&
+        !win && <Empty message="This source has no readable content at the requested position." />}
     </div>
   );
 }

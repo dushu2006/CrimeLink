@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, download, jobSocket, uploadDocument } from "../api/client";
+import { api, askCaseStream, download, jobSocket, uploadDocument } from "../api/client";
 import { t } from "../i18n";
 import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
+
+/** The stage messages the AI stream reports while an answer is produced. */
+const AI_PHASE_LABEL: Record<string, string> = {
+  started: "Request started…",
+  retrieving: "Retrieving case context…",
+  generating: "Generating answer…",
+  validating: "Validating and attaching evidence…",
+  fast_path: "Answering directly…",
+};
 
 interface CaseRow {
   id: string;
@@ -89,7 +98,44 @@ function aiUnavailableMessage(fallbackReason: unknown): string {
   if (reason === "openai_client_unavailable") {
     return "The AI client library is not installed on the server.";
   }
+  if (reason.startsWith("stream_interrupted")) {
+    return "The AI provider stopped mid-answer. Try again, or review the case manually.";
+  }
   return reason ? `AI is currently unavailable (${reason}).` : "AI is currently unavailable.";
+}
+
+/**
+ * Pull the human-readable answer out of the model's streaming JSON.
+ *
+ * The reasoning contract is strict JSON (`FindingResult`), so a raw token
+ * stream would render braces and field names, not prose. Rather than show
+ * noise while it generates, we surface just the `summary` string as it grows
+ * — and fall back to the raw stream if the JSON never looks like that shape,
+ * because showing something real beats hiding progress.
+ */
+function partialSummary(buffer: string): string {
+  const key = buffer.indexOf('"summary"');
+  if (key < 0) return buffer.slice(0, 800);
+  const colon = buffer.indexOf(":", key + 9);
+  if (colon < 0) return buffer.slice(0, 800);
+  let i = colon + 1;
+  while (i < buffer.length && (buffer[i] === " " || buffer[i] === "\n")) i += 1;
+  if (buffer[i] !== '"') return buffer.slice(0, 800);
+  let out = "";
+  i += 1;
+  for (; i < buffer.length; i += 1) {
+    const ch = buffer[i];
+    if (ch === "\\") {
+      const next = buffer[i + 1];
+      if (next === undefined) break;
+      out += next === "n" ? "\n" : next;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') break; // complete string
+    out += ch;
+  }
+  return out || buffer.slice(0, 800);
 }
 
 export default function CaseDetail() {
@@ -106,8 +152,75 @@ export default function CaseDetail() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<Record<string, unknown> | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiPhase, setAiPhase] = useState<string | null>(null);
+  const [aiStreamText, setAiStreamText] = useState("");
+  const [aiTransport, setAiTransport] = useState<"stream" | "request">("stream");
   const [liveStatus, setLiveStatus] = useState<"connected" | "polling" | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** One question, two transports.
+   *
+   * The stream endpoint is tried first: an `ack` lands in milliseconds, the
+   * stage events keep the panel telling the truth about what is happening
+   * (retrieving → generating → validating), and answer tokens render as they
+   * arrive. If streaming is unavailable — a proxy that buffers, an older
+   * server — the plain request takes over exactly once; the investigator
+   * never has to know which transport produced the answer, and never stares
+   * at a frozen spinner because a channel was missing.
+   */
+  async function askAi() {
+    const text = question.trim();
+    if (!text || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    setAiResult(null);
+    setAiStreamText("");
+    setAiPhase("started");
+    let settled = false;
+    let fellBack = false;
+
+    const runPlain = async () => {
+      fellBack = true;
+      setAiTransport("request");
+      setAiPhase("request");
+      try {
+        const result = await api<Record<string, unknown>>(`/ai/cases/${caseId}/ask`, {
+          method: "POST",
+          body: JSON.stringify({ question: text }),
+        });
+        setAiResult(result);
+      } catch (err) {
+        setAiError((err as Error).message);
+      } finally {
+        setAiPhase(null);
+        setAiBusy(false);
+      }
+    };
+
+    await askCaseStream(caseId, text, {
+      onAck: () => setAiPhase("started"),
+      onStage: (event) => setAiPhase(String(event.stage ?? "")),
+      onDelta: (piece) => {
+        setAiStreamText((previous) => previous + piece);
+      },
+      onDone: (response) => {
+        settled = true;
+        setAiResult(response);
+        setAiPhase(null);
+        setAiBusy(false);
+      },
+      onError: (event) => {
+        settled = true;
+        setAiPhase(null);
+        setAiBusy(false);
+        setAiError(String(event.message ?? "Unable to answer this question."));
+      },
+      onFallback: () => {
+        if (!settled) void runPlain();
+      },
+    });
+    if (!settled && !fellBack) await runPlain();
+  }
 
   const load = useCallback(() => {
     setError(null);
@@ -300,17 +413,7 @@ export default function CaseDetail() {
           className="form-row"
           onSubmit={(event) => {
             event.preventDefault();
-            const text = question.trim();
-            if (!text) return;
-            setAiBusy(true);
-            setAiError(null);
-            api<Record<string, unknown>>(`/ai/cases/${caseId}/ask`, {
-              method: "POST",
-              body: JSON.stringify({ question: text }),
-            })
-              .then(setAiResult)
-              .catch((err: Error) => setAiError(err.message))
-              .finally(() => setAiBusy(false));
+            void askAi();
           }}
         >
           <input
@@ -328,10 +431,30 @@ export default function CaseDetail() {
             {aiError}
           </div>
         )}
+        {aiBusy && (
+          <div className="ai-progress" role="status">
+            <span className="spinner" aria-hidden="true" />{" "}
+            <span>
+              {aiPhase === "request"
+                ? "Request in progress…"
+                : AI_PHASE_LABEL[aiPhase ?? "started"] ?? "Thinking…"}
+            </span>
+            {aiTransport === "request" && aiPhase === "request" && (
+              <span className="hint"> (live stream unavailable; plain request mode)</span>
+            )}
+            {aiStreamText && (
+              <blockquote className="ai-streaming">{partialSummary(aiStreamText)}</blockquote>
+            )}
+          </div>
+        )}
         {aiResult && (
           <div className="evidence">
             <p>
-              {aiResult.available ? "Model response" : "AI unavailable"}
+              {aiResult.available
+                ? aiResult.role === "conversational"
+                  ? "CrimeLink answered directly — no case retrieval needed"
+                  : "Model response"
+                : "AI unavailable"}
               {aiResult.available && aiResult.model ? (
                 <span className="muted">
                   {" "}
@@ -360,16 +483,35 @@ export default function CaseDetail() {
             */}
             {(() => {
               const ctx = aiResult.context as
-                | { nodes?: number; edges?: number; depth?: number }
+                | { nodes?: number; edges?: number; depth?: number; fast_path?: boolean; dataset_id?: string | null; graph_ready?: boolean }
                 | undefined;
               if (!ctx) return null;
+              if (ctx.fast_path) {
+                return (
+                  <p className="hint">
+                    Answered from the request alone: no graph read, no retrieval, no model call.
+                  </p>
+                );
+              }
               return (
                 <p className="hint">
                   Context: {ctx.nodes ?? 0} entities, {ctx.edges ?? 0} relationships
                   {ctx.depth ? `, ${ctx.depth} hops` : ""}
+                  {ctx.dataset_id ? ` · active dataset ${String(ctx.dataset_id).slice(0, 8)}…` : ""}
+                  {ctx.graph_ready === false ? " · case graph still building — recent evidence may be missing" : ""}
                   {ctx.nodes === 0 && ctx.edges === 0
                     ? " — this case has no graph data yet, so the answer cannot be evidence-backed."
                     : ""}
+                </p>
+              );
+            })()}
+            {(() => {
+              const timing = aiResult.timing as Record<string, number> | undefined;
+              if (!timing || Object.keys(timing).length === 0) return null;
+              const parts = Object.entries(timing).map(([stage, ms]) => `${stage.replace(/_/g, " ")} ${ms}ms`);
+              return (
+                <p className="hint" title="Per-stage latency measured by the gateway">
+                  Timing: {parts.join(" · ")}
                 </p>
               );
             })()}

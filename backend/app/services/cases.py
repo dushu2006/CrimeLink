@@ -33,11 +33,23 @@ async def create_case(
 
         raise PermissionDeniedError("You cannot create a case in another jurisdiction.")
 
-    existing = (
-        await session.execute(select(Case).where(Case.case_number == case_number))
-    ).scalar_one_or_none()
-    if existing is not None:
-        raise ConflictError("A case with this number already exists.")
+    # Uniqueness is judged against the cases that are actually visible --
+    # this jurisdiction's view of the ACTIVE dataset plus hand-created cases.
+    # ``CASE_0001`` from a replaced dataset must not block a new dataset (or
+    # an investigator) from using the same number: identifiers repeat between
+    # test corpora by design, and ``(dataset_id, case_number)`` is the real
+    # key.
+    visible = (
+        await session.execute(
+            select(Case)
+            .where(Case.case_number == case_number)
+            .where(await registry.visibility_filter(session, Case))
+        )
+    ).scalars().first()
+    if visible is not None:
+        raise ConflictError(
+            "A case with this number already exists in the active dataset."
+        )
 
     case = Case(
         case_number=case_number,
@@ -73,6 +85,67 @@ async def list_cases(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> set[str]:
+    """The id set every dataset-aware listing should range over.
+
+    The single composition of the two boundaries -- jurisdiction AND active
+    dataset -- that explorers, search, pattern and resolution queues all
+    share, so no surface can forget one of them. ``scope.case_filter()`` also
+    honours approved cross-jurisdiction grants; the dataset clause makes rows
+    of a replaced dataset unreachable from every one of those surfaces, not
+    just from the case pages themselves.
+    """
+    rows = (
+        await session.execute(
+            select(Case.id)
+            .where(scope.case_filter())
+            .where(await registry.visibility_filter(session, Case))
+        )
+    ).scalars()
+    return set(rows)
+
+
+async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref: str) -> Case:
+    """Resolve a case reference to a live, visible case row.
+
+    Two shapes are accepted, in this order:
+
+    1. the internal id (the primary contract of every API response);
+    2. a human case number -- ``CASE_0001`` -- resolved *against the active
+       dataset*.  Numbers repeat between test corpora on purpose, so a number
+       is only ever looked up inside ``(active_dataset_id)`` plus hand-created
+       cases; if two visible cases carry the same number (source data does
+       this), the reference is ambiguous and refused rather than guessed.
+    """
+    case = await session.get(Case, ref)
+    if case is None:
+        candidates = list(
+            (
+                await session.execute(
+                    select(Case)
+                    .where(Case.case_number == ref)
+                    .where(await registry.visibility_filter(session, Case))
+                )
+            ).scalars()
+        )
+        if len(candidates) > 1:
+            raise NotFoundError(
+                f"Case number {ref!r} matches {len(candidates)} cases in the active "
+                "dataset; open one by its case id instead."
+            )
+        if not candidates:
+            raise NotFoundError("Case not found.")
+        case = candidates[0]
+    case = scope.assert_case(case)
+    active = await registry.active_dataset_id(session)
+    if not registry.belongs_to_active(case, active):
+        raise NotFoundError(
+            "This case belongs to a dataset that is no longer active. "
+            "Activate that dataset in Administration to open it again."
+        )
+    return case
+
+
 async def get_case(
     session: AsyncSession, scope: JurisdictionScope, case_id: str
 ) -> Case:
@@ -82,15 +155,7 @@ async def get_case(
     its documents, entities and graph are gone, and a page rendered from a row
     whose evidence no longer exists is worse than an honest 404.
     """
-    case = await session.get(Case, case_id)
-    case = scope.assert_case(case)
-    active = await registry.active_dataset_id(session)
-    if not registry.belongs_to_active(case, active):
-        raise NotFoundError(
-            "This case belongs to a dataset that is no longer active. "
-            "Activate that dataset in Administration to open it again."
-        )
-    return case
+    return await resolve_case_ref(session, scope, case_id)
 
 
 async def case_summaries(
@@ -166,14 +231,4 @@ async def require_case(session: AsyncSession, scope: JurisdictionScope, case_id:
     whether that case exists right now, or one of them becomes the way stale
     data gets back on screen.
     """
-    case = await session.get(Case, case_id)
-    if case is None:
-        raise NotFoundError("Case not found.")
-    case = scope.assert_case(case)
-    active = await registry.active_dataset_id(session)
-    if not registry.belongs_to_active(case, active):
-        raise NotFoundError(
-            "This case belongs to a dataset that is no longer active. "
-            "Activate that dataset in Administration to open it again."
-        )
-    return case
+    return await resolve_case_ref(session, scope, case_id)

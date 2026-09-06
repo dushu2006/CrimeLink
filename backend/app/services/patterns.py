@@ -77,9 +77,11 @@ async def list_patterns(
         await require_case(session, scope, case_id)
         stmt = stmt.where(DetectedPattern.case_id == case_id)
     else:
-        allowed = set(
-            (await session.execute(select(Case.id).where(scope.case_filter()))).scalars().all()
-        )
+        # Dataset-scoped as well: patterns found in a replaced dataset must
+        # not crowd the review queue of the active one.
+        from app.services.cases import visible_case_ids
+
+        allowed = await visible_case_ids(session, scope)
         stmt = stmt.where(DetectedPattern.case_id.in_(sorted(allowed)) if allowed else False)
     if status:
         stmt = stmt.where(DetectedPattern.status == status)
@@ -144,9 +146,9 @@ async def dismissal_report(
         await require_case(session, scope, case_id)
         stmt = stmt.where(DetectedPattern.case_id == case_id)
     else:
-        allowed = set(
-            (await session.execute(select(Case.id).where(scope.case_filter()))).scalars().all()
-        )
+        from app.services.cases import visible_case_ids
+
+        allowed = await visible_case_ids(session, scope)
         stmt = stmt.where(DetectedPattern.case_id.in_(sorted(allowed)) if allowed else False)
     rows = (await session.execute(stmt)).scalars().all()
 

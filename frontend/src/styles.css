@@ -1603,3 +1603,146 @@ button.chip.active {
 .row-active > td {
   background: var(--navy-soft);
 }
+
+/* ------------------------------------------------------------------ */
+/* Source viewer: real renderers per file type (PDF/tables/documents)  */
+/* ------------------------------------------------------------------ */
+
+.pdf-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pdf-frame {
+  width: 100%;
+  height: min(72vh, 900px);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f4f5f7;
+}
+
+.pdf-text-layer {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.pdf-text-layer summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pdf-page-text {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-top: 1px dashed var(--line);
+}
+
+.pdf-page-text pre {
+  margin: 0;
+  white-space: pre-wrap;
+  flex: 1;
+  font-size: 12px;
+}
+
+.sheet-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.sheet-tab {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 6px 6px 0 0;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.sheet-tab.on {
+  background: var(--navy);
+  color: #fff;
+  border-color: var(--navy);
+}
+
+.docx-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 72ch;
+}
+
+.docx-view h1,
+.docx-view h2,
+.docx-view h3,
+.docx-view h4,
+.docx-view h5,
+.docx-view h6 {
+  margin: 10px 0 2px;
+}
+
+.docx-view p {
+  margin: 4px 0;
+}
+
+.pptx-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pptx-slide {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+  background: #fbfcfe;
+}
+
+.pptx-slide header {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.pptx-slide ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.image-view {
+  text-align: center;
+}
+
+.unsupported-view .state {
+  border: none;
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------ */
+/* Case AI panel: live phase feedback while an answer is generated     */
+/* ------------------------------------------------------------------ */
+
+.ai-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--muted);
+  align-items: flex-start;
+}
+
+.ai-streaming {
+  white-space: pre-wrap;
+  max-height: 40vh;
+  overflow: auto;
+  width: 100%;
+}

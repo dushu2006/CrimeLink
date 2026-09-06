@@ -269,10 +269,19 @@ async def run_import(
             await session.commit()
 
         # --- 6. INDEXING ---------------------------------------------------
-        await registry.set_stage(session, dataset, "INDEXING", detail="Refreshing indexes")
+        # "Indexing" is not a second copy of the data here: the graph
+        # projection IS the search haystack and the AI retrieval index
+        # (search walks case subgraphs; the gateway reads the same store), so
+        # building it above is what makes both queryable, and replacing it is
+        # what invalidates both. The timestamps record that explicitly -- and
+        # stay NULL when no projection was built, so the UI never claims an
+        # index exists that does not.
+        await registry.set_stage(session, dataset, "INDEXING", detail="Refreshing derived indexes")
         await session.commit()
-        await emit("INDEXING", 96, "Refreshing search indexes")
-        dataset.search_indexed_at = utcnow()
+        await emit("INDEXING", 96, "Search and AI retrieval indexes follow the graph projection")
+        if dataset.graph_built_at is not None:
+            dataset.search_indexed_at = dataset.graph_built_at
+            dataset.ai_indexed_at = dataset.graph_built_at
 
         # --- 7. READY ------------------------------------------------------
         dataset.stats = await registry.dataset_stats(session, dataset.id)
