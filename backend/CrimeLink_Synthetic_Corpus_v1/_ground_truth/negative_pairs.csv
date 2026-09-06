@@ -1,4 +1,3 @@
-person_a,person_b,same_person,reason
-PERSON_00027,PERSON_00173,False,same surface name but different KYC identity
-PERSON_00091,PERSON_00244,False,same surface name but different KYC identity
-PERSON_00112,PERSON_00319,False,same surface name but different KYC identity
+pair_id,person_a,person_b,reason
+NEG_001,PERSON_00072,PERSON_00173,same name; distinct KYC/address/employment
+NEG_002,PERSON_00281,PERSON_00361,same name; distinct KYC/phone/city

@@ -1,5 +1,11 @@
 question_id,question,answer
-Q001,Which identity is confirmed for the repeated Ganesh Kumar references?,Resolve using Aadhaar/PAN/DOB/address rather than name alone.
-Q002,Which network is intentionally legitimate but structurally suspicious?,EVNET_12
-Q003,Which network contains the designed cross-network bridge?,EVNET_11
-Q004,What should happen when two records share a name but have different Aadhaar identities?,Keep them separate unless independent evidence supports a merge.
+Q1,Which person is deliberately used as a bridge between the vehicle-theft and hawala-style networks?,PERSON_00072
+Q2,Which network is the legitimate decoy with high cash activity?,EVNET_12
+Q3,Which two people share the surface name Ganesh Kumar but are distinct?,PERSON_00072 / PERSON_00173
+Q4,Which person bridges EVNET_05 and EVNET_01?,PERSON_00173
+Q5,Which person bridges EVNET_02 and EVNET_06?,PERSON_00281
+Q6,What identity signals should be used before merging same-name records?,"Aadhaar, PAN, phone, bank account, address and employment"
+Q7,What should an investigator do with a suspicious cash pattern in EVNET_12?,Test the legitimate jewellery/festival business explanation against independent records
+Q8,What relationship change is important when reviewing VEH_0001?,Ownership changes before a later case-relevant sighting
+Q9,What is the correct interpretation of a single intelligence note?,It is a lead requiring independent corroboration
+Q10,What type of relationship connects people working at the same organization?,work_colleague

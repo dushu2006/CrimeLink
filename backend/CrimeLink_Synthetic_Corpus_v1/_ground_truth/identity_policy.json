@@ -1,7 +1,15 @@
 {
-  "two_word_names_target": 0.9,
-  "three_word_names_target": 0.02,
-  "major_same_name_pairs": 3,
-  "aadhaar_is_strong_identifier": true,
-  "aadhaar_not_universal": true
+  "same_name_cases": [
+    "PERSON_00072 / PERSON_00173",
+    "PERSON_00281 / PERSON_00361"
+  ],
+  "strong_signals": [
+    "aadhaar",
+    "pan",
+    "bank_account",
+    "phone",
+    "address",
+    "employment"
+  ],
+  "rule": "Do not auto-merge ambiguous people from name alone; corroborate with independent signals."
 }

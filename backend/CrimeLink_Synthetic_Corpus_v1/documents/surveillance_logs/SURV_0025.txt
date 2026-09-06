@@ -1,0 +1,5 @@
+SURVEILLANCE LOG
+Case: CASE_0006
+Window: 2024-11-10
+
+A contact involving Vignesh Krishnan was recorded. The duration and timing are noted for chronology; the contact is not inherently suspicious. Analysts should look for recurrence close to relevant incidents rather than treating a single contact as dispositive.

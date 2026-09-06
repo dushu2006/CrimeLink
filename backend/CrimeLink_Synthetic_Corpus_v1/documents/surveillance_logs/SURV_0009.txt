@@ -1,0 +1,5 @@
+SURVEILLANCE LOG
+Case: CASE_0022
+Window: 2023-03-15
+
+A contact involving Keerthi Kumar was recorded. The duration and timing are noted for chronology; the contact is not inherently suspicious. Analysts should look for recurrence close to relevant incidents rather than treating a single contact as dispositive.

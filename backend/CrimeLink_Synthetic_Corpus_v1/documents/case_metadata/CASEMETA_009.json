@@ -1,0 +1,13 @@
+{
+  "case_id": "CASE_0028",
+  "synthetic": true,
+  "stages": [
+    "incident",
+    "initial enquiry",
+    "identity verification",
+    "telecom/financial review",
+    "cross-record correlation",
+    "investigative assessment"
+  ],
+  "network_hint": "EVNET_02"
+}

@@ -1,0 +1,645 @@
+{
+  "type": "synthetic_toll_extract",
+  "rows": [
+    [
+      "SIGHT_00174",
+      "VEH_0101",
+      "2025-02-18",
+      "LOC_0079",
+      "PERSON_00063",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00520",
+      "VEH_0068",
+      "2024-10-29",
+      "LOC_0041",
+      "PERSON_00356",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00228",
+      "VEH_0210",
+      "2026-05-13",
+      "LOC_0042",
+      "PERSON_00268",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00656",
+      "VEH_0228",
+      "2022-02-18",
+      "LOC_0043",
+      "PERSON_00373",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00013",
+      "VEH_0216",
+      "2026-05-02",
+      "LOC_0012",
+      "PERSON_00117",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00217",
+      "VEH_0137",
+      "2024-11-06",
+      "LOC_0107",
+      "PERSON_00241",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00362",
+      "VEH_0187",
+      "2022-06-07",
+      "LOC_0046",
+      "PERSON_00358",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00368",
+      "VEH_0210",
+      "2025-01-17",
+      "LOC_0045",
+      "PERSON_00268",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00476",
+      "VEH_0096",
+      "2026-01-30",
+      "LOC_0014",
+      "PERSON_00276",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00544",
+      "VEH_0038",
+      "2024-02-12",
+      "LOC_0097",
+      "PERSON_00090",
+      "toll record"
+    ],
+    [
+      "SIGHT_00253",
+      "VEH_0191",
+      "2026-01-18",
+      "LOC_0004",
+      "PERSON_00437",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00618",
+      "VEH_0026",
+      "2026-05-03",
+      "LOC_0044",
+      "PERSON_00347",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00483",
+      "VEH_0135",
+      "2021-08-01",
+      "LOC_0104",
+      "PERSON_00421",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00048",
+      "VEH_0100",
+      "2025-02-27",
+      "LOC_0060",
+      "PERSON_00215",
+      "toll record"
+    ],
+    [
+      "SIGHT_00171",
+      "VEH_0098",
+      "2024-08-20",
+      "LOC_0039",
+      "PERSON_00121",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00571",
+      "VEH_0102",
+      "2025-12-23",
+      "LOC_0055",
+      "PERSON_00387",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00129",
+      "VEH_0018",
+      "2021-05-03",
+      "LOC_0087",
+      "PERSON_00251",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00011",
+      "VEH_0220",
+      "2021-03-20",
+      "LOC_0046",
+      "PERSON_00030",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00407",
+      "VEH_0040",
+      "2025-02-10",
+      "LOC_0029",
+      "PERSON_00033",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00339",
+      "VEH_0172",
+      "2024-04-14",
+      "LOC_0104",
+      "PERSON_00207",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00126",
+      "VEH_0106",
+      "2021-09-08",
+      "LOC_0098",
+      "PERSON_00433",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00301",
+      "VEH_0129",
+      "2021-07-03",
+      "LOC_0020",
+      "PERSON_00139",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00615",
+      "VEH_0107",
+      "2024-12-08",
+      "LOC_0064",
+      "PERSON_00083",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00403",
+      "VEH_0151",
+      "2022-08-14",
+      "LOC_0020",
+      "PERSON_00072",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00131",
+      "VEH_0187",
+      "2024-06-30",
+      "LOC_0045",
+      "PERSON_00170",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00248",
+      "VEH_0139",
+      "2023-08-02",
+      "LOC_0047",
+      "PERSON_00225",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00462",
+      "VEH_0016",
+      "2022-08-05",
+      "LOC_0111",
+      "PERSON_00031",
+      "toll record"
+    ],
+    [
+      "SIGHT_00510",
+      "VEH_0208",
+      "2023-12-22",
+      "LOC_0091",
+      "PERSON_00006",
+      "toll record"
+    ],
+    [
+      "SIGHT_00413",
+      "VEH_0091",
+      "2025-06-06",
+      "LOC_0071",
+      "PERSON_00023",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00286",
+      "VEH_0104",
+      "2023-12-25",
+      "LOC_0096",
+      "PERSON_00450",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00575",
+      "VEH_0050",
+      "2021-12-09",
+      "LOC_0020",
+      "PERSON_00248",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00201",
+      "VEH_0080",
+      "2024-04-17",
+      "LOC_0069",
+      "PERSON_00001",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00277",
+      "VEH_0099",
+      "2022-08-01",
+      "LOC_0107",
+      "PERSON_00330",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00212",
+      "VEH_0148",
+      "2021-07-06",
+      "LOC_0039",
+      "PERSON_00146",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00008",
+      "VEH_0043",
+      "2022-01-30",
+      "LOC_0058",
+      "PERSON_00356",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00365",
+      "VEH_0051",
+      "2026-06-16",
+      "LOC_0073",
+      "PERSON_00430",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00055",
+      "VEH_0159",
+      "2024-09-28",
+      "LOC_0082",
+      "PERSON_00020",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00426",
+      "VEH_0031",
+      "2022-04-03",
+      "LOC_0094",
+      "PERSON_00353",
+      "toll record"
+    ],
+    [
+      "SIGHT_00602",
+      "VEH_0066",
+      "2026-02-12",
+      "LOC_0029",
+      "PERSON_00418",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00226",
+      "VEH_0072",
+      "2022-03-03",
+      "LOC_0062",
+      "PERSON_00007",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00655",
+      "VEH_0126",
+      "2023-09-06",
+      "LOC_0117",
+      "PERSON_00020",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00498",
+      "VEH_0206",
+      "2023-07-02",
+      "LOC_0102",
+      "PERSON_00285",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00491",
+      "VEH_0010",
+      "2024-10-28",
+      "LOC_0109",
+      "PERSON_00083",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00448",
+      "VEH_0182",
+      "2022-07-15",
+      "LOC_0011",
+      "PERSON_00005",
+      "toll record"
+    ],
+    [
+      "SIGHT_00081",
+      "VEH_0216",
+      "2022-04-17",
+      "LOC_0108",
+      "PERSON_00162",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00113",
+      "VEH_0208",
+      "2025-12-27",
+      "LOC_0115",
+      "PERSON_00006",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00183",
+      "VEH_0188",
+      "2026-03-28",
+      "LOC_0025",
+      "PERSON_00443",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00445",
+      "VEH_0129",
+      "2022-04-14",
+      "LOC_0097",
+      "PERSON_00081",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00258",
+      "VEH_0212",
+      "2023-10-07",
+      "LOC_0004",
+      "PERSON_00390",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00009",
+      "VEH_0201",
+      "2021-10-23",
+      "LOC_0058",
+      "PERSON_00180",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00321",
+      "VEH_0068",
+      "2021-04-09",
+      "LOC_0062",
+      "PERSON_00260",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00193",
+      "VEH_0053",
+      "2023-07-01",
+      "LOC_0087",
+      "PERSON_00356",
+      "toll record"
+    ],
+    [
+      "SIGHT_00612",
+      "VEH_0111",
+      "2023-08-01",
+      "LOC_0076",
+      "PERSON_00391",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00518",
+      "VEH_0021",
+      "2026-03-16",
+      "LOC_0108",
+      "PERSON_00244",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00218",
+      "VEH_0106",
+      "2024-10-26",
+      "LOC_0027",
+      "PERSON_00260",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00438",
+      "VEH_0070",
+      "2024-03-22",
+      "LOC_0079",
+      "PERSON_00216",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00186",
+      "VEH_0222",
+      "2026-03-20",
+      "LOC_0071",
+      "PERSON_00062",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00378",
+      "VEH_0057",
+      "2023-10-26",
+      "LOC_0075",
+      "PERSON_00424",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00232",
+      "VEH_0190",
+      "2021-08-08",
+      "LOC_0018",
+      "PERSON_00221",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00045",
+      "VEH_0036",
+      "2025-07-15",
+      "LOC_0040",
+      "PERSON_00123",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00102",
+      "VEH_0098",
+      "2023-11-15",
+      "LOC_0054",
+      "PERSON_00121",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00600",
+      "VEH_0113",
+      "2024-06-04",
+      "LOC_0009",
+      "PERSON_00368",
+      "toll record"
+    ],
+    [
+      "SIGHT_00169",
+      "VEH_0075",
+      "2024-01-31",
+      "LOC_0007",
+      "PERSON_00013",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00283",
+      "VEH_0031",
+      "2025-05-16",
+      "LOC_0067",
+      "PERSON_00302",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00681",
+      "VEH_0041",
+      "2022-10-26",
+      "LOC_0071",
+      "PERSON_00105",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00416",
+      "VEH_0030",
+      "2024-05-14",
+      "LOC_0025",
+      "PERSON_00079",
+      "toll record"
+    ],
+    [
+      "SIGHT_00383",
+      "VEH_0187",
+      "2024-04-16",
+      "LOC_0015",
+      "PERSON_00170",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00654",
+      "VEH_0033",
+      "2022-07-30",
+      "LOC_0063",
+      "PERSON_00406",
+      "toll record"
+    ],
+    [
+      "SIGHT_00582",
+      "VEH_0077",
+      "2025-10-15",
+      "LOC_0103",
+      "PERSON_00182",
+      "toll record"
+    ],
+    [
+      "SIGHT_00176",
+      "VEH_0113",
+      "2026-06-06",
+      "LOC_0003",
+      "PERSON_00368",
+      "witness statement"
+    ],
+    [
+      "SIGHT_00639",
+      "VEH_0197",
+      "2025-12-28",
+      "LOC_0055",
+      "PERSON_00392",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00536",
+      "VEH_0205",
+      "2024-02-18",
+      "LOC_0075",
+      "PERSON_00199",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00642",
+      "VEH_0036",
+      "2025-10-28",
+      "LOC_0089",
+      "PERSON_00123",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00468",
+      "VEH_0177",
+      "2022-02-15",
+      "LOC_0089",
+      "PERSON_00099",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00281",
+      "VEH_0042",
+      "2021-03-03",
+      "LOC_0030",
+      "PERSON_00420",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00324",
+      "VEH_0062",
+      "2023-05-21",
+      "LOC_0115",
+      "PERSON_00253",
+      "parking receipt"
+    ],
+    [
+      "SIGHT_00676",
+      "VEH_0165",
+      "2022-06-30",
+      "LOC_0082",
+      "PERSON_00128",
+      "ANPR camera"
+    ],
+    [
+      "SIGHT_00257",
+      "VEH_0226",
+      "2024-12-09",
+      "LOC_0040",
+      "PERSON_00397",
+      "patrol note"
+    ],
+    [
+      "SIGHT_00344",
+      "VEH_0088",
+      "2024-08-08",
+      "LOC_0086",
+      "PERSON_00066",
+      "case exhibit"
+    ],
+    [
+      "SIGHT_00179",
+      "VEH_0085",
+      "2023-10-30",
+      "LOC_0029",
+      "PERSON_00187",
+      "case exhibit"
+    ]
+  ]
+}

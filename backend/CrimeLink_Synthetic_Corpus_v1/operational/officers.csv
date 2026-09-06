@@ -1,0 +1,61 @@
+officer_id,name,rank,unit
+OFF_0001,Naveen Reddy,ACP,Property Offences Cell
+OFF_0002,Arvind Kumar,Inspector,Traffic Investigation Unit
+OFF_0003,Ritu Sharma,HC,Traffic Investigation Unit
+OFF_0004,Lakshmi Iyer,ASI,District Investigation Unit 01
+OFF_0005,Sunita Verma,Inspector,Property Offences Cell
+OFF_0006,Deepa Rao,ASI,South Zone Police
+OFF_0007,Prakash Menon,ASI,Property Offences Cell
+OFF_0008,Arvind Kumar,ASI,Special Operations Cell
+OFF_0009,Ritu Sharma,ACP,Property Offences Cell
+OFF_0010,Vijay Shetty,ASI,District Investigation Unit 02
+OFF_0011,Meena Das,HC,South Zone Police
+OFF_0012,Sunita Verma,SI,North Zone Police
+OFF_0013,Neeraj Mishra,ASI,Property Offences Cell
+OFF_0014,Mahesh Yadav,Inspector,City Crime Branch
+OFF_0015,Meena Das,Inspector,Economic Offences Wing
+OFF_0016,Neeraj Mishra,SI,Cyber Crime Cell
+OFF_0017,Naveen Reddy,ASI,Economic Offences Wing
+OFF_0018,Sunita Verma,SI,South Zone Police
+OFF_0019,Rahul Joshi,SI,South Zone Police
+OFF_0020,Deepa Rao,SI,Cyber Crime Cell
+OFF_0021,Lakshmi Iyer,SI,Economic Offences Wing
+OFF_0022,Rakesh Naik,Inspector,Cyber Crime Cell
+OFF_0023,Mahesh Yadav,Inspector,South Zone Police
+OFF_0024,Arvind Kumar,Inspector,Special Operations Cell
+OFF_0025,Mahesh Yadav,HC,Property Offences Cell
+OFF_0026,Prakash Menon,HC,North Zone Police
+OFF_0027,Priti Shah,HC,Special Operations Cell
+OFF_0028,Priti Shah,ACP,Property Offences Cell
+OFF_0029,Vivek Patil,Inspector,District Investigation Unit 01
+OFF_0030,Lakshmi Iyer,SI,Property Offences Cell
+OFF_0031,Anita Singh,ACP,North Zone Police
+OFF_0032,Vivek Patil,ACP,Cyber Crime Cell
+OFF_0033,Prakash Menon,ASI,Cyber Crime Cell
+OFF_0034,Vijay Shetty,ACP,South Zone Police
+OFF_0035,Karthik Nair,ASI,Traffic Investigation Unit
+OFF_0036,Divya Nair,Inspector,Economic Offences Wing
+OFF_0037,Divya Nair,Inspector,North Zone Police
+OFF_0038,Deepa Rao,ACP,District Investigation Unit 01
+OFF_0039,Sanjay Kulkarni,Inspector,District Investigation Unit 01
+OFF_0040,Priti Shah,ASI,Cyber Crime Cell
+OFF_0041,Suresh Rao,ACP,Traffic Investigation Unit
+OFF_0042,Divya Nair,SI,North Zone Police
+OFF_0043,Sanjay Kulkarni,Inspector,District Investigation Unit 01
+OFF_0044,Priti Shah,HC,District Investigation Unit 02
+OFF_0045,Suresh Rao,Inspector,South Zone Police
+OFF_0046,Lakshmi Iyer,HC,Economic Offences Wing
+OFF_0047,Ritu Sharma,Inspector,Property Offences Cell
+OFF_0048,Rahul Joshi,HC,Property Offences Cell
+OFF_0049,Deepa Rao,Inspector,Economic Offences Wing
+OFF_0050,Rahul Joshi,ACP,Cyber Crime Cell
+OFF_0051,Rakesh Naik,HC,Traffic Investigation Unit
+OFF_0052,Rakesh Naik,SI,Economic Offences Wing
+OFF_0053,Kavya Patel,ACP,Cyber Crime Cell
+OFF_0054,Rahul Joshi,Inspector,City Crime Branch
+OFF_0055,Sanjay Kulkarni,HC,City Crime Branch
+OFF_0056,Mohan Singh,ACP,District Investigation Unit 01
+OFF_0057,Vijay Shetty,Inspector,Cyber Crime Cell
+OFF_0058,Deepa Rao,SI,South Zone Police
+OFF_0059,Ritu Sharma,HC,Traffic Investigation Unit
+OFF_0060,Kavya Patel,ACP,Cyber Crime Cell

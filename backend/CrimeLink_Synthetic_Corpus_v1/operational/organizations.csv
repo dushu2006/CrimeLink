@@ -1,0 +1,56 @@
+org_id,org_name,org_type,state,city,incorporated,status
+ORG_0001,Silverleaf Works 01,Medical Supplies,Andhra Pradesh,Visakhapatnam,2020-02-26,Active
+ORG_0002,Summit Works 02,Security Services,Rajasthan,Kota,2018-07-18,Active
+ORG_0003,Harbor Solutions 03,Logistics,Kerala,Thiruvananthapuram,2020-10-21,Dormant
+ORG_0004,Keystone Industries 04,Food Distribution,Kerala,Kozhikode,2018-06-17,Dormant
+ORG_0005,Northstar Logistics 05,Jewellery,Telangana,Nizamabad,2022-08-16,Active
+ORG_0006,Eastline Logistics 06,Jewellery,West Bengal,Kolkata,2023-12-03,Dormant
+ORG_0007,Keystone Solutions 07,Jewellery,Uttar Pradesh,Noida,2021-07-28,Active
+ORG_0008,Nexora Traders 08,Recruitment,Jharkhand,Ranchi,2018-01-23,Active
+ORG_0009,Silverleaf Works 09,Food Distribution,Delhi,Delhi,2017-04-13,Active
+ORG_0010,Nexora Enterprises 10,Travel Agency,Karnataka,Bengaluru,2019-07-11,Active
+ORG_0011,Orbit Industries 11,Trading,Maharashtra,Nashik,2019-04-04,Active
+ORG_0012,Eastline Associates 12,Travel Agency,Tamil Nadu,Coimbatore,2022-06-30,Active
+ORG_0013,Bluefield Logistics 13,Recruitment,Punjab,Mohali,2018-11-14,Dormant
+ORG_0014,Riverview Traders 14,Property Services,Bihar,Patna,2018-04-13,Dormant
+ORG_0015,Northstar Traders 15,Logistics,Madhya Pradesh,Bhopal,2023-08-17,Active
+ORG_0016,Sapphire Logistics 16,Recruitment,Karnataka,Hubballi,2018-06-12,Dormant
+ORG_0017,Vertex Associates 17,Automotive,Kerala,Kochi,2020-05-30,Dormant
+ORG_0018,Silverleaf Logistics 18,Medical Supplies,Rajasthan,Kota,2019-02-25,Active
+ORG_0019,Bluefield Enterprises 19,Textiles,Karnataka,Mysuru,2023-12-10,Active
+ORG_0020,Silverleaf Industries 20,Construction,Madhya Pradesh,Bhopal,2024-11-30,Dormant
+ORG_0021,Lakshmi Logistics 21,Hospitality,West Bengal,Howrah,2025-10-04,Active
+ORG_0022,Silverleaf Services 22,Logistics,Telangana,Warangal,2023-01-18,Active
+ORG_0023,Lakshmi Traders 23,Property Services,Gujarat,Ahmedabad,2019-03-11,Active
+ORG_0024,Meridian Logistics 24,Travel Agency,Andhra Pradesh,Visakhapatnam,2019-01-14,Dormant
+ORG_0025,Lakshmi Works 25,Food Distribution,Delhi,New Delhi,2018-07-09,Active
+ORG_0026,Prism Logistics 26,Food Distribution,Punjab,Amritsar,2025-08-28,Active
+ORG_0027,Riverview Logistics 27,Recruitment,Maharashtra,Mumbai,2025-06-29,Active
+ORG_0028,Orbit Logistics 28,Security Services,Tamil Nadu,Chennai,2025-05-25,Active
+ORG_0029,Sapphire Industries 29,Automotive,Karnataka,Mysuru,2019-07-15,Active
+ORG_0030,Keystone Logistics 30,Medical Supplies,Odisha,Bhubaneswar,2020-11-04,Active
+ORG_0031,Eastline Solutions 31,Consulting,Maharashtra,Pune,2017-04-03,Active
+ORG_0032,Nexora Associates 32,Recruitment,Jharkhand,Dhanbad,2020-09-24,Dormant
+ORG_0033,Eastline Solutions 33,Medical Supplies,Karnataka,Mysuru,2021-12-07,Dormant
+ORG_0034,Orbit Enterprises 34,Hospitality,Jharkhand,Dhanbad,2018-01-24,Active
+ORG_0035,Pioneer Enterprises 35,Automotive,Punjab,Amritsar,2024-11-09,Active
+ORG_0036,Bluefield Services 36,Jewellery,Maharashtra,Pune,2018-12-05,Active
+ORG_0037,Orbit Works 37,Construction,Bihar,Patna,2017-03-01,Active
+ORG_0038,Trident Services 38,Hospitality,Telangana,Hyderabad,2018-04-27,Active
+ORG_0039,Sapphire Industries 39,Trading,Jharkhand,Dhanbad,2021-06-13,Active
+ORG_0040,Sapphire Enterprises 40,Jewellery,Jharkhand,Jamshedpur,2017-08-06,Dormant
+ORG_0041,Keystone Enterprises 41,Travel Agency,Jharkhand,Ranchi,2022-09-04,Active
+ORG_0042,Northstar Works 42,Travel Agency,Bihar,Patna,2021-02-09,Active
+ORG_0043,Silverleaf Industries 43,Trading,Maharashtra,Mumbai,2018-08-06,Active
+ORG_0044,Riverview Logistics 44,Food Distribution,Andhra Pradesh,Visakhapatnam,2019-04-03,Active
+ORG_0045,Crescent Works 45,Security Services,Telangana,Hyderabad,2024-12-17,Active
+ORG_0046,Aarohan Solutions 46,Logistics,Punjab,Mohali,2022-12-19,Active
+ORG_0047,Silverleaf Services 47,Automotive,Tamil Nadu,Coimbatore,2024-04-16,Active
+ORG_0048,Vertex Traders 48,Security Services,Odisha,Cuttack,2018-02-05,Active
+ORG_0049,Sapphire Traders 49,Food Distribution,Bihar,Gaya,2017-05-09,Active
+ORG_0050,Sapphire Traders 50,IT Services,Rajasthan,Kota,2025-02-09,Active
+ORG_0051,Meridian Logistics 51,Hospitality,Uttar Pradesh,Ghaziabad,2017-08-16,Dormant
+ORG_0052,Bluefield Solutions 52,Food Distribution,Kerala,Thiruvananthapuram,2024-09-09,Active
+ORG_0053,Silverleaf Enterprises 53,Medical Supplies,Karnataka,Bengaluru,2020-12-10,Active
+ORG_0054,Crescent Logistics 54,Security Services,Jharkhand,Dhanbad,2023-11-26,Dormant
+ORG_0055,Nexora Enterprises 55,Travel Agency,Maharashtra,Nashik,2025-12-28,Active

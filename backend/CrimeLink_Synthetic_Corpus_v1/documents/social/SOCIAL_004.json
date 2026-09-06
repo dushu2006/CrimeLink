@@ -1,0 +1,15 @@
+{
+  "type": "synthetic_social_interaction",
+  "network_context": "EVNET_02",
+  "persons": [
+    "PERSON_00364",
+    "PERSON_00027",
+    "PERSON_00363",
+    "PERSON_00223",
+    "PERSON_00085",
+    "PERSON_00281",
+    "PERSON_00250",
+    "PERSON_00012"
+  ],
+  "notes": "Synthetic public-post interaction cues; not a real platform record."
+}
