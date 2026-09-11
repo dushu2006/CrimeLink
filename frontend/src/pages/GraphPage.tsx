@@ -252,10 +252,10 @@ export default function GraphPage() {
     if (mode === "person") {
       return network
         ? {
-            nodes: network.nodes,
-            edges: network.edges,
-            targetKey: network.target.provenance_key,
-          }
+          nodes: network.nodes,
+          edges: network.edges,
+          targetKey: network.target.provenance_key,
+        }
         : null;
     }
     if (mode === "master") {
@@ -265,10 +265,10 @@ export default function GraphPage() {
     }
     return temporal
       ? {
-          nodes: temporal.nodes,
-          edges: temporal.edges,
-          targetKey: temporal.target ?? null,
-        }
+        nodes: temporal.nodes,
+        edges: temporal.edges,
+        targetKey: temporal.target ?? null,
+      }
       : null;
   }, [mode, network, master, temporal]);
 
@@ -339,12 +339,12 @@ export default function GraphPage() {
               ele.data("is_target")
                 ? LABEL_SIZE.PERSON + 18
                 : (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
-                  (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
+                (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
             height: (ele: cytoscape.NodeSingular) =>
               ele.data("is_target")
                 ? LABEL_SIZE.PERSON + 18
                 : (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
-                  (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
+                (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
             "border-width": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? 4 : 1,
             "border-style": "solid",
@@ -356,7 +356,7 @@ export default function GraphPage() {
         {
           selector: "edge",
           style: {
-            width: (ele: cytoscape.NodeSingular) => 1.5 + 2 * Number(ele.data("confidence") ?? 1),
+            width: (ele: cytoscape.EdgeSingular) => 1.5 + 2 * Number(ele.data("confidence") ?? 1),
             "line-color": (ele: cytoscape.EdgeSingular) => {
               const rel = String(ele.data("raw_rel") ?? "");
               if (rel.includes("TRANSFER") || rel.includes("TRANSACTION")) return "#1D4ED8";
@@ -381,7 +381,7 @@ export default function GraphPage() {
             "text-rotation": "autorotate",
             "text-background-opacity": 0.95,
             "text-background-color": "#FFFFFF",
-            "text-background-padding": 2,
+            "text-background-padding": "2px",
             "text-background-shape": "roundrectangle",
             "text-border-opacity": 0.8,
             "text-border-width": 1,
