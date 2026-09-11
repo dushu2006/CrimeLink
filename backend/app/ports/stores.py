@@ -86,6 +86,9 @@ class GraphStore(Protocol):
 
     def snapshot(self, case_id: str, include_inactive: bool = False) -> Any: ...
 
+    def multi_case_snapshot(self, case_ids: list[str], include_inactive: bool = False) -> Any:
+        """One snapshot spanning several cases for cross-case reasoning."""
+
     def timeline(
         self,
         case_id: str,

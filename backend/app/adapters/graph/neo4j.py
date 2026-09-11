@@ -115,6 +115,14 @@ RETURN a.provenance_key AS source, b.provenance_key AS target,
        type(r) AS rel_type, properties(r) AS props
 """
 
+MULTI_CASE_PROJECTION = """
+MATCH (n)
+WHERE ANY(cid IN $case_ids WHERE cid IN n.case_ids)
+  AND ($include_inactive OR coalesce(n.is_active, true))
+  AND NOT coalesce(n.staging, false)
+RETURN n
+"""
+
 # EXPAND_QUERY is no longer a static constant: Neo4j does not allow a
 # variable-length relationship upper bound to be a query parameter ($depth).
 # The query is generated per depth value by Neo4jGraphStore._expand_query().
@@ -490,27 +498,9 @@ class Neo4jGraphStore:
             out.append(self._node_to_graph_node(props, node_labels[0] if node_labels else "Person"))
         return out[:limit]
 
-    def snapshot(
-        self, case_id: str, include_inactive: bool = False, include_staging: bool = False
+    def _snapshot_from_rows(
+        self, case_id: str, nodes_raw: list, edges_raw: list
     ) -> CaseGraphSnapshot:
-        def _apply(tx):
-            nodes = [
-                (dict(r["n"]), list(r["n"].labels)[0] if r["n"].labels else "Person")
-                for r in tx.run(
-                    CASE_PROJECTION,
-                    case_id=case_id,
-                    include_inactive=include_inactive,
-                    include_staging=include_staging,
-                )
-            ]
-            keys = [props.get("provenance_key") for props, _ in nodes]
-            edges = [
-                (r["source"], r["target"], r["rel_type"], r["props"])
-                for r in tx.run(CASE_EDGE_PROJECTION, keys=keys)
-            ]
-            return nodes, edges
-
-        nodes_raw, edges_raw = self._read(_apply)
         nodes: dict[str, GraphNode] = {}
         for props, label in nodes_raw:
             if label == "Case":
@@ -539,6 +529,53 @@ class Neo4jGraphStore:
             except Exception:
                 continue
         return CaseGraphSnapshot(case_id=case_id, nodes=nodes, edges=edges)
+
+    def snapshot(
+        self, case_id: str, include_inactive: bool = False, include_staging: bool = False
+    ) -> CaseGraphSnapshot:
+        def _apply(tx):
+            nodes = [
+                (dict(r["n"]), list(r["n"].labels)[0] if r["n"].labels else "Person")
+                for r in tx.run(
+                    CASE_PROJECTION,
+                    case_id=case_id,
+                    include_inactive=include_inactive,
+                    include_staging=include_staging,
+                )
+            ]
+            keys = [props.get("provenance_key") for props, _ in nodes]
+            edges = [
+                (r["source"], r["target"], r["rel_type"], r["props"])
+                for r in tx.run(CASE_EDGE_PROJECTION, keys=keys)
+            ]
+            return nodes, edges
+
+        nodes_raw, edges_raw = self._read(_apply)
+        return self._snapshot_from_rows(case_id, nodes_raw, edges_raw)
+
+    def multi_case_snapshot(
+        self, case_ids: list[str], include_inactive: bool = False
+    ) -> CaseGraphSnapshot:
+        """One snapshot spanning several cases for cross-case reasoning."""
+
+        def _apply(tx):
+            nodes = [
+                (dict(r["n"]), list(r["n"].labels)[0] if r["n"].labels else "Person")
+                for r in tx.run(
+                    MULTI_CASE_PROJECTION,
+                    case_ids=list(case_ids),
+                    include_inactive=include_inactive,
+                )
+            ]
+            keys = [props.get("provenance_key") for props, _ in nodes]
+            edges = [
+                (r["source"], r["target"], r["rel_type"], r["props"])
+                for r in tx.run(CASE_EDGE_PROJECTION, keys=keys)
+            ]
+            return nodes, edges
+
+        nodes_raw, edges_raw = self._read(_apply)
+        return self._snapshot_from_rows("", nodes_raw, edges_raw)
 
     def timeline(
         self,
