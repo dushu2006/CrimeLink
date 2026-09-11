@@ -374,6 +374,168 @@ class AIGateway:
 
     # --------------------------------------------------------------- the core
 
+    @staticmethod
+    def _parse_narrative(content: str):
+        """Tolerant JSON extraction for the investigator narrative contract."""
+        from app.investigator.schemas import InvestigatorNarrative
+
+        text = (content or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text).strip()
+        candidates = [text]
+        start = text.find("{")
+        if start >= 0:
+            depth = 0
+            for index in range(start, len(text)):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidates.append(text[start : index + 1])
+                        break
+        for candidate in candidates:
+            try:
+                return InvestigatorNarrative.model_validate(json.loads(candidate)), ""
+            except Exception:
+                continue
+        return None, "narrative_unparseable"
+
+    async def investigate_narrative(
+        self,
+        *,
+        question: str,
+        brief: str,
+        investigation_id: str,
+        entities: list | None = None,
+        user_id: str | None = None,
+        session: Any = None,
+    ):
+        """Narrate deterministic investigation results (explain-only contract).
+
+        Returns a :class:`ModelSection`: prose over already-computed
+        findings, never new claims. Keyless, failed, or unparseable output
+        degrades to the deterministic analysis with an honest reason —
+        never a 500, never invented content. When ``session`` is given, the
+        AI_QUERY audit row joins the caller's transaction.
+        """
+        from app.investigator.prompts import INVESTIGATOR_SYSTEM, neutralize_language
+        from app.investigator.schemas import ModelSection
+
+        started = time.monotonic()
+        query_id = str(uuid.uuid4())
+        pmap = PseudonymMap()
+        subs: dict[str, str] = {}
+        for entity in entities or []:
+            name = getattr(entity, "display_name", "") or ""
+            if name and name not in subs.values():
+                pseudo = pmap.pseudonymize(
+                    getattr(entity, "canonical_id", name), getattr(entity, "label", None)
+                )
+                subs[pseudo] = name
+        safe_brief = brief
+        for pseudo, name in sorted(subs.items(), key=lambda item: -len(item[1])):
+            safe_brief = safe_brief.replace(name, pseudo)
+
+        def _restore(text: str) -> str:
+            for pseudo, name in subs.items():
+                text = text.replace(pseudo, name)
+            return text
+
+        result = await self.router.chat(
+            "investigation_reasoning",
+            system_prompt=INVESTIGATOR_SYSTEM,
+            user_prompt=safe_brief,
+            response_format={"type": "json_object"},
+            max_tokens=2048,
+            timeout_override=self.settings.ai_interactive_timeout_s,
+            max_retries_override=self.settings.ai_interactive_max_retries,
+        )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        base_audit = dict(
+            query_id=query_id,
+            case_id="",
+            user_id=user_id,
+            role="investigation",
+            latency_ms=latency_ms,
+            tokens=(None, None),
+            pmap_size=len(pmap),
+            question=question,
+            session=session,
+            target_resource=f"investigation:{investigation_id}",
+        )
+        if not result.get("available"):
+            reason = result.get("reason", "api_key_unavailable")
+            await self._audit(
+                **base_audit,
+                model=None,
+                output_hash=None,
+                success=False,
+                error=reason,
+            )
+            return ModelSection(
+                available=False,
+                reason=reason,
+                caveats=[
+                    "No language model is configured: this answer is the deterministic "
+                    "analysis only. Configure an AI provider key to add narrative explanation."
+                ],
+            )
+        content = result.get("content") or ""
+        narrative, _note = self._parse_narrative(content)
+        if narrative is None:
+            await self._audit(
+                **base_audit,
+                model=result.get("model"),
+                output_hash=_hash(content),
+                success=False,
+                error="narrative_unparseable",
+            )
+            return ModelSection(
+                available=False,
+                reason="narrative_unparseable",
+                caveats=[
+                    "The model responded but its output was not valid JSON, "
+                    "so only the deterministic analysis is shown."
+                ],
+            )
+
+        cleaned: dict[str, str] = {}
+        language_edits: list[str] = []
+        for key in ("summary", "observation", "interpretation", "assessment", "convergence_note"):
+            text, edits = neutralize_language(_restore(getattr(narrative, key, "") or ""))
+            cleaned[key] = text
+            language_edits.extend(edits)
+        caveats: list[str] = []
+        for item in narrative.caveats or []:
+            text, edits = neutralize_language(_restore(item))
+            caveats.append(text)
+            language_edits.extend(edits)
+        actions: list[str] = []
+        for item in narrative.suggested_next_actions or []:
+            text, edits = neutralize_language(_restore(item))
+            actions.append(text)
+            language_edits.extend(edits)
+        await self._audit(
+            **base_audit,
+            model=result.get("model"),
+            output_hash=_hash(content),
+            success=True,
+        )
+        return ModelSection(
+            available=True,
+            model=result.get("model"),
+            summary=cleaned["summary"],
+            observation=cleaned["observation"],
+            interpretation=cleaned["interpretation"],
+            assessment=cleaned["assessment"],
+            convergence_note=cleaned["convergence_note"],
+            caveats=caveats,
+            suggested_next_actions=actions,
+            language_edits=language_edits,
+        )
+
     async def _answer(self, *, question: str, case_id: str, user_id: str | None = None,
                       principal_id: str | None = None,
                       depth: int | None = None, target_key: str | None = None,
@@ -1422,20 +1584,40 @@ class AIGateway:
             if self.settings.ai_audit_prompt_storage:
                 details["question"] = fields.get("question")
 
+            from contextlib import asynccontextmanager
+
             from app.audit.service import audit_service
-            async with async_session() as session:
-                await audit_service.append_async(
-                    session,
-                    action_type="AI_QUERY",
-                    user_id=fields.get("user_id"),
-                    badge_number=None,
-                    target_resource=f"case:{fields.get('case_id')}",
-                    case_id=fields.get("case_id"),
-                    jurisdiction_id=None,
-                    ip_address=None,
-                    trace_id=fields.get("query_id"),
-                    details=details,
-                )
+
+            entry = dict(
+                action_type="AI_QUERY",
+                user_id=fields.get("user_id"),
+                badge_number=None,
+                target_resource=fields.get("target_resource")
+                or f"case:{fields.get('case_id')}",
+                case_id=fields.get("case_id"),
+                jurisdiction_id=None,
+                ip_address=None,
+                trace_id=fields.get("query_id"),
+                details=details,
+            )
+            caller_session = fields.get("session")
+            if caller_session is not None:
+                # Join the caller's transaction behind a savepoint: the AI
+                # audit row lands atomically with the caller's own writes
+                # instead of racing them on a second connection.
+                @asynccontextmanager
+                async def _joined():
+                    if caller_session.in_transaction():
+                        async with caller_session.begin_nested():
+                            yield
+                    else:
+                        yield
+
+                async with _joined():
+                    await audit_service.append_async(caller_session, **entry)
+            else:
+                async with async_session() as session:
+                    await audit_service.append_async(session, **entry)
         except Exception:
             log.exception("ai.audit_failed")
 
