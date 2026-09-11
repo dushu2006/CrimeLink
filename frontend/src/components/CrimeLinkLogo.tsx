@@ -1,4 +1,3 @@
-import React from "react";
 
 export default function CrimeLinkLogo({
   className = "h-9 w-auto",
