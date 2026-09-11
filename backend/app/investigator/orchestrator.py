@@ -154,16 +154,44 @@ async def load_inputs(
         analytics_findings = []
 
     pending_aliases: list[PendingAlias] = []
+    seen_proposals: set[tuple[str, str]] = set()
+
+    def _propose(source_key: str, target_key: str, note: str, extra: dict | None = None) -> None:
+        pair = tuple(sorted((source_key, target_key)))
+        if pair in seen_proposals:
+            return
+        seen_proposals.add(pair)
+        pending_aliases.append(
+            PendingAlias(source_key=source_key, target_key=target_key, note=note, extra=extra or {})
+        )
+
     for edge in snapshot.edges or []:
         if edge.rel_type == "POTENTIAL_ALIAS":
             props = edge.properties or {}
-            pending_aliases.append(
-                PendingAlias(
-                    source_key=edge.source_key,
-                    target_key=edge.target_key,
-                    note=f"similarity {props.get('similarity', '?')}",
-                    extra=dict(props),
+            _propose(
+                edge.source_key,
+                edge.target_key,
+                f"similarity {props.get('similarity', '?')}",
+                dict(props),
+            )
+    if case_ids:
+        from app.db.models import EntityResolutionItem
+        from app.domain.enums import ResolutionStatus
+
+        queue_rows = (
+            await session.execute(
+                select(EntityResolutionItem).where(
+                    EntityResolutionItem.case_id.in_(case_ids),
+                    EntityResolutionItem.status == ResolutionStatus.PENDING,
                 )
+            )
+        ).scalars()
+        for item in queue_rows:
+            basis = getattr(item.match_basis, "value", item.match_basis)
+            _propose(
+                item.source_node_key,
+                item.target_node_key,
+                f"{basis} similarity {item.similarity_score:.2f}",
             )
 
     dismissed_signatures: set[str] = set()
@@ -185,6 +213,20 @@ async def load_inputs(
             dismissed_signatures.add(sig)
             dismissed_notes[sig] = row.review_note or (
                 f"{getattr(row.pattern_type, 'value', row.pattern_type)} dismissed."
+            )
+        rejected_rows = (
+            await session.execute(
+                select(EntityResolutionItem).where(
+                    EntityResolutionItem.case_id.in_(case_ids),
+                    EntityResolutionItem.status == ResolutionStatus.REJECTED,
+                )
+            )
+        ).scalars()
+        for item in rejected_rows:
+            sig = entity_signature([item.source_node_key, item.target_node_key])
+            dismissed_signatures.add(sig)
+            dismissed_notes[sig] = (
+                f"Identity proposal rejected: {item.resolution_note or 'reviewer decision'}."
             )
 
     return InvestigationInputs(
@@ -315,7 +357,7 @@ async def investigate(
     stage = time.monotonic()
     resolved = [entity for entity in entities if entity.resolved]
     pairs = [
-        (resolved[index], resolved(other))
+        (resolved[index], resolved[other])
         for index in range(len(resolved))
         for other in range(index + 1, len(resolved))
     ][:MAX_PAIRS]

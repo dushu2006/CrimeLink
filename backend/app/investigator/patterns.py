@@ -73,11 +73,33 @@ FINANCIAL_WINDOW_DAYS = 7
 MAX_EXCLUDED = 10
 
 LOCATION_LABELS = frozenset({"LOCATION", "ADDRESS", "PLACE"})
-PRESENCE_RELS = frozenset({"PRESENT_AT", "OBSERVED_AT", "LOCATED_AT", "VISITED", "SEEN_AT"})
+PRESENCE_RELS = frozenset(
+    {"PRESENT_AT", "OBSERVED_AT", "LOCATED_AT", "VISITED", "SEEN_AT", "RESIDES_AT"}
+)
 USE_RELS = frozenset({"USES", "DRIVES", "DROVE", "OPERATES", "TRAVELLED_IN", "RIDES"})
-OWN_RELS = frozenset({"OWNS", "OWNED_BY", "REGISTERED_TO", "REGISTERED_UNDER", "TITLE_HOLDER"})
+OWN_RELS = frozenset(
+    {
+        "OWNS",
+        "OWNS_VEHICLE",
+        "OWNS_ACCOUNT",
+        "OWNS_PROPERTY",
+        "OWNED_BY",
+        "REGISTERED_TO",
+        "REGISTERED_UNDER",
+        "TITLE_HOLDER",
+    }
+)
 FAMILY_RELS = frozenset(
-    {"SPOUSE", "MARRIED_TO", "PARENT_OF", "CHILD_OF", "SIBLING_OF", "FAMILY_MEMBER", "RELATIVE_OF"}
+    {
+        "SPOUSE",
+        "MARRIED_TO",
+        "PARENT_OF",
+        "CHILD_OF",
+        "SIBLING_OF",
+        "FAMILY_MEMBER",
+        "RELATIVE_OF",
+        "RELATED_TO",
+    }
 )
 HOUSEHOLD_RELS = frozenset({"LIVES_WITH", "HOUSEHOLD_MEMBER", "SHARES_ADDRESS"})
 ORG_RELS = frozenset({"WORKS_FOR", "EMPLOYED_BY", "MEMBER_OF", "STUDIES_AT", "ENROLLED_AT"})
@@ -505,11 +527,15 @@ def detect_vehicle_mismatches(ctx: DetectorContext) -> list[SuspiciousPattern]:
     nodes = ctx.snapshot.nodes or {}
     uses: list[tuple[str, str, object]] = []
     owners: dict[str, set[str]] = defaultdict(set)
+    # Generic association toward a vehicle counts as use: the platform's core
+    # vocabulary records borrowing without a dedicated USE relation, and the
+    # vehicle-target check below keeps this precise.
+    use_rels = USE_RELS | {"ASSOCIATE_OF", "PARTICIPATED_IN"}
     for edge in ctx.snapshot.edges or []:
-        if edge.rel_type in USE_RELS:
+        if edge.rel_type in use_rels:
             uses.append((edge.source_key, edge.target_key, edge))
         elif edge.rel_type in OWN_RELS:
-            if edge.rel_type in {"OWNS", "TITLE_HOLDER"}:
+            if edge.rel_type in {"OWNS", "OWNS_VEHICLE", "OWNS_ACCOUNT", "OWNS_PROPERTY", "TITLE_HOLDER"}:
                 owners[edge.target_key].add(edge.source_key)
             else:
                 owners[edge.source_key].add(edge.target_key)
