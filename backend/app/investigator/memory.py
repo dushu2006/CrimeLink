@@ -103,10 +103,11 @@ async def create_session(
     scope: str,
     title: str,
     created_by: str | None,
+    thread_id: str | None = None,
 ) -> InvestigationSession:
     """Open a new thread (flushed, committed by the caller)."""
     row = InvestigationSession(
-        id=new_uuid(),
+        id=thread_id or new_uuid(),
         dataset_id=dataset_id,
         case_id=case_id,
         scope=scope,

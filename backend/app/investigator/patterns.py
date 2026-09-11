@@ -796,7 +796,15 @@ def detect_community_signals(ctx: DetectorContext) -> list[SuspiciousPattern]:
             )
         )
     for finding in list(ctx.analytics_findings or []) + list(ctx.engine_findings or []):
-        code = str(getattr(finding, "code", getattr(finding, "kind", "")) or "").upper()
+        raw_code = (
+            getattr(finding, "code", "")
+            or getattr(finding, "kind", "")
+            or getattr(finding, "finding_type", "")
+        )
+        pattern_type = getattr(finding, "pattern_type", None)
+        if pattern_type is not None:
+            raw_code = raw_code or getattr(pattern_type, "value", str(pattern_type))
+        code = str(raw_code or "").upper()
         if code not in {"HIGH_CENTRALITY", "DENSE_COMMUNITY"}:
             continue
         keys = [str(key) for key in (getattr(finding, "entity_keys", []) or [])][:8]
@@ -804,7 +812,13 @@ def detect_community_signals(ctx: DetectorContext) -> list[SuspiciousPattern]:
             continue
         seen_groups.add(frozenset(keys))
         names = [_node_name(ctx.snapshot, key) for key in keys]
-        summary = str(getattr(finding, "summary", getattr(finding, "explanation", code)) or code)
+        summary = str(
+            getattr(finding, "summary", "")
+            or getattr(finding, "explanation", "")
+            or getattr(finding, "narrative", "")
+            or getattr(finding, "title", "")
+            or code
+        )
         strength, factors = score_strength(independent_sources=1)
         found.append(
             SuspiciousPattern(
