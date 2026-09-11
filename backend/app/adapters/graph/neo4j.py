@@ -56,14 +56,47 @@ except ImportError:  # pragma: no cover - production image always has it
 # Cypher — every write statement in the system lives in this module.
 # ---------------------------------------------------------------------------
 
-CONSTRAINTS = (
-    "CREATE CONSTRAINT pk_unique IF NOT EXISTS FOR (n) REQUIRE n.provenance_key IS UNIQUE",
-    "CREATE CONSTRAINT phone_uniq IF NOT EXISTS FOR (p:Phone) REQUIRE p.number IS UNIQUE",
-    "CREATE CONSTRAINT plate_uniq IF NOT EXISTS FOR (v:Vehicle) REQUIRE v.plate IS UNIQUE",
-    "CREATE CONSTRAINT acct_uniq IF NOT EXISTS FOR (a:BankAccount) REQUIRE a.number IS UNIQUE",
-    "CREATE CONSTRAINT case_uniq IF NOT EXISTS FOR (c:Case) REQUIRE c.case_id IS UNIQUE",
-    "CREATE FULLTEXT INDEX entity_search IF NOT EXISTS FOR (n) ON EACH [n.name, n.aliases, n.search_text]",
-)
+# Labels that carry provenance_key and need a uniqueness constraint.
+_PK_LABELS = [e.value for e in EntityType] + ["Case"]
+
+# Labels included in the fulltext search index.  Event is excluded because
+# events don't carry name/aliases/search_text in the data model.
+_FULLTEXT_LABELS = [
+    e.value for e in EntityType if e != EntityType.EVENT
+]
+
+
+def _build_constraints() -> tuple[str, ...]:
+    """Generate properly label-scoped Neo4j constraints and indexes.
+
+    Neo4j requires constraints and fulltext indexes to be scoped to specific
+    labels — ``FOR (n)`` without a label is invalid syntax.
+    """
+    stmts: list[str] = []
+    # One provenance_key uniqueness constraint per label
+    for label in _PK_LABELS:
+        safe = label.lower().replace(" ", "_")
+        stmts.append(
+            f"CREATE CONSTRAINT pk_unique_{safe} IF NOT EXISTS "
+            f"FOR (n:{label}) REQUIRE n.provenance_key IS UNIQUE"
+        )
+    # Domain-specific uniqueness constraints
+    stmts.extend([
+        "CREATE CONSTRAINT phone_uniq IF NOT EXISTS FOR (p:Phone) REQUIRE p.number IS UNIQUE",
+        "CREATE CONSTRAINT plate_uniq IF NOT EXISTS FOR (v:Vehicle) REQUIRE v.plate IS UNIQUE",
+        "CREATE CONSTRAINT acct_uniq IF NOT EXISTS FOR (a:BankAccount) REQUIRE a.number IS UNIQUE",
+        "CREATE CONSTRAINT case_uniq IF NOT EXISTS FOR (c:Case) REQUIRE c.case_id IS UNIQUE",
+    ])
+    # Fulltext index scoped to labels that carry name/aliases/search_text
+    label_list = "|".join(_FULLTEXT_LABELS)
+    stmts.append(
+        f"CREATE FULLTEXT INDEX entity_search IF NOT EXISTS "
+        f"FOR (n:{label_list}) ON EACH [n.name, n.aliases, n.search_text]"
+    )
+    return tuple(stmts)
+
+
+CONSTRAINTS = _build_constraints()
 
 # Projection used by analytics and by the scheduled pattern pass.  Kept here as
 # a named constant so the graph query for a case has exactly one definition.
@@ -82,12 +115,9 @@ RETURN a.provenance_key AS source, b.provenance_key AS target,
        type(r) AS rel_type, properties(r) AS props
 """
 
-EXPAND_QUERY = """
-MATCH p = (root {provenance_key: $root})-[rels*1..$depth]-(other)
-WHERE size($types) = 0 OR all(rel IN rels WHERE type(rel) IN $types)
-RETURN p
-LIMIT $limit
-"""
+# EXPAND_QUERY is no longer a static constant: Neo4j does not allow a
+# variable-length relationship upper bound to be a query parameter ($depth).
+# The query is generated per depth value by Neo4jGraphStore._expand_query().
 
 SEARCH_FALLBACK = """
 MATCH (n)
@@ -165,8 +195,27 @@ class Neo4jGraphStore:
         )
         self._version = 0
         self._templates: dict[tuple[str, str], str] = {}
+        self._expand_templates: dict[int, str] = {}
 
     # --------------------------------------------------------------- plumbing
+    def _expand_query(self, depth: int) -> str:
+        """Cached expand query with the depth baked in as a literal integer.
+
+        Neo4j Cypher does not allow a variable-length relationship's upper
+        bound to be a query parameter — it must be a literal integer in the
+        query text.  The depth value is already clamped via
+        ``max(1, min(int(depth), self.settings.graph_max_expand_depth))``
+        before this method is called, so it is safe to interpolate directly.
+        """
+        if depth not in self._expand_templates:
+            self._expand_templates[depth] = (
+                "MATCH p = (root {provenance_key: $root})"
+                f"-[rels*1..{depth}]-(other) "
+                "WHERE size($types) = 0 OR all(rel IN rels WHERE type(rel) IN $types) "
+                "RETURN p LIMIT $limit"
+            )
+        return self._expand_templates[depth]
+
     def _template(self, kind: str, token: str) -> str:
         """Cached, whitelisted Cypher template (token is never user input)."""
         key = (kind, token)
@@ -359,10 +408,9 @@ class Neo4jGraphStore:
         def _apply(tx):
             return list(
                 tx.run(
-                    EXPAND_QUERY,
+                    self._expand_query(depth),
                     root=root_key,
                     types=list(rel_types or []),
-                    depth=depth,
                     limit=limit,
                 )
             )

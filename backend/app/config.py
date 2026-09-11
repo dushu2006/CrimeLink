@@ -184,6 +184,16 @@ class Settings(BaseSettings):
     #: Retries for a transient provider failure (timeouts, 5xx, rate limits).
     ai_max_retries: int = 2
 
+    # --- interactive path budget (§2.1 / §2.2) ------------------------------
+    #: The interactive /ai/cases/{id}/ask and /ask/stream endpoints need a
+    #: shorter latency budget than any background/batch AI usage.  These
+    #: override the global ai_timeout_s / ai_max_retries / context budget
+    #: for that path only.
+    ai_interactive_timeout_s: float = 30.0
+    ai_interactive_max_retries: int = 1
+    ai_interactive_max_context_nodes: int = 100
+    ai_interactive_max_context_edges: int = 200
+
     # ------------------------------------------------------ synthetic corpus
     synthetic_corpus_enabled: bool = False
     synthetic_corpus_seed: int = 20260902

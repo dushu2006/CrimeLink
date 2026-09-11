@@ -30,8 +30,14 @@ from app.audit.service import audit_service
 from app.db.models import Case, JurisdictionAccessRequest, User
 from app.db.session import get_db_session
 from app.domain.enums import AccessRequestStatus, AuditAction, Role
-from app.errors import AuthenticationError, JurisdictionDeniedError, PermissionDeniedError
+from app.errors import (
+    AuthenticationError,
+    JurisdictionDeniedError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from app.logging import get_logger
+from app.security.net import client_ip
 from app.security.rate_limit import enforce_rate_limit
 from app.security.tokens import decode_access_token
 
@@ -122,10 +128,12 @@ class JurisdictionScope:
         principal: Principal,
         granted_jurisdictions: set[str],
         granted_case_ids: set[str],
+        expected_dataset_id: str | None = None,
     ) -> None:
         self.principal = principal
         self.granted_jurisdictions = granted_jurisdictions
         self.granted_case_ids = granted_case_ids
+        self.expected_dataset_id = expected_dataset_id
 
     @property
     def allowed_jurisdictions(self) -> set[str]:
@@ -138,7 +146,13 @@ class JurisdictionScope:
     def assert_case(self, case: Case | None) -> Case:
         """Raise ``JurisdictionDeniedError`` (surfaced as 404) if out of scope."""
         if case is None:
-            raise JurisdictionDeniedError()
+            raise NotFoundError("Case not found.")
+        if (
+            self.expected_dataset_id
+            and getattr(case, "dataset_id", None)
+            and self.expected_dataset_id != case.dataset_id
+        ):
+            raise NotFoundError("This case belongs to a dataset that is no longer active.")
         jurisdiction = (
             case.jurisdiction_id.value
             if hasattr(case.jurisdiction_id, "value")
@@ -162,6 +176,7 @@ class JurisdictionScope:
 async def get_scope(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db_session),
+    request: Request = None,  # type: ignore[assignment]
 ) -> JurisdictionScope:
     """Load active cross-jurisdiction grants and expire stale ones."""
     from datetime import datetime
@@ -196,10 +211,18 @@ async def get_scope(
         row.status = AccessRequestStatus.EXPIRED
         row.decided_at = row.decided_at or now
 
+    expected_dataset = (
+        request.headers.get("X-Dataset-Id")
+        or request.query_params.get("dataset_id")
+        if request is not None and hasattr(request, "headers")
+        else None
+    )
+
     return JurisdictionScope(
         principal=principal,
         granted_jurisdictions={row.target_jurisdiction for row in rows},
         granted_case_ids={row.case_id for row in rows if row.case_id},
+        expected_dataset_id=expected_dataset,
     )
 
 
@@ -254,7 +277,7 @@ class AuditRecorder:
                 target_resource=entry["target_resource"],
                 case_id=entry["case_id"],
                 jurisdiction_id=self.principal.jurisdiction_id if self.principal else None,
-                ip_address=_client_ip(self.request),
+                ip_address=client_ip(self.request),
                 trace_id=entry["trace_id"],
                 details=entry["details"],
             )
@@ -328,11 +351,7 @@ def audited(
     return decorator
 
 
-def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else None
+# _client_ip removed — use app.security.net.client_ip instead.
 
 
 __all__ = [

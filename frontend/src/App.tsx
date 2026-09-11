@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -24,6 +25,28 @@ setUnauthorizedHandler(() => useAuth.getState().signOut());
 export default function App() {
   const session = useAuth((state) => state.session);
 
+  /**
+   * Each time the active dataset changes the version counter increments and
+   * the entire Routes tree remounts.  This is the cheapest way to guarantee
+   * that every page's in-memory state is reset and all data is re-fetched
+   * from the new dataset — no individual page needs to know that a swap
+   * happened.
+   *
+   * ``crimelink:dataset-changed`` is dispatched by ``datasetChanged()`` in
+   * ``client.ts``, which DatasetConsole calls after a completed import or an
+   * explicit activation.
+   */
+  const [datasetVersion, setDatasetVersion] = useState(0);
+  useEffect(() => {
+    function onDatasetChanged() {
+      setDatasetVersion((v) => v + 1);
+    }
+    window.addEventListener("crimelink:dataset-changed", onDatasetChanged);
+    return () => {
+      window.removeEventListener("crimelink:dataset-changed", onDatasetChanged);
+    };
+  }, []);
+
   if (!session) {
     return (
       <Routes>
@@ -34,7 +57,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <Routes>
+      <Routes key={datasetVersion}>
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/cases" replace />} />
           <Route path="/cases" element={<Cases />} />
@@ -63,3 +86,4 @@ export default function App() {
     </ErrorBoundary>
   );
 }
+

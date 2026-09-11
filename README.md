@@ -70,6 +70,8 @@ PostgreSQL, Neo4j, MinIO and Celery. The domain, pipeline, analytics and API
 layers are byte-for-byte identical in both; only the adapters behind the
 ports change.
 
+> **Note on Neo4j**: Neo4j only activates under the production profile / docker compose, not `python run.py`. After switching profiles, verify that Neo4j is active by checking `GET /api/v1/admin/database/health` to confirm `graph.backend == "neo4j"` and `graph.ok == true` before relying on it for a demo.
+
 ### The six-stage pipeline
 
 1. **Validate** — type, size, MIME, SHA-256, duplicate detection.

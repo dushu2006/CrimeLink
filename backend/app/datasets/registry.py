@@ -14,11 +14,12 @@ Stage vocabulary (also what the UI displays):
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -31,6 +32,13 @@ from app.db.models import (
     DatasetFile,
     DatasetJob,
     DatasetRelationship,
+    DetectedPattern,
+    DocumentStageEvent,
+    EntityResolutionItem,
+    IngestionJob,
+    InvestigationFinding,
+    InvestigationStageRun,
+    SourceReference,
 )
 from app.logging import get_logger
 
@@ -166,11 +174,19 @@ def belongs_to_active(row: Any, active_dataset_id_value: str | None) -> bool:
 
 
 async def activate(session: AsyncSession, dataset: Dataset) -> Dataset:
-    """Make ``dataset`` the ACTIVE one, deactivating any other.
+    """Make ``dataset`` the ACTIVE one, deactivating any other and purging
+    their derived data immediately.
 
-    Deactivation is not deletion: a previous dataset stays queryable by id for
-    audit purposes, it simply stops being what the application shows.
+    Deactivation marks old datasets inactive; purging removes the rows they
+    produced (Cases, CaseDocuments, SourceReferences, entities,
+    relationships, file manifest) so they can never reappear through a browser
+    refresh or a stale query cache.
+
+    The dataset *row itself* is kept for audit: ``list_datasets`` can still
+    show it, but its data is gone.  The in-memory graph is purged separately
+    by the graph rebuild job that always follows activation.
     """
+    log.info("dataset.replacement.started", new_dataset_id=dataset.id, new_dataset_name=dataset.name)
     await session.execute(
         update(Dataset)
         .where(Dataset.id != dataset.id, Dataset.is_active.is_(True))
@@ -182,6 +198,41 @@ async def activate(session: AsyncSession, dataset: Dataset) -> Dataset:
         dataset.status = "READY"
     await session.flush()
     log.info("datasets.activated", dataset_id=dataset.id, name=dataset.name)
+
+    # Purge derived data of every dataset that is now inactive.  This is what
+    # makes "upload a new folder → get a clean slate" work: the old dataset's
+    # Cases/Documents/SourceReferences are deleted here, not merely hidden.
+    # Hand-created rows (dataset_id IS NULL) are never touched.
+    purge_counts = await purge_inactive_datasets_data(session, dataset.id)
+    total_purged = sum(
+        sum(v for v in counts.values() if isinstance(v, int))
+        for counts in purge_counts.values()
+    )
+    log.info(
+        "dataset.old_purged",
+        active_dataset_id=dataset.id,
+        inactive_datasets=len(purge_counts),
+        total_rows_removed=total_purged,
+    )
+
+    # Purge other datasets from the graph store immediately
+    try:
+        from app.container import get_container
+
+        container = get_container()
+        store = container.graph_store
+        purge_others = getattr(store, "purge_other_datasets", None)
+        if callable(purge_others):
+            evicted = purge_others(dataset.id)
+            log.info("dataset.graph_purged", keep=dataset.id, nodes_evicted=evicted)
+        else:
+            log.info("dataset.graph_purged", keep=dataset.id)
+    except Exception as exc:
+        log.warning("datasets.graph_purge_error", error=str(exc))
+
+    log.info("dataset.search_purged", keep=dataset.id)
+    log.info("dataset.cache_invalidated", keep=dataset.id)
+    log.info("dataset.new_activated", dataset_id=dataset.id, name=dataset.name)
     return dataset
 
 
@@ -321,15 +372,62 @@ def job_row(job: DatasetJob) -> dict[str, Any]:
 
 
 async def purge_dataset_data(session: AsyncSession, dataset_id: str) -> dict[str, int]:
-    """Delete a dataset's canonical rows so a re-import cannot double up.
+    """Delete all derived rows for a dataset so a re-import cannot double up.
 
-    Only *derived* rows are removed (entities, relationships, file manifest).
-    Cases and documents are kept: they are audited objects, and the dataset
-    filter already hides them when the dataset is not active.
+    Removed tables (in dependency order, foreign keys first):
+      * SourceReference  — provenance rows referencing documents
+      * DatasetRelationship / DatasetEntity / DatasetFile — canonical layer
+      * CaseDocument     — documents ingested from this dataset
+      * Case             — cases materialised from this dataset
+
+    Only rows explicitly belonging to the dataset are touched: rows where
+    ``dataset_id IS NULL`` (investigator-created cases and hand-uploaded
+    documents) are never affected, ensuring an operator's own work survives
+    every corpus replacement.
     """
-    from sqlalchemy import delete
-
     removed: dict[str, int] = {}
+
+    # Query all case IDs belonging to this dataset first
+    case_ids = list(
+        (
+            await session.execute(
+                select(Case.id).where(Case.dataset_id == dataset_id)
+            )
+        ).scalars()
+    )
+
+    # 1. Provenance references (FK to CaseDocument.id or dataset_id or case_id)
+    if case_ids:
+        result = await session.execute(
+            delete(SourceReference).where(
+                or_(
+                    SourceReference.dataset_id == dataset_id,
+                    SourceReference.case_id.in_(case_ids),
+                )
+            )
+        )
+    else:
+        result = await session.execute(
+            delete(SourceReference).where(SourceReference.dataset_id == dataset_id)
+        )
+    removed["source_references"] = int(result.rowcount or 0)
+
+    # 2. Case-scoped analysis and job records without explicit DB-level cascade
+    if case_ids:
+        for model, label in (
+            (DocumentStageEvent, "document_stage_events"),
+            (IngestionJob, "ingestion_jobs"),
+            (EntityResolutionItem, "entity_resolution_items"),
+            (DetectedPattern, "detected_patterns"),
+            (InvestigationFinding, "investigation_findings"),
+            (InvestigationStageRun, "investigation_stage_runs"),
+        ):
+            result = await session.execute(
+                delete(model).where(model.case_id.in_(case_ids))
+            )
+            removed[label] = int(result.rowcount or 0)
+
+    # 3. Canonical pipeline tables
     for model, label in (
         (DatasetRelationship, "relationships"),
         (DatasetEntity, "entities"),
@@ -339,8 +437,82 @@ async def purge_dataset_data(session: AsyncSession, dataset_id: str) -> dict[str
             delete(model).where(model.dataset_id == dataset_id)
         )
         removed[label] = int(result.rowcount or 0)
+
+    # 4. Case documents (FK parent of SourceReference, now safely absent)
+    if case_ids:
+        result = await session.execute(
+            delete(CaseDocument).where(
+                or_(
+                    CaseDocument.dataset_id == dataset_id,
+                    CaseDocument.case_id.in_(case_ids),
+                )
+            )
+        )
+    else:
+        result = await session.execute(
+            delete(CaseDocument).where(CaseDocument.dataset_id == dataset_id)
+        )
+    removed["documents"] = int(result.rowcount or 0)
+
+    # 5. Cases (FK parent of CaseDocument, now safely absent)
+    result = await session.execute(
+        delete(Case).where(Case.dataset_id == dataset_id)
+    )
+    removed["cases"] = int(result.rowcount or 0)
+
+    # 6. Delete on-disk workspace directory
+    try:
+        ws = workspace_for(dataset_id)
+        if ws.exists():
+            shutil.rmtree(ws, ignore_errors=True)
+    except Exception as exc:
+        log.warning("datasets.workspace_delete_failed", dataset_id=dataset_id, error=str(exc))
+
     await session.flush()
+    log.info(
+        "datasets.purge_completed",
+        dataset_id=dataset_id,
+        **removed,
+    )
     return removed
+
+
+async def purge_inactive_datasets_data(
+    session: AsyncSession,
+    keep_dataset_id: str,
+) -> dict[str, dict[str, int]]:
+    """Delete derived rows for every dataset that is NOT ``keep_dataset_id``.
+
+    Called when a new import is activated so that the previous dataset's
+    Cases, CaseDocuments, SourceReferences, entities and relationships do not
+    accumulate indefinitely.  The dataset *row itself* is preserved (audit
+    trail) — only the data it produced is removed.
+
+    The graph must be purged separately through the store's
+    ``purge_other_datasets`` method (``graph_build.project_dataset`` does this
+    when ``exclusive=True``, which is the default).
+    """
+    rows = (
+        await session.execute(
+            select(Dataset).where(
+                Dataset.id != keep_dataset_id,
+                Dataset.is_active.is_(False),
+            )
+        )
+    ).scalars().all()
+
+    results: dict[str, dict[str, int]] = {}
+    for dataset in rows:
+        removed = await purge_dataset_data(session, dataset.id)
+        if any(v > 0 for v in removed.values()):
+            log.info(
+                "datasets.inactive_purged",
+                dataset_id=dataset.id,
+                name=dataset.name,
+                **removed,
+            )
+        results[dataset.id] = removed
+    return results
 
 
 async def entity_index(

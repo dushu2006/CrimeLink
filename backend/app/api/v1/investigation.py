@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ValidationFailedError
 from app.security.deps import JurisdictionScope, Principal, get_principal, get_scope, require_roles
 from app.services import cases as case_service
 from app.services import investigation
@@ -51,11 +51,14 @@ async def run_investigation_stage(
     principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
 ) -> dict:
     await case_service.require_case(session, scope, case_id)
-    # Stages run in a worker thread: they use the sync engine (like the
-    # pipeline itself) and can take case-sized time.
-    return await asyncio.to_thread(
-        investigation.run_stage, case_id, stage_key, principal.id
-    )
+    try:
+        return await asyncio.to_thread(
+            investigation.run_stage, case_id, stage_key, principal.id
+        )
+    except (investigation.StageBlocked, NotFoundError):
+        raise
+    except Exception as exc:
+        raise ValidationFailedError(f"Stage '{stage_key}' failed: {exc}") from exc
 
 
 @router.get("/cases/{case_id}/findings")

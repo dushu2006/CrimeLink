@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { t } from "../i18n";
 import { Empty, ErrorState, Spinner } from "../components/Status";
 import { EvidencePointerLink, EvidencePointer } from "../components/EvidenceLink";
 
@@ -72,25 +73,25 @@ export default function Entities() {
     <div className="page">
       <header className="page-head">
         <div>
-          <h1>Entities</h1>
-          {data && <p className="muted">{data.total.toLocaleString()} entities</p>}
+          <h1>{t("nav.entities")}</h1>
+          {data && <p className="muted">{data.total.toLocaleString()} {t("nav.entities")}</p>}
         </div>
       </header>
 
       <div className="toolbar">
         <input
           className="filter-input"
-          placeholder="Search by name…"
+          placeholder={t("entities.searchPlaceholder")}
           defaultValue={q}
           onKeyDown={(event) => {
             if (event.key === "Enter") update({ q: event.currentTarget.value });
           }}
         />
         <select value={label} onChange={(event) => update({ label: event.target.value })}>
-          <option value="">All types</option>
+          <option value="">{t("entities.allTypes")}</option>
           {Object.entries(data?.labels ?? {}).map(([name, count]) => (
             <option key={name} value={name}>
-              {name} ({count})
+              {t("entity." + name) !== ("entity." + name) ? t("entity." + name) : name} ({count})
             </option>
           ))}
         </select>
@@ -98,7 +99,13 @@ export default function Entities() {
 
       {!data && <Spinner />}
       {data && data.items.length === 0 && (
-        <Empty message="No entities match these filters." />
+        <Empty
+          message={
+            !q && !label && !caseId
+              ? t("state.empty")
+              : t("graph.emptyView")
+          }
+        />
       )}
 
       {data && data.items.length > 0 && (
@@ -106,12 +113,12 @@ export default function Entities() {
           <table className="table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th className="num">Confidence</th>
-                <th className="num">Cases</th>
-                <th className="num">Documents</th>
-                <th>Evidence</th>
+                <th>{t("entities.name")}</th>
+                <th>{t("doc.type")}</th>
+                <th className="num">{t("graph.confidence")}</th>
+                <th className="num">{t("cases.title")}</th>
+                <th className="num">{t("cases.documents")}</th>
+                <th>{t("graph.evidence")}</th>
               </tr>
             </thead>
             <tbody>
@@ -122,7 +129,7 @@ export default function Entities() {
                       {row.name}
                     </Link>
                   </td>
-                  <td>{row.label}</td>
+                  <td>{t("entity." + row.label) !== ("entity." + row.label) ? t("entity." + row.label) : row.label}</td>
                   <td className="num">{row.confidence.toFixed(2)}</td>
                   <td className="num">{row.case_count}</td>
                   <td className="num">{row.document_count}</td>
@@ -140,10 +147,10 @@ export default function Entities() {
               disabled={offset <= 0}
               onClick={() => update({ offset: String(Math.max(0, offset - PAGE)) })}
             >
-              Previous
+              {t("pager.previous")}
             </button>
             <span className="muted">
-              {offset + 1}–{Math.min(offset + PAGE, data.total)} of{" "}
+              {offset + 1}–{Math.min(offset + PAGE, data.total)} {t("pager.of")}{" "}
               {data.total.toLocaleString()}
             </span>
             <button
@@ -151,7 +158,7 @@ export default function Entities() {
               disabled={offset + PAGE >= data.total}
               onClick={() => update({ offset: String(offset + PAGE) })}
             >
-              Next
+              {t("pager.next")}
             </button>
           </div>
         </>

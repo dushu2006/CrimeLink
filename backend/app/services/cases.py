@@ -74,6 +74,10 @@ async def list_cases(
     cases listed here -- present in the table, absent from the graph, and
     restored by every browser refresh.
     """
+    active = await registry.active_dataset_id(session)
+    if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
+        raise NotFoundError("The requested dataset is no longer active.")
+
     stmt = (
         select(Case)
         .where(scope.case_filter())
@@ -95,6 +99,10 @@ async def visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> s
     of a replaced dataset unreachable from every one of those surfaces, not
     just from the case pages themselves.
     """
+    active = await registry.active_dataset_id(session)
+    if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
+        return set()
+
     rows = (
         await session.execute(
             select(Case.id)
@@ -117,8 +125,14 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
        cases; if two visible cases carry the same number (source data does
        this), the reference is ambiguous and refused rather than guessed.
     """
+    active = await registry.active_dataset_id(session)
+    if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
+        raise NotFoundError("This case belongs to a dataset that is no longer active.")
+
     case = await session.get(Case, ref)
     if case is None:
+        if active is None:
+            raise NotFoundError("No dataset is currently active.")
         candidates = list(
             (
                 await session.execute(
@@ -137,7 +151,6 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
             raise NotFoundError("Case not found.")
         case = candidates[0]
     case = scope.assert_case(case)
-    active = await registry.active_dataset_id(session)
     if not registry.belongs_to_active(case, active):
         raise NotFoundError(
             "This case belongs to a dataset that is no longer active. "

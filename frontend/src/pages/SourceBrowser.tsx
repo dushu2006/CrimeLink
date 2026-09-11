@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { t } from "../i18n";
 import { Empty, ErrorState, Spinner } from "../components/Status";
 import SourceViewer from "../components/SourceViewer";
 
@@ -119,22 +120,22 @@ export default function SourceBrowser() {
     <div className="page">
       <header className="page-head">
         <div>
-          <h1>Dataset sources</h1>
+          <h1>{t("nav.sources")}</h1>
           <p className="muted">
             {data.dataset_name ? (
               <>
-                Active dataset <strong>{data.dataset_name}</strong> ·{" "}
-                {data.items.length} file{data.items.length === 1 ? "" : "s"} ·{" "}
+                {t("admin.dataset")} <strong>{data.dataset_name}</strong> ·{" "}
+                {data.items.length} {t("cases.documents")} ·{" "}
                 {data.dataset_status ?? "—"}
               </>
             ) : (
-              "No dataset is active — import one in Administration to populate this page."
+              t("state.empty")
             )}
           </p>
         </div>
         <div className="row-actions">
           <button className="btn" onClick={load} type="button">
-            Reload
+            {t("sources.reload")}
           </button>
         </div>
       </header>
@@ -149,7 +150,7 @@ export default function SourceBrowser() {
 
       <input
         className="filter-input"
-        placeholder="Filter by file or type…"
+        placeholder={t("entities.searchPlaceholder")}
         value={filter}
         onChange={(event) => setFilter(event.target.value)}
       />
@@ -157,9 +158,11 @@ export default function SourceBrowser() {
       {sections.length === 0 && (
         <Empty
           message={
-            data.items.length === 0
-              ? "This dataset contained no files."
-              : "No files match this filter."
+            !data.dataset_id || !data.dataset_name
+              ? t("state.empty")
+              : data.items.length === 0
+              ? t("cases.empty")
+              : t("graph.emptyView")
           }
         />
       )}
@@ -170,11 +173,11 @@ export default function SourceBrowser() {
           <table className="table">
             <thead>
               <tr>
-                <th>File</th>
-                <th>State</th>
-                <th>Read as</th>
-                <th>Case</th>
-                <th className="num">Size</th>
+                <th>{t("doc.file")}</th>
+                <th>{t("doc.status")}</th>
+                <th>{t("doc.type")}</th>
+                <th>{t("case.detail")}</th>
+                <th className="num">{t("sources.size")}</th>
                 <th className="num">Rows / pages</th>
                 <th className="num">References</th>
                 <th />

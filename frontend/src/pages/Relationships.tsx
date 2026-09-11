@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { t } from "../i18n";
 import { Empty, ErrorState, Spinner } from "../components/Status";
 import { EvidencePointer, EvidencePointerLink } from "../components/EvidenceLink";
 
@@ -79,8 +80,8 @@ export default function Relationships() {
     <div className="page">
       <header className="page-head">
         <div>
-          <h1>Relationships</h1>
-          {data && <p className="muted">{data.total.toLocaleString()} relationships</p>}
+          <h1>{t("nav.relationships")}</h1>
+          {data && <p className="muted">{data.total.toLocaleString()} {t("nav.relationships")}</p>}
         </div>
       </header>
 
@@ -99,10 +100,10 @@ export default function Relationships() {
           value={relType}
           onChange={(event) => update({ rel_type: event.target.value })}
         >
-          <option value="">All types</option>
+          <option value="">{t("entities.allTypes")}</option>
           {Object.entries(data?.types ?? {}).map(([name, count]) => (
             <option key={name} value={name}>
-              {name} ({count})
+              {name.replace(/_/g, " ").toLowerCase()} ({count})
             </option>
           ))}
         </select>
@@ -110,7 +111,13 @@ export default function Relationships() {
 
       {!data && <Spinner />}
       {data && data.items.length === 0 && (
-        <Empty message="No relationships match these filters." />
+        <Empty
+          message={
+            !relType && !caseId && !entity
+              ? t("state.empty")
+              : t("graph.emptyView")
+          }
+        />
       )}
 
       {data && data.items.length > 0 && (
@@ -118,11 +125,11 @@ export default function Relationships() {
           <table className="table">
             <thead>
               <tr>
-                <th>Source</th>
-                <th>Relationship</th>
-                <th>Target</th>
-                <th className="num">Confidence</th>
-                <th>Evidence</th>
+                <th>{t("rel.source")}</th>
+                <th>{t("graph.relation")}</th>
+                <th>{t("graph.target")}</th>
+                <th className="num">{t("graph.confidence")}</th>
+                <th>{t("graph.evidence")}</th>
               </tr>
             </thead>
             <tbody>
@@ -168,10 +175,10 @@ export default function Relationships() {
               disabled={offset <= 0}
               onClick={() => update({ offset: String(Math.max(0, offset - PAGE)) })}
             >
-              Previous
+              {t("pager.previous")}
             </button>
             <span className="muted">
-              {offset + 1}–{Math.min(offset + PAGE, data.total)} of{" "}
+              {offset + 1}–{Math.min(offset + PAGE, data.total)} {t("pager.of")}{" "}
               {data.total.toLocaleString()}
             </span>
             <button
@@ -179,7 +186,7 @@ export default function Relationships() {
               disabled={offset + PAGE >= data.total}
               onClick={() => update({ offset: String(offset + PAGE) })}
             >
-              Next
+              {t("pager.next")}
             </button>
           </div>
         </>

@@ -28,6 +28,16 @@ os.environ["CRIMELINK_LOG_LEVEL"] = "WARNING"
 # The suite hammers the API; production brute-force limits would trip on it.
 os.environ["CRIMELINK_RATE_LIMIT_PER_MINUTE"] = "100000"
 os.environ["CRIMELINK_RATE_LIMIT_AUTH_PER_MINUTE"] = "100000"
+# Tests default to keyless AI unless a test specifically overrides or mocks it
+for _ai_key in (
+    "CRIMELINK_AI_API_KEY",
+    "CRIMELINK_AI_REASONING_API_KEY",
+    "CRIMELINK_AI_EXTRACTION_API_KEY",
+    "CRIMELINK_AI_EXPLANATION_API_KEY",
+    "CRIMELINK_AI_CLASSIFICATION_API_KEY",
+    "CRIMELINK_AI_EMBEDDING_API_KEY",
+):
+    os.environ[_ai_key] = ""
 
 from app.config import Settings, reload_settings  # noqa: E402
 from app.container import Container, set_container  # noqa: E402

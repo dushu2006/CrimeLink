@@ -88,7 +88,9 @@ class AIModelRouter:
 
     async def chat(self, task: str, system_prompt: str, user_prompt: str,
                    *, response_format: Any | None = None,
-                   max_tokens: int | None = None) -> dict:
+                   max_tokens: int | None = None,
+                   timeout_override: float | None = None,
+                   max_retries_override: int | None = None) -> dict:
         """Invoke a chat model and return the parsed result.
 
         Returns ``{"available": False, "reason": ...}`` when the role has no
@@ -107,7 +109,8 @@ class AIModelRouter:
         if client is None:
             return {"available": False, "reason": "openai_client_unavailable"}
 
-        attempts = max(1, int(getattr(self.settings, "ai_max_retries", 2)) + 1)
+        attempts = max(1, int(max_retries_override if max_retries_override is not None else getattr(self.settings, "ai_max_retries", 2)) + 1)
+        effective_timeout = timeout_override or getattr(invocation, "timeout", getattr(getattr(self, "settings", None), "ai_timeout_s", 60.0))
         last_error: Exception | None = None
         for attempt in range(attempts):
             started = time.perf_counter()
@@ -123,7 +126,17 @@ class AIModelRouter:
                 }
                 if response_format is not None:
                     kwargs["response_format"] = response_format
-                response = await client.chat.completions.create(**kwargs)
+                if getattr(self.settings, "nim_disable_thinking", True) and (
+                    "nvidia" in (invocation.base_url or "").lower()
+                    or "deepseek" in (invocation.model or "").lower()
+                    or "nemotron" in (invocation.model or "").lower()
+                ):
+                    kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": False}}
+                kwargs["timeout"] = effective_timeout
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(**kwargs),
+                    timeout=effective_timeout,
+                )
                 content = response.choices[0].message.content or ""
                 usage = getattr(response, "usage", None)
                 latency_ms = int((time.perf_counter() - started) * 1000)
@@ -175,7 +188,9 @@ class AIModelRouter:
     async def chat_stream(self, task: str, system_prompt: str, user_prompt: str,
                           *, on_delta: Any = None,
                           response_format: Any | None = None,
-                          max_tokens: int | None = None) -> dict:
+                          max_tokens: int | None = None,
+                          timeout_override: float | None = None,
+                          max_retries_override: int | None = None) -> dict:
         """Invoke a chat model *streaming*, forwarding completion deltas to ``on_delta``.
 
         Same availability contract as :meth:`chat` — a missing key or failed
@@ -211,7 +226,18 @@ class AIModelRouter:
             }
             if response_format is not None:
                 kwargs["response_format"] = response_format
-            stream = await client.chat.completions.create(**kwargs)
+            if getattr(self.settings, "nim_disable_thinking", True) and (
+                "nvidia" in (invocation.base_url or "").lower()
+                or "deepseek" in (invocation.model or "").lower()
+                or "nemotron" in (invocation.model or "").lower()
+            ):
+                kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": False}}
+            effective_timeout = timeout_override or getattr(invocation, "timeout", getattr(getattr(self, "settings", None), "ai_timeout_s", 60.0))
+            kwargs["timeout"] = effective_timeout
+            stream = await asyncio.wait_for(
+                client.chat.completions.create(**kwargs),
+                timeout=effective_timeout,
+            )
             async for chunk in stream:
                 choices = getattr(chunk, "choices", None) or []
                 if not choices:
@@ -256,6 +282,8 @@ class AIModelRouter:
             return await self.chat(
                 task, system_prompt, user_prompt,
                 response_format=response_format, max_tokens=max_tokens,
+                timeout_override=timeout_override,
+                max_retries_override=max_retries_override,
             )
 
         latency_ms = int((time.perf_counter() - started) * 1000)

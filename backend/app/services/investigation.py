@@ -46,6 +46,7 @@ from app.db.base import new_uuid, utcnow
 from app.db.models import (
     Case,
     CaseDocument,
+    DetectedPattern,
     EntityResolutionItem,
     IngestionJob,
     InvestigationFinding,
@@ -110,9 +111,87 @@ class UnknownStage(CrimeLinkError):
 # ---------------------------------------------------------------------------
 
 
+def _infer_stage_status(
+    session: Session,
+    case: Case | None,
+    stage_no: int,
+    doc_counts: dict[str, int],
+    prior_completed: bool,
+) -> tuple[str, dict[str, Any]]:
+    """Infer whether an admin-ingested case has already completed a stage.
+
+    For cases imported through the Admin/dataset path (where case.dataset_id is set
+    and documents were processed by the bulk pipeline), stages 1–5 are already
+    complete downstream without an explicit run_stage() invocation.
+
+    Stage 6 (network_analysis) is only inferred COMPLETED if DetectedPattern rows
+    actually exist for the case.
+    Stages 7 (ai_analysis) and 8 (generate_findings) are NEVER inferred; they
+    require explicit user invocation.
+    """
+    if case is None or not case.dataset_id:
+        return "PENDING", {}
+
+    total_docs = doc_counts.get("total", 0)
+    complete_docs = doc_counts.get(IngestionStatus.COMPLETE.value, 0)
+    quarantined_docs = doc_counts.get(IngestionStatus.QUARANTINED.value, 0)
+
+    docs_finished = total_docs > 0 and (complete_docs + quarantined_docs >= total_docs)
+
+    if stage_no == 1:
+        if docs_finished or (total_docs == 0 and case.dataset_id):
+            return "COMPLETED", {
+                "inferred": True,
+                "documents_total": total_docs,
+                "already_complete": complete_docs,
+            }
+        return "PENDING", {}
+
+    if stage_no in (2, 3, 4):
+        if prior_completed:
+            return "COMPLETED", {
+                "inferred": True,
+                "documents_parsed": complete_docs,
+            }
+        return "PENDING", {}
+
+    if stage_no == 5:
+        if prior_completed:
+            try:
+                container = get_container()
+                snap = container.graph_store.snapshot(case.id, include_staging=False)
+                node_count = len(snap.nodes)
+                edge_count = len(snap.edges)
+            except Exception:
+                node_count = 0
+                edge_count = 0
+            if node_count > 0:
+                return "COMPLETED", {
+                    "inferred": True,
+                    "nodes_persisted": node_count,
+                    "edges_persisted": edge_count,
+                }
+        return "PENDING", {}
+
+    if stage_no == 6:
+        if prior_completed:
+            patterns = session.execute(
+                select(DetectedPattern).where(DetectedPattern.case_id == case.id)
+            ).scalars().all()
+            if patterns:
+                return "COMPLETED", {
+                    "inferred": True,
+                    "patterns_detected": len(patterns),
+                }
+        return "PENDING", {}
+
+    return "PENDING", {}
+
+
 def workflow_state(case_id: str) -> dict[str, Any]:
     """Current state of every stage for a case (never runs anything)."""
     with sync_session() as session:
+        case = session.get(Case, case_id)
         rows = (
             session.execute(
                 select(InvestigationStageRun).where(
@@ -124,28 +203,41 @@ def workflow_state(case_id: str) -> dict[str, Any]:
         )
         by_stage = {row.stage: row for row in rows}
         doc_counts = _document_counts(session, case_id)
-    stages = []
-    for definition in STAGES:
-        row = by_stage.get(definition["stage"])
-        blocked_by = [
-            p for p in definition["requires"] if _status_of(by_stage, p) != "COMPLETED"
-        ]
-        stages.append(
-            {
-                "stage": definition["stage"],
-                "key": definition["key"],
-                "label": definition["label"],
-                "requires": definition["requires"],
-                "status": row.status if row else "PENDING",
-                "detail": row.detail if row else {},
-                "error": row.error if row else None,
-                "attempt_count": row.attempt_count if row else 0,
-                "finished_at": row.finished_at.isoformat() if row and row.finished_at else None,
-                "duration_ms": row.duration_ms if row else None,
-                "runnable": not blocked_by,
-                "blocked_by": blocked_by,
-            }
-        )
+        stages = []
+        effective_statuses: dict[int, str] = {}
+        for definition in STAGES:
+            stage_no = definition["stage"]
+            row = by_stage.get(stage_no)
+            if row:
+                status = row.status
+                detail = row.detail or {}
+            else:
+                prior_ok = all(
+                    effective_statuses.get(p) == "COMPLETED" for p in definition["requires"]
+                )
+                status, detail = _infer_stage_status(
+                    session, case, stage_no, doc_counts, prior_completed=prior_ok
+                )
+            effective_statuses[stage_no] = status
+            blocked_by = [
+                p for p in definition["requires"] if effective_statuses.get(p) != "COMPLETED"
+            ]
+            stages.append(
+                {
+                    "stage": stage_no,
+                    "key": definition["key"],
+                    "label": definition["label"],
+                    "requires": definition["requires"],
+                    "status": status,
+                    "detail": detail,
+                    "error": row.error if row else None,
+                    "attempt_count": row.attempt_count if row else 0,
+                    "finished_at": row.finished_at.isoformat() if row and row.finished_at else None,
+                    "duration_ms": row.duration_ms if row else None,
+                    "runnable": not blocked_by and status != "RUNNING",
+                    "blocked_by": blocked_by,
+                }
+            )
     return {
         "case_id": case_id,
         "stages": stages,
@@ -196,10 +288,25 @@ def run_stage(case_id: str, stage_key: str, user_id: str | None = None) -> dict[
             .all()
         )
         by_stage = {row.stage: row for row in rows}
+        doc_counts = _document_counts(session, case_id)
+        effective_statuses: dict[int, str] = {}
+        for s in STAGES:
+            s_no = s["stage"]
+            r = by_stage.get(s_no)
+            if r:
+                effective_statuses[s_no] = r.status
+            else:
+                prior_ok = all(
+                    effective_statuses.get(p) == "COMPLETED" for p in s["requires"]
+                )
+                status, _ = _infer_stage_status(
+                    session, case, s_no, doc_counts, prior_completed=prior_ok
+                )
+                effective_statuses[s_no] = status
         unmet = [
             key_or_none(p)
             for p in definition["requires"]
-            if _status_of(by_stage, p) != "COMPLETED"
+            if effective_statuses.get(p) != "COMPLETED"
         ]
     if unmet:
         raise StageBlocked(stage_key, unmet)
@@ -336,13 +443,44 @@ def _run_pipeline_for(container: Container, doc: CaseDocument, user_id: str | No
 
 def _parse_document(container: Container, settings: Settings, doc: CaseDocument):
     """Re-parse a stored document exactly like pipeline stage S1 does."""
+    from pathlib import Path
     from app.pipeline.adapters.protocol import DocumentMeta
     from app.pipeline.adapters.registry import get_adapter
 
-    raw = container.object_store.get(settings.minio_bucket_documents, doc.storage_key)
+    raw: bytes | None = None
+    try:
+        raw = container.object_store.get(settings.minio_bucket_documents, doc.storage_key)
+    except Exception:
+        raw = None
+
+    if raw is None and doc.dataset_id:
+        from app.datasets import registry
+        ws = registry.workspace_for(doc.dataset_id)
+        candidates = [
+            ws / doc.storage_key,
+            ws / doc.filename,
+        ]
+        if doc.source_metadata and isinstance(doc.source_metadata, dict):
+            rel = doc.source_metadata.get("relative_path")
+            if rel:
+                candidates.append(ws / rel)
+        for cand in candidates:
+            if cand.is_file():
+                raw = cand.read_bytes()
+                try:
+                    container.object_store.put(settings.minio_bucket_documents, doc.storage_key, raw)
+                except Exception:
+                    pass
+                break
+
+    if raw is None:
+        cand = Path(doc.storage_key)
+        if cand.is_file():
+            raw = cand.read_bytes()
+
     if not raw:
         raise ValidationFailedError(
-            f"The stored file for document {doc.id} is missing from the object store."
+            f"The stored file for document {doc.id} ({doc.filename}) is missing from storage."
         )
     adapter = get_adapter(
         DocumentType(doc.document_type),
@@ -727,22 +865,48 @@ def _stage_ai_analysis(
     # nothing here depends on the answer to a previous person.
     async def _ask_one(key: str):
         name = snapshot.nodes[key].name
-        response = await gateway.ask(
-            question=(
-                f"Analyse the network around {name} within this case: which "
-                "connections are analytically significant and what evidence "
-                "supports them?"
-            ),
-            case_id=case_id,
-            principal_id=user_id,
-            depth=2,
-            target_key=key,
-        )
-        return key, name, response
+        try:
+            response = await gateway.ask(
+                question=(
+                    f"Analyse the network around {name} within this case: which "
+                    "connections are analytically significant and what evidence "
+                    "supports them?"
+                ),
+                case_id=case_id,
+                principal_id=user_id,
+                depth=2,
+                target_key=key,
+            )
+            return key, name, response
+        except Exception as exc:
+            log.warning("investigation.ai_analysis.ask_failed", person=name, error=str(exc))
+            from app.ai.schemas import AIResponse, FindingResult
+            return key, name, AIResponse(
+                query_id="failed",
+                role="reasoning",
+                model=None,
+                finding=FindingResult(
+                    finding_type="GENERAL",
+                    summary=f"Analysis of {name} could not be completed: {exc}",
+                    confidence=0.0,
+                    evidence_level="UNKNOWN",
+                    recommended_review=True,
+                ),
+                available=False,
+                fallback_reason=str(exc),
+            )
 
     responses: list[tuple] = []
     if top_persons:
-        responses = await_free(asyncio.gather(*(_ask_one(k) for k in top_persons)))
+        async def _run_all():
+            return await asyncio.gather(*(_ask_one(k) for k in top_persons), return_exceptions=True)
+
+        gathered = await_free(_run_all())
+        for item in gathered:
+            if isinstance(item, Exception):
+                log.warning("investigation.ai_analysis.task_failed", error=str(item))
+            elif isinstance(item, tuple) and len(item) == 3:
+                responses.append(item)
 
     results = []
     available_count = 0
@@ -902,12 +1066,20 @@ _workflow_loop_lock = threading.Lock()
 
 def _workflow_event_loop() -> asyncio.AbstractEventLoop:
     global _workflow_loop
-    if _workflow_loop is None:
+    if _workflow_loop is None or _workflow_loop.is_closed():
         with _workflow_loop_lock:
-            if _workflow_loop is None:
+            if _workflow_loop is None or _workflow_loop.is_closed():
                 loop = asyncio.new_event_loop()
+
+                def _start_loop(l: asyncio.AbstractEventLoop) -> None:
+                    asyncio.set_event_loop(l)
+                    l.run_forever()
+
                 threading.Thread(
-                    target=loop.run_forever, name="crimelink-workflow", daemon=True
+                    target=_start_loop,
+                    args=(loop,),
+                    name="crimelink-workflow",
+                    daemon=True,
                 ).start()
                 _workflow_loop = loop
     return _workflow_loop

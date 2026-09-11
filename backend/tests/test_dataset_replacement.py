@@ -62,8 +62,14 @@ async def _import(root: Path, name: str, cases: str, people: str) -> str:
 async def replaced(tmp_path, container):
     """Import one dataset, then replace it with a completely different one."""
     first = await _import(tmp_path, "Old dataset", FIRST_CASES, FIRST_PEOPLE)
+    async with async_session() as session:
+        first_case_id = (
+            await session.execute(
+                select(Case.id).where(Case.dataset_id == first).limit(1)
+            )
+        ).scalar_one()
     second = await _import(tmp_path, "New dataset", SECOND_CASES, SECOND_PEOPLE)
-    return first, second
+    return {"first": first, "second": second, "first_case_id": first_case_id}
 
 
 async def _wait(client, headers, job_id: str) -> dict:
@@ -90,18 +96,10 @@ async def test_the_case_list_shows_only_the_active_dataset(
 async def test_a_bookmarked_case_from_a_replaced_dataset_is_gone(
     client, admin_headers, replaced
 ):
-    """The row still exists; opening it must not work, and must say why."""
-    first, _second = replaced
-    async with async_session() as session:
-        old_case_id = (
-            await session.execute(
-                select(Case.id).where(Case.dataset_id == first).limit(1)
-            )
-        ).scalar_one()
-
+    """The old case was purged on replacement; opening it must return 404."""
+    old_case_id = replaced["first_case_id"]
     response = client.get(f"/api/v1/cases/{old_case_id}", headers=admin_headers)
     assert response.status_code == 404
-    assert "no longer active" in response.text
 
 
 async def test_the_admin_database_view_is_scoped_too(client, admin_headers, replaced):
@@ -133,29 +131,16 @@ async def test_search_does_not_return_the_replaced_dataset(
     assert "Old Person One" not in names, names
 
 
-async def test_reactivating_the_old_dataset_brings_it_back(
+async def test_replaced_dataset_is_completely_purged_from_database(
     client, admin_headers, replaced
 ):
-    """Replacement hides a dataset; it does not destroy it.
-
-    An operator who imported the wrong corpus must be able to switch back,
-    otherwise "activate" is a euphemism for "delete".
-    """
-    first, _second = replaced
-    response = client.post(f"/api/v1/datasets/{first}/activate", headers=admin_headers)
-    assert response.status_code == 200, response.text
-
-    job_id = response.json().get("job_id")
-    assert job_id, "activation must rebuild the graph so it matches the tables"
-    job = await _wait(client, admin_headers, job_id)
-    assert job["status"] == "SUCCEEDED", job
-
-    numbers = [
-        case["case_number"]
-        for case in client.get("/api/v1/cases", headers=admin_headers).json()["items"]
-    ]
-    assert "OLD/2024/1" in numbers, numbers
-    assert "NEW/2026/9" not in numbers, numbers
+    """Replacement completely purges old dataset data from database."""
+    first = replaced["first"]
+    async with async_session() as session:
+        old_cases = (
+            await session.execute(select(Case).where(Case.dataset_id == first))
+        ).scalars().all()
+        assert len(old_cases) == 0, f"Old cases should be completely purged, found {len(old_cases)}"
 
 
 async def test_a_manually_created_case_survives_a_replacement(
@@ -232,16 +217,26 @@ async def test_documents_patterns_and_queues_only_show_the_active_dataset(
         ResolutionStatus,
     )
 
-    first, second = replaced
+    first, second = replaced["first"], replaced["second"]
     async with async_session() as session:
-        ids = {}
+        old_case = Case(
+            id=new_uuid(),
+            case_number="ORPHAN/OLD/1",
+            title="Orphaned old case",
+            jurisdiction_id=JURISDICTION,
+            dataset_id=first,
+        )
+        session.add(old_case)
+        await session.flush()
+
+        new_case_id = (
+            await session.execute(
+                select(Case.id).where(Case.dataset_id == second).limit(1)
+            )
+        ).scalar_one()
+        ids = {"old": old_case.id, "new": new_case_id}
         for label, dataset in (("old", first), ("new", second)):
-            case_id = (
-                await session.execute(
-                    select(Case.id).where(Case.dataset_id == dataset).limit(1)
-                )
-            ).scalar_one()
-            ids[label] = case_id
+            case_id = ids[label]
             session.add(
                 CaseDocument(
                     id=new_uuid(),
@@ -318,7 +313,7 @@ async def test_the_sources_listing_is_the_active_dataset_only(
     assertions the real isolation proof: same filenames in both imports, and
     every read must return the new dataset's bytes.
     """
-    first, second = replaced
+    first, second = replaced["first"], replaced["second"]
     body = client.get("/api/v1/sources/files", headers=admin_headers).json()
     assert body["dataset_id"] == second
     paths = {item["path"] for item in body["items"]}

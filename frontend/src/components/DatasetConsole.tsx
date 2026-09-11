@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   acceptDatasetMappings,
   activateDataset,
+  datasetChanged,
   importDatasetFiles,
   listDatasetMappings,
   listDatasets,
@@ -336,7 +337,12 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
           if (update.terminal) {
             void refresh();
             setBusy(false);
-            if (update.status === "FAILED") {
+            if (update.status === "SUCCEEDED") {
+              // A completed import or graph rebuild means the active dataset
+              // has new data.  Tell every other mounted page to drop its
+              // stale cache so it refetches from the new dataset.
+              datasetChanged();
+            } else if (update.status === "FAILED") {
               setError(update.error ?? "The job failed.");
             }
           }
@@ -377,6 +383,9 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
     try {
       const updated = await activateDataset(dataset.id);
       setNotice(`"${dataset.name}" is now the active dataset. Rebuilding its graph…`);
+      // Clear stale caches immediately on activation so no other page renders
+      // data from the dataset that just lost active status.
+      datasetChanged();
       await refresh();
       if (updated.job_id) {
         watch(updated.job_id);
@@ -399,7 +408,15 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
       setJob(started.job);
       watch(started.job_id);
     } catch (err) {
-      setError((err as Error).message);
+      const msg = (err as Error).message || "";
+      const match = msg.match(/job\s+([a-f0-9-]+)/i);
+      if (match) {
+        const activeJobId = match[1];
+        setNotice(`A graph rebuild is already in progress (job ${activeJobId.slice(0, 8)}…). Attached to progress.`);
+        watch(activeJobId);
+        return;
+      }
+      setError(msg);
       setBusy(false);
     }
   }
@@ -433,12 +450,38 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
       )}
 
       {/* ---------------------------------------------------------------- */}
-      <h3>Import</h3>
+      <div className="card" style={{ marginBottom: "1.5rem", borderLeft: "4px solid var(--accent, #3b82f6)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+          <div>
+            <div style={{ fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--muted, #64748b)" }}>
+              Active Dataset:
+            </div>
+            <div style={{ fontSize: "1.25rem", fontWeight: 600 }}>
+              {active ? active.name : "None"}
+            </div>
+          </div>
+          <div>
+            <span className={`pill ${active ? "pill-ok" : "pill-warn"}`}>
+              {active ? "ACTIVE" : "NO ACTIVE DATASET"}
+            </span>
+          </div>
+        </div>
+
+        {(selected.length > 0 || datasetName.trim()) && active && (
+          <div style={{ marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border, #e2e8f0)", fontSize: "0.9rem" }}>
+            <div style={{ color: "var(--warn, #f59e0b)", fontWeight: 500 }}>
+              Replacing: <strong>{active.name}</strong>
+            </div>
+            <div style={{ color: "var(--text, #1e293b)" }}>
+              With: <strong>{datasetName.trim() || selected[0]?.name || "New Dataset"}</strong>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <h3>Import Dataset</h3>
       <p className="hint">
-        Any arrangement works: a single CSV or XLSX, a pile of mixed files, a ZIP, or a whole
-        folder. No particular folder names or column headings are required — files are
-        detected, parsed and mapped on the way in, and anything that cannot be mapped
-        confidently is listed for review rather than guessed at.
+        Importing a new dataset will replace the currently active dataset. Previous dataset data will no longer be available in the application.
       </p>
 
       <div className="row-actions">

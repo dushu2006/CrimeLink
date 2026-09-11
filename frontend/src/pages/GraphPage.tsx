@@ -40,6 +40,7 @@ import {
 } from "../lib/investigation";
 import { Empty, ErrorState, Spinner } from "../components/Status";
 import { EvidencePointerLink } from "../components/EvidenceLink";
+import { TechnicalDetails } from "../components/TechnicalDetails";
 
 cytoscape.use(fcose);
 
@@ -78,14 +79,14 @@ const LABEL_SIZE: Record<string, number> = {
 };
 
 const LABEL_COLOR: Record<string, string> = {
-  PERSON: "#1B3A6B",
-  PHONE: "#0F7B6C",
-  BANK_ACCOUNT: "#8A5A00",
-  VEHICLE: "#6B21A8",
-  LOCATION: "#A13B1C",
-  EVENT: "#374151",
-  ORGANIZATION: "#0B5394",
-  CASE: "#111827",
+  PERSON: "#1D4ED8",
+  PHONE: "#059669",
+  BANK_ACCOUNT: "#D97706",
+  VEHICLE: "#7C3AED",
+  LOCATION: "#EA580C",
+  EVENT: "#475569",
+  ORGANIZATION: "#2563EB",
+  CASE: "#0F172A",
 };
 
 const FILTERABLE_LABELS = [
@@ -320,19 +321,18 @@ export default function GraphPage() {
           selector: "node",
           style: {
             "background-color": (ele: cytoscape.NodeSingular) =>
-              LABEL_COLOR[String(ele.data("label"))] ?? "#1B3A6B",
+              LABEL_COLOR[String(ele.data("label"))] ?? "#1D4ED8",
             label: (ele: cytoscape.NodeSingular) => {
-              // Zoom-safe: the name is truncated so dense views stay readable;
-              // the full name lives in the detail panel.
               const name = String(ele.data("name") ?? "");
               return name.length > 22 ? `${name.slice(0, 21)}…` : name;
             },
-            color: "#111827",
+            color: "#0F172A",
+            "font-family": "'Inter', -apple-system, sans-serif",
             "font-size": 11,
             "font-weight": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? 700 : 500,
             "text-valign": "bottom",
-            "text-margin-y": 4,
+            "text-margin-y": 5,
             "text-outline-width": 2,
             "text-outline-color": "#FFFFFF",
             width: (ele: cytoscape.NodeSingular) =>
@@ -346,34 +346,59 @@ export default function GraphPage() {
                 : (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
                   (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
             "border-width": (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 4 : 0,
+              ele.data("is_target") ? 4 : 1,
             "border-style": "solid",
-            "border-color": "#B45309",
+            "border-color": (ele: cytoscape.NodeSingular) =>
+              ele.data("is_target") ? "#B45309" : "#E2E8F0",
             "overlay-padding": 4,
           },
         },
         {
           selector: "edge",
           style: {
-            width: (ele: cytoscape.NodeSingular) => 1 + 3 * Number(ele.data("confidence") ?? 1),
-            "line-color": (ele: cytoscape.EdgeSingular) =>
-              ele.data("raw_rel") === "TRANSFER_TO" ? "#8A5A00" : "#9CA3AF",
-            "target-arrow-color": (ele: cytoscape.EdgeSingular) =>
-              ele.data("raw_rel") === "TRANSFER_TO" ? "#8A5A00" : "#9CA3AF",
+            width: (ele: cytoscape.NodeSingular) => 1.5 + 2 * Number(ele.data("confidence") ?? 1),
+            "line-color": (ele: cytoscape.EdgeSingular) => {
+              const rel = String(ele.data("raw_rel") ?? "");
+              if (rel.includes("TRANSFER") || rel.includes("TRANSACTION")) return "#1D4ED8";
+              if (rel.includes("CALL") || rel.includes("PHONE")) return "#475569";
+              return "#94A3B8";
+            },
+            "target-arrow-color": (ele: cytoscape.EdgeSingular) => {
+              const rel = String(ele.data("raw_rel") ?? "");
+              if (rel.includes("TRANSFER") || rel.includes("TRANSACTION")) return "#1D4ED8";
+              if (rel.includes("CALL") || rel.includes("PHONE")) return "#475569";
+              return "#94A3B8";
+            },
             "target-arrow-shape": "triangle",
-            "curve-style": "bezier",
+            "arrow-scale": 0.9,
+            "curve-style": "straight",
             "line-style": (ele: cytoscape.EdgeSingular) => (ele.data("staging") ? "dashed" : "solid"),
             label: "data(rel)",
-            "font-size": 8,
-            color: "#6B7280",
+            "font-family": "'Inter', -apple-system, sans-serif",
+            "font-size": 8.5,
+            "font-weight": 600,
+            color: "#334155",
             "text-rotation": "autorotate",
-            "text-outline-width": 2,
-            "text-outline-color": "#FFFFFF",
+            "text-background-opacity": 0.95,
+            "text-background-color": "#FFFFFF",
+            "text-background-padding": 2,
+            "text-background-shape": "roundrectangle",
+            "text-border-opacity": 0.8,
+            "text-border-width": 1,
+            "text-border-color": "#CBD5E1",
           },
         },
         {
           selector: "node:selected",
-          style: { "border-width": 4, "border-color": "#1B3A6B" },
+          style: { "border-width": 4, "border-color": "#1D4ED8" },
+        },
+        {
+          selector: "edge:selected",
+          style: {
+            width: 4,
+            "line-color": "#1D4ED8",
+            "target-arrow-color": "#1D4ED8",
+          },
         },
       ],
     });
@@ -504,10 +529,10 @@ export default function GraphPage() {
                   className={`rail-item ${person.provenance_key === targetKey ? "active" : ""}`}
                   onClick={() => setTargetKey(person.provenance_key)}
                 >
-                  <span className="rail-name">{person.name}</span>
-                  <span className="muted">
+                  <strong className="rail-name" style={{ fontSize: "var(--text-sm)" }}>{person.name}</strong>
+                  <span className="muted" style={{ fontSize: "var(--text-xs)" }}>
                     {person.connections} {t("graph.connections")}
-                    {person.aliases.length > 0 && ` · ${t("graph.aka")} ${person.aliases[0]}`}
+                    {person.aliases.length > 0 && ` · aka ${person.aliases[0]}`}
                   </span>
                 </button>
               ))}
@@ -624,12 +649,12 @@ export default function GraphPage() {
                 control should not pretend otherwise.  Nothing here caps the
                 value — the backend walks as far as the data goes.
               */}
-              <div className="depth-buttons" role="group" aria-label={t("graph.depth")}>
+              <div className="segmented-control" role="group" aria-label={t("graph.depth")}>
                 {[1, 2, 3, 5, 10].map((hop) => (
                   <button
                     key={hop}
                     type="button"
-                    className={`btn btn-sm ${depth === hop ? "btn-primary" : ""}`}
+                    className={depth === hop ? "active" : ""}
                     onClick={() => {
                       setDepth(hop);
                       setDepthDraft(String(hop));
@@ -638,29 +663,29 @@ export default function GraphPage() {
                     {hop}-hop
                   </button>
                 ))}
-                <input
-                  className="depth-input"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={depthDraft}
-                  aria-label={`${t("graph.depth")} (hops)`}
-                  title="Any positive number of hops. Traversal stops when the depth is reached or nothing further is connected."
-                  onChange={(event) => setDepthDraft(event.target.value)}
-                  onBlur={() => {
-                    const parsed = Math.floor(Number(depthDraft));
-                    if (Number.isFinite(parsed) && parsed >= 1) setDepth(parsed);
-                    else setDepthDraft(String(depth));
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      (event.target as HTMLInputElement).blur();
-                    }
-                  }}
-                  style={{ width: "5.5rem" }}
-                />
               </div>
+              <input
+                className="depth-input"
+                type="number"
+                min={1}
+                step={1}
+                value={depthDraft}
+                aria-label={`${t("graph.depth")} (hops)`}
+                title="Any positive number of hops. Traversal stops when the depth is reached or nothing further is connected."
+                onChange={(event) => setDepthDraft(event.target.value)}
+                onBlur={() => {
+                  const parsed = Math.floor(Number(depthDraft));
+                  if (Number.isFinite(parsed) && parsed >= 1) setDepth(parsed);
+                  else setDepthDraft(String(depth));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    (event.target as HTMLInputElement).blur();
+                  }
+                }}
+                style={{ width: "4.5rem", marginLeft: "var(--space-2)" }}
+              />
               <span className="muted">
                 {network.counts.nodes} nodes · {network.counts.edges} edges ·
                 reached {network.max_depth_reached} of {network.requested_depth} hops
@@ -759,6 +784,53 @@ export default function GraphPage() {
             {visible && visible.nodes.length === 0 && (
               <Empty message={t("graph.emptyView")} />
             )}
+            <div className="graph-canvas-hud">
+              <div className="hud-status">
+                <span className="hud-dot" />
+                <span className="hud-title">{t("graph.hudTitle")}</span>
+                <span className="hud-meta">
+                  {visible?.nodes.length ?? 0} {t("graph.nodes")} // {visible?.edges.length ?? 0} {t("graph.edges")}
+                </span>
+              </div>
+              <div className="hud-controls">
+                <button
+                  type="button"
+                  className="hud-btn"
+                  title={t("graph.zoomIn")}
+                  onClick={() => cyRef.current && cyRef.current.zoom(cyRef.current.zoom() * 1.25)}
+                >
+                  <span className="material-symbols-outlined">zoom_in</span>
+                </button>
+                <button
+                  type="button"
+                  className="hud-btn"
+                  title={t("graph.zoomOut")}
+                  onClick={() => cyRef.current && cyRef.current.zoom(cyRef.current.zoom() * 0.8)}
+                >
+                  <span className="material-symbols-outlined">zoom_out</span>
+                </button>
+                <button
+                  type="button"
+                  className="hud-btn"
+                  title={t("graph.fitScreen")}
+                  onClick={() => cyRef.current?.fit(undefined, 30)}
+                >
+                  <span className="material-symbols-outlined">fit_screen</span>
+                </button>
+                <div className="hud-divider" />
+                <button
+                  type="button"
+                  className="hud-btn"
+                  title={t("graph.recenter")}
+                  onClick={() => {
+                    cyRef.current?.center();
+                    cyRef.current?.fit(undefined, 30);
+                  }}
+                >
+                  <span className="material-symbols-outlined">refresh</span>
+                </button>
+              </div>
+            </div>
             <div ref={containerRef} className="graph-canvas" />
           </div>
         </section>
@@ -821,15 +893,26 @@ export default function GraphPage() {
                 selected.label === "PERSON" && (
                   <button
                     type="button"
-                    className="btn"
+                    className="btn btn-secondary btn-small"
+                    style={{ marginTop: "var(--space-2)" }}
                     onClick={() => setTargetKey(selected.provenance_key)}
                   >
                     {t("graph.setFocus")}
                   </button>
                 )}
-              <div className="evidence-link-row">
+              <div className="evidence-link-row" style={{ marginTop: "var(--space-3)" }}>
                 <EvidencePointerLink pointer={selected.evidence} />
               </div>
+              <TechnicalDetails label="node key & raw data">
+                <div style={{ fontSize: "var(--text-xs)" }}>
+                  <p style={{ margin: "0 0 4px" }}>
+                    <strong>Key:</strong> <code>{selected.provenance_key}</code>
+                  </p>
+                  <pre style={{ margin: 0, maxHeight: 120, overflow: "auto" }}>
+                    {JSON.stringify(selected.properties, null, 2)}
+                  </pre>
+                </div>
+              </TechnicalDetails>
               {mode === "person" &&
                 selected.label === "PERSON" &&
                 personFindingItems.length > 0 && (
@@ -850,16 +933,16 @@ export default function GraphPage() {
           )}
           {selectedEdge && (
             <div className="detail-panel">
-              <h3>{t("graph.relation")}</h3>
-              <p>
+              <h3 style={{ fontSize: "var(--text-md)", margin: "0 0 var(--space-2)" }}>{t("graph.relation")}</h3>
+              <p style={{ fontSize: "var(--text-sm)" }}>
                 <strong>{nameOf(selectedEdge.source)}</strong> —{" "}
                 {relLabel(selectedEdge.rel_type)} →{" "}
                 <strong>{nameOf(selectedEdge.target)}</strong>
               </p>
-              <p className="muted">
+              <p className="muted" style={{ fontSize: "var(--text-xs)" }}>
                 {t("graph.confidence")} {Math.round(selectedEdge.confidence * 100)}%
               </p>
-              <dl className="detail-rows">
+              <dl className="detail-rows" style={{ fontSize: "var(--text-sm)" }}>
                 {edgeSpecificRows(selectedEdge).map(([k, v]) => (
                   <div key={k}>
                     <dt>{k}</dt>
@@ -867,9 +950,19 @@ export default function GraphPage() {
                   </div>
                 ))}
               </dl>
-              <div className="evidence-link-row">
+              <div className="evidence-link-row" style={{ marginTop: "var(--space-3)" }}>
                 <EvidencePointerLink pointer={selectedEdge.evidence} />
               </div>
+              <TechnicalDetails label="edge key & raw data">
+                <div style={{ fontSize: "var(--text-xs)" }}>
+                  <p style={{ margin: "0 0 4px" }}>
+                    <strong>Type:</strong> <code>{selectedEdge.rel_type}</code>
+                  </p>
+                  <pre style={{ margin: 0, maxHeight: 120, overflow: "auto" }}>
+                    {JSON.stringify(selectedEdge.properties, null, 2)}
+                  </pre>
+                </div>
+              </TechnicalDetails>
             </div>
           )}
           {!selected && !selectedEdge && (

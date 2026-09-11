@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, askCaseStream, download, jobSocket, uploadDocument } from "../api/client";
 import { t } from "../i18n";
 import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
+import { TechnicalDetails } from "../components/TechnicalDetails";
 
 /** The stage messages the AI stream reports while an answer is produced. */
 const AI_PHASE_LABEL: Record<string, string> = {
@@ -69,10 +70,7 @@ const CONFIDENCE = ["VERIFIED", "UNVERIFIED", "ANONYMOUS_TIP", "SYNTHETIC"];
 
 /**
  * A clear, honest explanation for an unavailable AI role, derived from the
- * gateway's machine-readable fallback_reason — never a raw error class name.
- *
- * The backend decides whether a key is missing or a real provider call
- * failed; this only presents that verdict in investigator language.
+ * gateway's machine-readable fallback_reason — in plain investigator language.
  */
 function aiUnavailableMessage(fallbackReason: unknown): string {
   const reason = String(fallbackReason ?? "");
@@ -83,17 +81,11 @@ function aiUnavailableMessage(fallbackReason: unknown): string {
       `Configure CRIMELINK_AI_${aiRole.toUpperCase()}_API_KEY to enable this feature.`
     );
   }
-  if (reason.startsWith("invocation_failed:")) {
-    return (
-      `The configured AI provider call failed (${reason.slice("invocation_failed:".length).trim()}). ` +
-      "Check the provider, model and key configured for this role."
-    );
+  if (reason.includes("timeout") || reason.startsWith("invocation_failed:")) {
+    return "The AI service did not respond in time. Try again, or ask about fewer entities.";
   }
   if (reason.startsWith("gateway_error:")) {
-    return (
-      `AI processing failed (${reason.slice("gateway_error:".length).trim()}). ` +
-      "An investigator must review this case manually."
-    );
+    return "AI processing failed. An investigator must review this case manually.";
   }
   if (reason === "openai_client_unavailable") {
     return "The AI client library is not installed on the server.";
@@ -106,12 +98,6 @@ function aiUnavailableMessage(fallbackReason: unknown): string {
 
 /**
  * Pull the human-readable answer out of the model's streaming JSON.
- *
- * The reasoning contract is strict JSON (`FindingResult`), so a raw token
- * stream would render braces and field names, not prose. Rather than show
- * noise while it generates, we surface just the `summary` string as it grows
- * — and fall back to the raw stream if the JSON never looks like that shape,
- * because showing something real beats hiding progress.
  */
 function partialSummary(buffer: string): string {
   const key = buffer.indexOf('"summary"');
@@ -132,7 +118,7 @@ function partialSummary(buffer: string): string {
       i += 1;
       continue;
     }
-    if (ch === '"') break; // complete string
+    if (ch === '"') break;
     out += ch;
   }
   return out || buffer.slice(0, 800);
@@ -158,16 +144,6 @@ export default function CaseDetail() {
   const [liveStatus, setLiveStatus] = useState<"connected" | "polling" | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  /** One question, two transports.
-   *
-   * The stream endpoint is tried first: an `ack` lands in milliseconds, the
-   * stage events keep the panel telling the truth about what is happening
-   * (retrieving → generating → validating), and answer tokens render as they
-   * arrive. If streaming is unavailable — a proxy that buffers, an older
-   * server — the plain request takes over exactly once; the investigator
-   * never has to know which transport produced the answer, and never stares
-   * at a frozen spinner because a channel was missing.
-   */
   async function askAi() {
     const text = question.trim();
     if (!text || aiBusy) return;
@@ -241,8 +217,6 @@ export default function CaseDetail() {
 
   useEffect(load, [load]);
 
-  // Live processing status: "Stage 3/6 — NLP extraction" over the WebSocket,
-  // with an honest polling fallback when the channel cannot be established.
   useEffect(() => {
     return jobSocket(
       caseId,
@@ -282,35 +256,68 @@ export default function CaseDetail() {
       {!caseRow ? (
         <Spinner />
       ) : (
-        <header className="page-head">
-          <div>
-            <h1>{caseRow.case_number}</h1>
-            <p className="muted">{caseRow.title}</p>
+        <>
+          <header className="page-head">
+            <div>
+              <h1>{caseRow.case_number}</h1>
+              <div className="form-row" style={{ gap: "var(--space-2)", alignItems: "center", marginTop: "var(--space-1)" }}>
+                <Badge value={caseRow.status} />
+                <span className="muted">·</span>
+                <span className="muted">{caseRow.title}</span>
+                <span className="muted">·</span>
+                <span className="muted">Jurisdiction: {caseRow.jurisdiction_id}</span>
+                <span className="muted">·</span>
+                <span className="muted">{caseRow.document_count} documents</span>
+              </div>
+            </div>
+            <div className="row-actions">
+              <Link className="btn btn-secondary" to={`/cases/${caseId}/investigation`}>
+                {t("investigation.workspaceLink")}
+              </Link>
+              <Link className="btn btn-secondary" to={`/cases/${caseId}/graph`}>
+                {t("case.openGraph")}
+              </Link>
+              <Link className="btn btn-secondary" to={`/cases/${caseId}/review`}>
+                {t("case.review")}
+                {caseRow.pending_review_count > 0 && (
+                  <span className="pill pill-warn">{caseRow.pending_review_count}</span>
+                )}
+              </Link>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() =>
+                  download(`/cases/${caseId}/export`, `case-brief-${caseRow!.case_number.replace(/\//g, "-")}.pdf`)
+                    .catch((err: Error) => setError(err.message))
+                }
+              >
+                {t("case.export")}
+              </button>
+            </div>
+          </header>
+
+          {/* Slim stat chips row */}
+          <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)", flexWrap: "wrap" }}>
+            <span className="chip">
+              <span className="chip-label">Documents:</span>
+              <strong>{docs?.length ?? caseRow.document_count}</strong>
+            </span>
+            <span className="chip">
+              <span className="chip-label">Review Items:</span>
+              <strong>{caseRow.pending_review_count}</strong>
+            </span>
+            <span className="chip">
+              <span className="chip-label">Status:</span>
+              <Badge value={caseRow.status} />
+            </span>
+            {caseRow.review_sla?.breached !== undefined && (
+              <span className="chip">
+                <span className="chip-label">SLA Breached:</span>
+                <strong>{caseRow.review_sla.breached}</strong>
+              </span>
+            )}
           </div>
-          <div className="row-actions">
-            <Link className="btn" to={`/cases/${caseId}/investigation`}>
-              {t("investigation.workspaceLink")}
-            </Link>
-            <Link className="btn" to={`/cases/${caseId}/graph`}>
-              {t("case.openGraph")}
-            </Link>
-            <Link className="btn" to={`/cases/${caseId}/review`}>
-              {t("case.review")}
-              {caseRow.pending_review_count > 0 && (
-                <span className="pill pill-warn">{caseRow.pending_review_count}</span>
-              )}
-            </Link>
-            <button
-              className="btn"
-              onClick={() =>
-                download(`/cases/${caseId}/export`, `case-brief-${caseRow!.case_number.replace(/\//g, "-")}.pdf`)
-                  .catch((err: Error) => setError(err.message))
-              }
-            >
-              {t("case.export")}
-            </button>
-          </div>
-        </header>
+        </>
       )}
 
       {liveStatus === "polling" && (
@@ -319,6 +326,7 @@ export default function CaseDetail() {
         </div>
       )}
 
+      {/* --- Document Upload --- */}
       <section className="panel">
         <h2>{t("case.upload")}</h2>
         <form className="form-row" onSubmit={upload}>
@@ -347,6 +355,138 @@ export default function CaseDetail() {
         </p>
       </section>
 
+      {/* --- Ask AI Panel --- */}
+      <section className="panel">
+        <h2>Ask AI about this case</h2>
+        <p className="hint">
+          Questions go through the AI gateway. Only the case subgraph is sent, never the whole
+          database. If no model key is configured, the response says so instead of inventing an answer.
+        </p>
+        <form
+          className="form-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void askAi();
+          }}
+        >
+          <input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="What connections appear in this case?"
+            style={{ minWidth: 280, flex: 1 }}
+          />
+          <button className="btn btn-primary" type="submit" disabled={aiBusy}>
+            {aiBusy ? t("state.loading") : "Ask"}
+          </button>
+        </form>
+
+        {aiError && (
+          <div className="alert" role="alert" style={{ marginTop: "var(--space-3)" }}>
+            {aiError}
+          </div>
+        )}
+
+        {aiBusy && (
+          <div className="ai-progress" role="status" style={{ marginTop: "var(--space-3)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+              <span className="spinner" aria-hidden="true" />
+              <span>
+                {aiPhase === "request"
+                  ? "Request in progress…"
+                  : AI_PHASE_LABEL[aiPhase ?? "started"] ?? "Thinking…"}
+              </span>
+            </div>
+            {aiTransport === "request" && aiPhase === "request" && (
+              <span className="hint">(live stream unavailable; plain request mode)</span>
+            )}
+            {aiStreamText && (
+              <blockquote className="ai-streaming">{partialSummary(aiStreamText)}</blockquote>
+            )}
+          </div>
+        )}
+
+        {aiResult && (
+          <div style={{ marginTop: "var(--space-4)" }}>
+            {aiResult.available ? (
+              <>
+                <p style={{ margin: "0 0 var(--space-2)", fontWeight: 500, color: "var(--navy)" }}>
+                  {aiResult.role === "conversational"
+                    ? "CrimeLink answered directly (no graph retrieval needed)"
+                    : (() => {
+                        const ctx = aiResult.context as
+                          | { nodes?: number; edges?: number; fast_path?: boolean }
+                          | undefined;
+                        if (ctx && !ctx.fast_path && (ctx.nodes !== undefined || ctx.edges !== undefined)) {
+                          return `Based on ${ctx.nodes ?? 0} linked entities and ${ctx.edges ?? 0} relationships from this case`;
+                        }
+                        return "Model response";
+                      })()}
+                </p>
+                <blockquote>
+                  {String(
+                    (aiResult.finding as { summary?: string } | undefined)?.summary ??
+                      "No finding returned.",
+                  )}
+                </blockquote>
+              </>
+            ) : (
+              <div className="banner banner-warn">
+                <strong>AI Service Unavailable:</strong>{" "}
+                {aiUnavailableMessage(aiResult.fallback_reason)}
+              </div>
+            )}
+
+            <TechnicalDetails label="AI diagnostic details">
+              <div style={{ fontSize: "var(--text-xs)" }}>
+                {aiResult.model ? (
+                  <p style={{ margin: "0 0 4px" }}>
+                    <strong>Model:</strong> {String(aiResult.model)}
+                    {aiResult.provider ? ` via ${String(aiResult.provider)}` : ""}
+                    {typeof aiResult.latency_ms === "number" ? ` · ${aiResult.latency_ms} ms` : ""}
+                  </p>
+                ) : null}
+                {aiResult.fallback_reason ? (
+                  <p style={{ margin: "0 0 4px", color: "var(--bad)" }}>
+                    <strong>Diagnostic code:</strong> {String(aiResult.fallback_reason)}
+                  </p>
+                ) : null}
+                {(() => {
+                  const ctx = aiResult.context as
+                    | { nodes?: number; edges?: number; depth?: number; fast_path?: boolean; dataset_id?: string | null; graph_ready?: boolean }
+                    | undefined;
+                  if (!ctx) return null;
+                  return (
+                    <p style={{ margin: "0 0 4px" }}>
+                      <strong>Context details:</strong> {ctx.nodes ?? 0} entities, {ctx.edges ?? 0} relationships
+                      {ctx.depth ? `, depth ${ctx.depth}` : ""}
+                      {ctx.fast_path ? " (fast path)" : ""}
+                      {ctx.dataset_id ? ` · dataset ${String(ctx.dataset_id).slice(0, 8)}…` : ""}
+                      {ctx.graph_ready === false ? " · case graph still building" : ""}
+                    </p>
+                  );
+                })()}
+                {(() => {
+                  const timing = aiResult.timing as Record<string, number> | undefined;
+                  if (!timing || Object.keys(timing).length === 0) return null;
+                  const parts = Object.entries(timing).map(([stage, ms]) => `${stage.replace(/_/g, " ")}: ${ms}ms`);
+                  return (
+                    <p style={{ margin: "0 0 4px" }}>
+                      <strong>Timing:</strong> {parts.join(" · ")}
+                    </p>
+                  );
+                })()}
+                {aiResult.request_id ? (
+                  <p style={{ margin: "0 0 4px" }}>
+                    <strong>Request ID:</strong> <code>{String(aiResult.request_id)}</code>
+                  </p>
+                ) : null}
+              </div>
+            </TechnicalDetails>
+          </div>
+        )}
+      </section>
+
+      {/* --- Documents (Plain High-Density Table) --- */}
       <section className="panel">
         <h2>{t("case.documents")}</h2>
         {!docs && <Spinner />}
@@ -403,143 +543,32 @@ export default function CaseDetail() {
         )}
       </section>
 
-      <section className="panel">
-        <h2>Ask AI about this case</h2>
-        <p className="hint">
-          Questions go through the AI gateway. Only the case subgraph is sent, never the whole
-          database. If no model key is configured, the response says so instead of inventing an answer.
-        </p>
-        <form
-          className="form-row"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void askAi();
-          }}
-        >
-          <input
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="What connections appear in this case?"
-            style={{ minWidth: 280, flex: 1 }}
-          />
-          <button className="btn btn-primary" type="submit" disabled={aiBusy}>
-            {aiBusy ? t("state.loading") : "Ask"}
-          </button>
-        </form>
-        {aiError && (
-          <div className="alert" role="alert">
-            {aiError}
-          </div>
-        )}
-        {aiBusy && (
-          <div className="ai-progress" role="status">
-            <span className="spinner" aria-hidden="true" />{" "}
-            <span>
-              {aiPhase === "request"
-                ? "Request in progress…"
-                : AI_PHASE_LABEL[aiPhase ?? "started"] ?? "Thinking…"}
-            </span>
-            {aiTransport === "request" && aiPhase === "request" && (
-              <span className="hint"> (live stream unavailable; plain request mode)</span>
-            )}
-            {aiStreamText && (
-              <blockquote className="ai-streaming">{partialSummary(aiStreamText)}</blockquote>
-            )}
-          </div>
-        )}
-        {aiResult && (
-          <div className="evidence">
-            <p>
-              {aiResult.available
-                ? aiResult.role === "conversational"
-                  ? "CrimeLink answered directly — no case retrieval needed"
-                  : "Model response"
-                : "AI unavailable"}
-              {aiResult.available && aiResult.model ? (
-                <span className="muted">
-                  {" "}
-                  — {String(aiResult.model)}
-                  {aiResult.provider ? ` via ${String(aiResult.provider)}` : ""}
-                  {typeof aiResult.latency_ms === "number"
-                    ? ` (${aiResult.latency_ms} ms)`
-                    : ""}
-                </span>
-              ) : null}
-            </p>
-            {!aiResult.available && (
-              <p className="muted">{aiUnavailableMessage(aiResult.fallback_reason)}</p>
-            )}
-            <blockquote>
-              {String(
-                (aiResult.finding as { summary?: string } | undefined)?.summary ??
-                  "No finding returned.",
-              )}
-            </blockquote>
-            {/*
-              Retrieval is reported separately from availability: "the model
-              had no case data to read" and "the model could not be reached"
-              are different problems and the investigator has to be able to
-              tell them apart.
-            */}
-            {(() => {
-              const ctx = aiResult.context as
-                | { nodes?: number; edges?: number; depth?: number; fast_path?: boolean; dataset_id?: string | null; graph_ready?: boolean }
-                | undefined;
-              if (!ctx) return null;
-              if (ctx.fast_path) {
-                return (
-                  <p className="hint">
-                    Answered from the request alone: no graph read, no retrieval, no model call.
-                  </p>
-                );
-              }
-              return (
-                <p className="hint">
-                  Context: {ctx.nodes ?? 0} entities, {ctx.edges ?? 0} relationships
-                  {ctx.depth ? `, ${ctx.depth} hops` : ""}
-                  {ctx.dataset_id ? ` · active dataset ${String(ctx.dataset_id).slice(0, 8)}…` : ""}
-                  {ctx.graph_ready === false ? " · case graph still building — recent evidence may be missing" : ""}
-                  {ctx.nodes === 0 && ctx.edges === 0
-                    ? " — this case has no graph data yet, so the answer cannot be evidence-backed."
-                    : ""}
-                </p>
-              );
-            })()}
-            {(() => {
-              const timing = aiResult.timing as Record<string, number> | undefined;
-              if (!timing || Object.keys(timing).length === 0) return null;
-              const parts = Object.entries(timing).map(([stage, ms]) => `${stage.replace(/_/g, " ")} ${ms}ms`);
-              return (
-                <p className="hint" title="Per-stage latency measured by the gateway">
-                  Timing: {parts.join(" · ")}
-                </p>
-              );
-            })()}
-            {aiResult.request_id ? (
-              <p className="hint">
-                Request id <code>{String(aiResult.request_id)}</code> — quote this
-                when reporting a problem.
-              </p>
-            ) : null}
-          </div>
-        )}
-      </section>
-
+      {/* --- Timeline (Plain High-Density Table) --- */}
       <section className="panel">
         <h2>{t("case.timeline")}</h2>
         {!timeline && <Spinner />}
         {timeline && timeline.length === 0 && <Empty />}
         {timeline && timeline.length > 0 && (
-          <ol className="timeline">
-            {timeline.map((event, index) => (
-              <li key={`${event.at}-${index}`}>
-                <span className="timeline-when">{event.at?.slice(0, 16).replace("T", " ") ?? "—"}</span>
-                <span className="timeline-what">
-                  {event.name} — {event.description}
-                </span>
-              </li>
-            ))}
-          </ol>
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 170 }}>When</th>
+                <th style={{ width: 220 }}>Event</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {timeline.map((event, index) => (
+                <tr key={`${event.at}-${index}`}>
+                  <td className="muted" style={{ whiteSpace: "nowrap" }}>
+                    {event.at?.slice(0, 16).replace("T", " ") ?? "—"}
+                  </td>
+                  <td><strong>{event.name}</strong></td>
+                  <td>{event.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
     </div>

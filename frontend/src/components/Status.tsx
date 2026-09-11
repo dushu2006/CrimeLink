@@ -1,18 +1,35 @@
 import { t } from "../i18n";
 
-/** Four states on every screen: loading, empty, error, data (PRD 14.3). */
+/** Four states on every screen: loading, empty, error, data (PRD 14.3 & WS 6.3). */
 
-export function Spinner() {
+export function Spinner({ label }: { label?: string }) {
   return (
     <div className="state" role="status">
       <span className="spinner" aria-hidden="true" />
-      <span>{t("state.loading")}</span>
+      <span>{label ?? t("state.loading")}</span>
     </div>
   );
 }
 
-export function Empty({ message }: { message?: string }) {
-  return <div className="state state-empty">{message ?? t("state.empty")}</div>;
+export function Empty({
+  message,
+  actionLabel,
+  onAction,
+}: {
+  message?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="state state-empty">
+      <p>{message ?? t("state.empty")}</p>
+      {actionLabel && onAction && (
+        <button type="button" className="btn btn-secondary" onClick={onAction}>
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
@@ -23,7 +40,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
         <p>{message}</p>
       </div>
       {onRetry && (
-        <button className="btn" onClick={onRetry}>
+        <button type="button" className="btn btn-secondary" onClick={onRetry}>
           {t("state.retry")}
         </button>
       )}
@@ -33,12 +50,14 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
 
 const TONE: Record<string, string> = {
   COMPLETE: "ok",
+  COMPLETED: "ok",
   PENDING: "warn",
   PROCESSING: "busy",
   QUEUED: "busy",
+  RUNNING: "busy",
   FAILED: "bad",
   QUARANTINED: "bad",
-  NEW: "warn",
+  NEW: "navy",
   CONFIRMED: "ok",
   DISMISSED: "muted",
   PENDING_REVIEW: "warn",
@@ -51,9 +70,12 @@ const TONE: Record<string, string> = {
   ADMIN: "navy",
   INVESTIGATOR: "navy",
   VIEWER: "muted",
+  OPEN: "ok",
+  CLOSED: "muted",
 };
 
 export function Badge({ value }: { value: string | null | undefined }) {
   if (!value) return <span className="muted">—</span>;
-  return <span className={`badge badge-${TONE[value] ?? "muted"}`}>{value.replace(/_/g, " ")}</span>;
+  const tone = TONE[value.toUpperCase()] ?? "muted";
+  return <span className={`badge badge-${tone}`}>{value.replace(/_/g, " ")}</span>;
 }

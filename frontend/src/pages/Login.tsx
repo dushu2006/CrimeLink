@@ -138,6 +138,12 @@ export default function Login() {
           <button type="button" className={lang === "hi" ? "on" : ""} onClick={() => setLang("hi")}>
             हिन्दी
           </button>
+          <button type="button" className={lang === "te" ? "on" : ""} onClick={() => setLang("te")}>
+            తెలుగు
+          </button>
+          <button type="button" className={lang === "ta" ? "on" : ""} onClick={() => setLang("ta")}>
+            தமிழ்
+          </button>
         </div>
       </form>
     </div>

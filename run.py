@@ -45,6 +45,17 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parent
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
@@ -202,10 +213,31 @@ def port_open(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
-def wait_http(url: str, timeout: float, label: str) -> None:
+def wait_http(
+    url: str,
+    timeout: float,
+    label: str,
+    proc: subprocess.Popen | None = None,
+    log_path: Path | None = None,
+) -> None:
     deadline = time.time() + timeout
     last = ""
+    start = time.time()
+    last_reported = 0
+    info(f"Waiting for {label} to respond at {url} …")
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            die(f"{label} exited early (code {proc.returncode}). See {log_path or 'logs'}")
+        if log_path and log_path.exists():
+            try:
+                content = log_path.read_text(encoding="utf-8", errors="ignore")
+                if "Traceback (most recent call last):" in content:
+                    tb_tail = content.split("Traceback (most recent call last):")[-1]
+                    if "Uvicorn running on" not in tb_tail and ("Error:" in tb_tail or "Exception:" in tb_tail):
+                        lines = [l for l in tb_tail.strip().splitlines() if l.strip()]
+                        die(f"{label} crashed during startup:\n" + "\n".join(lines[-8:]) + f"\nSee {log_path}")
+            except Exception:
+                pass
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
                 if 200 <= response.status < 500:
@@ -213,6 +245,10 @@ def wait_http(url: str, timeout: float, label: str) -> None:
                     return
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
             last = str(exc)
+        elapsed = int(time.time() - start)
+        if elapsed > 0 and elapsed % 10 == 0 and elapsed != last_reported:
+            last_reported = elapsed
+            info(f"Still waiting for {label} ({elapsed}s elapsed) …")
         time.sleep(0.4)
     die(f"Timed out waiting for {label} at {url}. Last error: {last or 'no response'}")
 
@@ -289,23 +325,37 @@ def spawn(cmd: list[str], cwd: Path, env: dict[str, str], log_path: Path) -> sub
 
 
 def stop(proc: subprocess.Popen | None) -> None:
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return
-    try:
-        if os.name == "nt":
-            proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
-            proc.wait(timeout=8)
-        else:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=8)
-    except Exception:
+    pid = proc.pid
+    if os.name == "nt":
+        if proc.poll() is None:
+            try:
+                proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                proc.wait(timeout=2)
+            except Exception:
+                pass
         try:
-            if os.name != "nt":
-                os.killpg(proc.pid, signal.SIGKILL)
-            else:
-                proc.kill()
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
         except Exception:
             pass
+    else:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=4)
+            except Exception:
+                pass
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
     log_file = getattr(proc, "_crimelink_log", None)
     if log_file:
         try:
@@ -317,7 +367,7 @@ def stop(proc: subprocess.Popen | None) -> None:
 def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
     print()
     print("=" * 72)
-    print("  CrimeLink is running (embedded profile — no containers).")
+    print("  CrimeLink is running (embedded profile -- no containers).")
     print()
     print(f"  Investigator console : {open_url}")
     print(f"  API                  : {api_url}")
@@ -328,19 +378,19 @@ def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
     print("  and password.  No demo data is inserted automatically.")
     print()
     print("  Use jurisdiction SYN-DEV for the first administrator so imported")
-    print("  synthetic cases are visible. Then: Administration → Dataset →")
+    print("  synthetic cases are visible. Then: Administration -> Dataset ->")
     print("  Validate Dataset / Import Dataset.")
     print()
     print("  Dataset path: backend/CrimeLink_Synthetic_Corpus_v1")
-    print("  Dataset: CrimeLink Synthetic Corpus v1 — synthetic development data")
+    print("  Dataset: CrimeLink Synthetic Corpus v1 -- synthetic development data")
     print("  CLI equivalent:")
     print("    .venv/bin/python -m app.cli ingest-synthetic --mode external --dry-run")
     print("    .venv/bin/python -m app.cli ingest-synthetic --mode external")
     print()
     if nlp_key or ai_key:
-        print("  NLP/AI: API key detected — model extraction & AI gateway enabled.")
+        print("  NLP/AI: API key detected -- model extraction & AI gateway enabled.")
     else:
-        print("  NLP/AI: no API key set — running fully offline on heuristics.")
+        print("  NLP/AI: no API key set -- running fully offline on heuristics.")
         print("          Set NVIDIA_API_KEY in .env for NIM-based extraction/reasoning.")
     print()
     print("  Press Ctrl+C to stop both servers.")
@@ -359,6 +409,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Install (first time) and run CrimeLink.")
     parser.add_argument("--reinstall", action="store_true", help="Re-run pip and npm install.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab.")
+    parser.add_argument("--reload", action="store_true", help="Auto-reload API on backend code changes.")
     parser.add_argument("--api-port", type=int, default=DEFAULT_API_PORT)
     parser.add_argument("--web-port", type=int, default=DEFAULT_WEB_PORT)
     args = parser.parse_args()
@@ -392,20 +443,23 @@ def main() -> int:
     api_log = RUN_DIR / "api.log"
     web_log = RUN_DIR / "web.log"
     info(f"Starting API on {API_HOST}:{api_port}  (logs: {api_log})")
+    uvicorn_cmd = [
+        str(py),
+        "-m",
+        "uvicorn",
+        "app.main:create_app",
+        "--factory",
+        "--app-dir",
+        str(BACKEND),
+        "--host",
+        API_HOST,
+        "--port",
+        str(api_port),
+    ]
+    if args.reload:
+        uvicorn_cmd.extend(["--reload", "--reload-dir", str(BACKEND / "app")])
     api_proc = spawn(
-        [
-            str(py),
-            "-m",
-            "uvicorn",
-            "app.main:create_app",
-            "--factory",
-            "--app-dir",
-            str(BACKEND),
-            "--host",
-            API_HOST,
-            "--port",
-            str(api_port),
-        ],
+        uvicorn_cmd,
         cwd=ROOT,
         env=env,
         log_path=api_log,
@@ -432,12 +486,8 @@ def main() -> int:
         signal.signal(signal.SIGTERM, shutdown)
 
     try:
-        wait_http(health_url, timeout=90, label="API")
-        if api_proc.poll() is not None:
-            die(f"API exited early (code {api_proc.returncode}). See {api_log}")
-        wait_http(open_url, timeout=90, label="Console")
-        if web_proc.poll() is not None:
-            die(f"Frontend exited early (code {web_proc.returncode}). See {web_log}")
+        wait_http(health_url, timeout=90, label="API", proc=api_proc, log_path=api_log)
+        wait_http(open_url, timeout=90, label="Console", proc=web_proc, log_path=web_log)
 
         nlp_key = bool(env.get("CRIMELINK_NIM_API_KEY") or env.get("NVIDIA_API_KEY"))
         ai_key = bool(env.get("CRIMELINK_AI_API_KEY")) or nlp_key

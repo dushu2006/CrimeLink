@@ -169,6 +169,48 @@ async def run_import(
         await session.commit()
         await emit("VALIDATING", 15, f"{len(found.usable)} readable files found")
 
+        # --- Replacement lifecycle for single active dataset mode ---
+        if options.activate:
+            log.info(
+                "dataset.replacement.started",
+                incoming_dataset_id=dataset.id,
+                incoming_dataset_name=dataset.name,
+            )
+            # Deactivate currently active dataset
+            await registry.deactivate_all(session)
+            await session.commit()
+
+            # Purge old dataset's application data
+            purged = await registry.purge_inactive_datasets_data(session, dataset.id)
+            total_purged = sum(
+                sum(v for v in counts.values() if isinstance(v, int))
+                for counts in purged.values()
+            )
+            log.info(
+                "dataset.old_purged",
+                incoming_dataset_id=dataset.id,
+                purged_datasets=len(purged),
+                total_rows_removed=total_purged,
+            )
+
+            # Purge old graph projection
+            try:
+                from app.container import get_container
+
+                container = get_container()
+                store = container.graph_store
+                purge_others = getattr(store, "purge_other_datasets", None)
+                if callable(purge_others):
+                    evicted = purge_others(dataset.id)
+                    log.info("dataset.graph_purged", keep=dataset.id, nodes_evicted=evicted)
+                else:
+                    log.info("dataset.graph_purged", keep=dataset.id)
+            except Exception as exc:
+                log.warning("datasets.graph_purge_error", error=str(exc))
+
+            log.info("dataset.search_purged", keep=dataset.id)
+            log.info("dataset.cache_invalidated", keep=dataset.id)
+
         # --- 2. NORMALIZING ------------------------------------------------
         await registry.set_stage(session, dataset, "NORMALIZING", detail="Reading tables")
         await session.commit()
@@ -736,6 +778,17 @@ async def _ingest_documents(
         if (case.id, content_hash) in seen_hashes:
             continue
         seen_hashes.add((case.id, content_hash))
+
+        # Store raw bytes into object store so downstream stages can always read it
+        try:
+            from app.container import get_container
+            get_container().object_store.put(
+                get_settings().minio_bucket_documents,
+                entry.relative_path,
+                entry.path.read_bytes(),
+            )
+        except Exception:
+            pass
 
         document = CaseDocument(
             id=new_uuid(),

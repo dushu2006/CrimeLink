@@ -108,7 +108,13 @@ export default function Documents() {
 
       {!data && <Spinner />}
       {data && data.items.length === 0 && (
-        <Empty message="No documents match these filters." />
+        <Empty
+          message={
+            !q && !status && !caseId
+              ? "No documents found in the active dataset."
+              : "No documents match these filters."
+          }
+        />
       )}
 
       {data && data.items.length > 0 && (

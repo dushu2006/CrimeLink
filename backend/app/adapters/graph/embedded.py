@@ -101,6 +101,7 @@ def _acquire_process_lock(snapshot_path: Path):
             if handle.tell() == 0:
                 handle.write(b"\0")
                 handle.flush()
+            handle.seek(0)
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
@@ -657,7 +658,30 @@ class EmbeddedGraphStore:
         """Release the inter-process writer lock."""
         if self._lock_file is not None:
             handle, self._lock_file = self._lock_file, None
-            handle.close()
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    try:
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    except OSError:
+                        pass
+                else:
+                    import fcntl
+
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+            finally:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+
+    def __del__(self) -> None:
+        self.close()
 
     def list_nodes(self, label: str | None = None, limit: int = 100, offset: int = 0) -> dict:
         """Paginated node listing for the admin DB-inspection UI."""

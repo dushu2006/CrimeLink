@@ -18,6 +18,7 @@ from fastapi import Request
 
 from app.config import Settings, get_settings
 from app.errors import RateLimitError
+from app.security.net import client_ip
 
 _buckets: dict[str, Deque[float]] = defaultdict(deque)
 _lock = threading.Lock()
@@ -48,14 +49,7 @@ def enforce_rate_limit(
     # cannot consume the login allowance (or vice versa).
     _consume(f"{'auth' if auth else 'api'}:{identity}", limit)
     if auth and path.endswith("/login"):
-        _consume(f"login:{_client_ip(request)}", settings.rate_limit_auth_per_minute)
-
-
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+        _consume(f"login:{client_ip(request)}", settings.rate_limit_auth_per_minute)
 
 
 def reset() -> None:

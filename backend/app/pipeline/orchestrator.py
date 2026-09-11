@@ -224,9 +224,32 @@ def _run(
 
     # --- S1 ----------------------------------------------------------------
     _stage(doc_id, case_id, 1, "RUNNING")
-    raw = container.object_store.get(settings.minio_bucket_documents, storage_key)
+    from pathlib import Path
+    raw: bytes | None = None
+    try:
+        raw = container.object_store.get(settings.minio_bucket_documents, storage_key)
+    except Exception:
+        raw = None
+
+    if raw is None and document.dataset_id:
+        from app.datasets import registry
+        ws = registry.workspace_for(document.dataset_id)
+        for cand in (ws / storage_key, ws / filename):
+            if cand.is_file():
+                raw = cand.read_bytes()
+                try:
+                    container.object_store.put(settings.minio_bucket_documents, storage_key, raw)
+                except Exception:
+                    pass
+                break
+
+    if raw is None:
+        cand = Path(storage_key)
+        if cand.is_file():
+            raw = cand.read_bytes()
+
     if not raw:
-        raise PipelineError("The uploaded file is empty.")
+        raise PipelineError(f"The file '{filename}' is empty or missing from storage.")
     from app.pipeline.adapters.registry import get_adapter
 
     adapter = get_adapter(

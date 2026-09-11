@@ -163,7 +163,18 @@ async def dataset_files(
     """
     dataset = await _active_dataset(session)
     if dataset is None:
-        return await _legacy_corpus_files(session)
+        return {
+            "root": None,
+            "dataset_id": None,
+            "dataset_name": None,
+            "dataset_version": None,
+            "dataset_status": None,
+            "ok": True,
+            "issues": [],
+            "warnings": [],
+            "counts": {"files": 0},
+            "items": [],
+        }
 
     root = await _dataset_root(session, dataset.id)
     rows = list(
@@ -377,8 +388,8 @@ async def preview_file(
     clean = path.split("#", 1)[0]
     dataset = await _active_dataset(session)
     if dataset is None:
-        _evaluation_guard(clean)
-    root = await _dataset_root(session, dataset.id if dataset else None)
+        raise NotFoundError("No dataset is currently active.")
+    root = await _dataset_root(session, dataset.id)
 
     result = source_viewer.preview(
         path,
@@ -390,15 +401,13 @@ async def preview_file(
         limit=limit,
         offset=offset,
         sheet=sheet,
-        dataset_id=dataset.id if dataset else None,
+        dataset_id=dataset.id,
         raw_url=_raw_url(clean),
         download_url=_raw_url(clean),
     )
     if result["status"] in {source_viewer.STATUS_AVAILABLE, source_viewer.STATUS_NO_EXTRACTED_TEXT}:
         recorder.record("DOC_VIEW", target_resource=f"source:{clean}", details={"kind": result.get("render_kind")})
         await recorder.flush()
-    if dataset is None:
-        result["legacy"] = True
     return result
 
 
@@ -424,8 +433,8 @@ async def read_file(
     clean = path.split("#", 1)[0]
     dataset = await _active_dataset(session)
     if dataset is None:
-        _evaluation_guard(clean)
-    root = await _dataset_root(session, dataset.id if dataset else None)
+        raise NotFoundError("No dataset is currently active.")
+    root = await _dataset_root(session, dataset.id)
     try:
         window = source_viewer.read_window(
             path,
@@ -501,8 +510,8 @@ async def raw_file(
 
     dataset = await _active_dataset(session)
     if dataset is None:
-        _evaluation_guard(clean)
-    root = await _dataset_root(session, dataset.id if dataset else None)
+        raise NotFoundError("No dataset is currently active.")
+    root = await _dataset_root(session, dataset.id)
     try:
         resolved = source_viewer.resolve_in_dataset(clean, root=root)
     except SourceNotFoundError as exc:

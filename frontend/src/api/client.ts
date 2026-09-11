@@ -164,10 +164,23 @@ function messageFrom(payload: unknown, status: number): { message: string; code:
   return { code: String(status), message: `Request failed (${status}).` };
 }
 
+let activeDatasetIdCached: string | null = null;
+
+export function setActiveDatasetId(id: string | null): void {
+  activeDatasetIdCached = id;
+}
+
+export function getActiveDatasetId(): string | null {
+  return activeDatasetIdCached;
+}
+
 async function raw(path: string, init: RequestInit = {}, token?: string | null): Promise<Response> {
   const headers = new Headers(init.headers);
   const bearer = token ?? tokenStore.access;
   if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
+  if (activeDatasetIdCached && !headers.has("X-Dataset-Id")) {
+    headers.set("X-Dataset-Id", activeDatasetIdCached);
+  }
   if (!(init.body instanceof FormData) && init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -182,7 +195,13 @@ async function requestRefresh(): Promise<boolean> {
       method: "POST",
       body: JSON.stringify({ refresh_token: refresh }),
     }, null);
-    if (!response.ok) return false;
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 404) {
+        tokenStore.clear();
+        onUnauthorized?.();
+      }
+      return false;
+    }
     const session = (await parse(response)) as Session;
     tokenStore.save(session);
     return true;
@@ -263,6 +282,32 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
  */
 export function clearInflight(): void {
   inflight.clear();
+}
+
+/**
+ * Signal to the whole application that the active dataset has changed.
+ *
+ * This does two things atomically:
+ *  1. Drops all in-flight GET dedup slots so no stale response can be
+ *     replayed to the next page mount.
+ *  2. Dispatches a ``crimelink:dataset-changed`` CustomEvent on ``window``
+ *     so any page or component that has cached API results (case lists,
+ *     entity tables, etc.) can listen and immediately clear its local state
+ *     rather than showing the previous dataset's data until the next
+ *     navigation.
+ *
+ * Called by DatasetConsole after a successful import or explicit activation.
+ */
+export function datasetChanged(newDatasetId?: string | null): void {
+  if (newDatasetId !== undefined) {
+    activeDatasetIdCached = newDatasetId;
+  }
+  clearInflight();
+  try {
+    window.dispatchEvent(new CustomEvent("crimelink:dataset-changed"));
+  } catch {
+    /* CustomEvent is not available in SSR / test environments — ignore */
+  }
 }
 
 /**
@@ -1183,6 +1228,7 @@ export function watchActiveDataset(onChange: (datasetId: string | null) => void)
     try {
       const { active } = await activeDataset();
       const id = active?.id ?? null;
+      activeDatasetIdCached = id;
       if (baseline === undefined) {
         baseline = id;
         return;

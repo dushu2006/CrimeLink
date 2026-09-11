@@ -154,18 +154,7 @@ async def ask_case_question(
     scope: JurisdictionScope = Depends(get_scope),
     session: AsyncSession = Depends(get_db_session),
 ) -> AskResponse:
-    """Ask a question about one case, answered from that case's evidence only.
-
-    The case is resolved and jurisdiction-checked *before* the gateway runs:
-    an unknown case is a 404 and an out-of-scope case is a 404 as well, so the
-    endpoint cannot be used to probe for the existence of cases the caller may
-    not see.  Previously neither check happened and any case id at all
-    returned 200.
-
-    A conversational message ("Hi", "thanks") is answered on a fast path that
-    touches neither the graph nor a model — see :mod:`app.ai.gateway`.
-    """
-    # 404/403 before any retrieval, model call or audit entry.
+    """Ask a question about one case, answered from that case's evidence only."""
     await case_service.require_case(session, scope, case_id)
     dataset_id, graph_ready = await _dataset_context(session)
 
@@ -182,10 +171,7 @@ async def ask_case_question(
         graph_ready=graph_ready,
     )
 
-    if not response.available:
-        # Not an error for the transport: the request was valid, the model was
-        # not reachable.  Logged with the request id so an operator can join
-        # the browser's complaint to the server's log line.
+    if not response.available and response.fallback_reason:
         log.warning(
             "ai.case_ask_unavailable",
             request_id=request_id,
@@ -220,20 +206,7 @@ async def ask_case_question_stream(
     scope: JurisdictionScope = Depends(get_scope),
     session: AsyncSession = Depends(get_db_session),
 ):
-    """NDJSON progress stream for one question — the interactive path.
-
-    Events (see :meth:`AIGateway.ask_stream`): ``ack`` lands immediately so
-    the UI can show "Thinking…" without waiting for the model; ``stage`` and
-    ``retrieval`` explain what is happening while it happens; ``delta``
-    carries answer tokens as the provider generates them; ``done`` carries
-    the exact payload the non-streaming endpoint would have returned, so a
-    client can treat the stream as an enhancement and the POST as the
-    fallback without reconciling two formats.
-
-    Auth/validation failures stay plain HTTP status codes *before* the stream
-    opens; once streaming starts, everything — including a dead provider —
-    arrives as events, never as a half-open connection that looks frozen.
-    """
+    """NDJSON progress stream for one question — the interactive path."""
     await case_service.require_case(session, scope, case_id)
     dataset_id, graph_ready = await _dataset_context(session)
 
@@ -255,7 +228,7 @@ async def ask_case_question_stream(
                 graph_ready=graph_ready,
             ):
                 yield json.dumps(event, default=str) + "\n"
-        except Exception as exc:  # noqa: BLE001 - the stream must end with a reason
+        except Exception as exc:  # noqa: BLE001
             log.exception("ai.stream_endpoint_failed", request_id=request_id, error=str(exc))
             yield json.dumps(
                 {
@@ -274,10 +247,101 @@ async def ask_case_question_stream(
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",  # nginx: do not buffer the stream
+            "X-Accel-Buffering": "no",
             "X-Request-Id": request_id,
         },
     )
+
+
+@router.post("/ask", response_model=AskResponse)
+async def ask_general_question(
+    payload: AskRequest,
+    request: Request,
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+) -> AskResponse:
+    """General or dataset-wide AI query."""
+    dataset_id, graph_ready = await _dataset_context(session)
+    request_id = getattr(request.state, "trace_id", None) or str(uuid.uuid4())
+    gateway = get_ai_gateway()
+    response = await gateway.ask(
+        question=payload.question,
+        case_id="",
+        principal_id=principal.id,
+        depth=payload.depth,
+        target_key=payload.target_key,
+        request_id=request_id,
+        dataset_id=dataset_id,
+        graph_ready=graph_ready,
+    )
+    settings = get_settings()
+    provider = settings.role_config(response.role).get("provider") if response.role != "conversational" else "local"
+    return AskResponse(
+        query_id=response.query_id,
+        request_id=request_id,
+        available=response.available,
+        fallback_reason=response.fallback_reason,
+        model=response.model,
+        role=response.role,
+        provider=provider,
+        pseudonymized=response.pseudonymized,
+        latency_ms=response.latency_ms,
+        context=response.context,
+        finding=response.finding.model_dump(),
+        timing=dict((response.context or {}).get("timing") or {}),
+    )
+
+
+@router.post("/ask/stream")
+async def ask_general_question_stream(
+    payload: AskRequest,
+    request: Request,
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """General or dataset-wide streaming AI query."""
+    dataset_id, graph_ready = await _dataset_context(session)
+    request_id = getattr(request.state, "trace_id", None) or str(uuid.uuid4())
+    gateway = get_ai_gateway()
+
+    from fastapi.responses import StreamingResponse
+
+    async def lines():
+        try:
+            async for event in gateway.ask_stream(
+                question=payload.question,
+                case_id="",
+                principal_id=principal.id,
+                depth=payload.depth,
+                target_key=payload.target_key,
+                request_id=request_id,
+                dataset_id=dataset_id,
+                graph_ready=graph_ready,
+            ):
+                yield json.dumps(event, default=str) + "\n"
+        except Exception as exc:  # noqa: BLE001
+            log.exception("ai.stream_endpoint_failed", request_id=request_id, error=str(exc))
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "code": "stream_failed",
+                    "request_id": request_id,
+                    "message": "Unable to answer this question. The AI service failed while streaming.",
+                }
+            ) + "\n"
+
+    return StreamingResponse(
+        lines(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "X-Request-Id": request_id,
+        },
+    )
+
 
 
 # ---------------------------------------------------------------------------
