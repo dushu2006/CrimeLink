@@ -111,6 +111,7 @@ class AuditAction(str, Enum):
     QUARANTINE_RELEASE = "QUARANTINE_RELEASE"
     CONFIG_CHANGE = "CONFIG_CHANGE"
     AI_QUERY = "AI_QUERY"
+    INVESTIGATE = "INVESTIGATE"
 
 
 class AIModelRole(str, Enum):

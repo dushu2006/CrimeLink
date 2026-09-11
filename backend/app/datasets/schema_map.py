@@ -101,6 +101,13 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "PERSON.occupation": ("occupation", "profession", "job", "designation_civil"),
     "PERSON.risk_role": ("risk_role", "role_in_network", "classification", "risk", "risk_category"),
     "PERSON.status": ("person_status", "subject_status"),
+    "PERSON.criminal_status": (
+        "criminal_status",
+        "criminal_history",
+        "conviction_status",
+        "criminal_record",
+        "record_status",
+    ),
     "PERSON.alias": ("alias", "aliases", "aka", "nickname", "surface_name", "known_as", "variant_name"),
     # --- telecom ----------------------------------------------------------
     "PHONE.id": ("phone_id", "phoneid", "msisdn_id", "sim_id", "number_id"),

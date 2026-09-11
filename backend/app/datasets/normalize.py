@@ -651,6 +651,9 @@ class Normalizer:
             "risk_role": row.get(m.get("PERSON.risk_role", ""), ""),
             "aadhaar": row.get(m.get("PERSON.aadhaar", ""), ""),
             "pan": row.get(m.get("PERSON.pan", ""), ""),
+            # Stated criminal status travels with the record so downstream
+            # surfaces can echo it; nothing here infers it.
+            "criminal_status": row.get(m.get("PERSON.criminal_status", ""), ""),
         }
         pid = self._register(
             sm.PERSON, person_id, name=sm.normalize_name(name),

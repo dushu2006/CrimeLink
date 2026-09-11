@@ -535,6 +535,48 @@ class EmbeddedGraphStore:
                 )
             return CaseGraphSnapshot(case_id=case_id, nodes=nodes, edges=edges)
 
+    def multi_case_snapshot(
+        self, case_ids: list[str], include_inactive: bool = False
+    ) -> Any:
+        """One snapshot spanning several cases for cross-case reasoning.
+
+        Membership is by ``case_ids`` overlap: a node belongs when any of
+        its cases is in scope. The snapshot carries no single case id;
+        per-node ``case_ids`` in properties preserve attribution.
+        """
+        from app.domain.models import CaseGraphSnapshot
+
+        wanted = set(case_ids)
+        with self._lock:
+            nodes: dict[str, GraphNode] = {}
+            for pk, data in self._graph.nodes(data=True):
+                if data.get(_LABEL) == "Case":
+                    continue
+                if wanted.isdisjoint(data.get("case_ids") or []):
+                    continue
+                if not include_inactive and not data.get("is_active", True):
+                    continue
+                if data.get("staging"):
+                    continue
+                nodes[pk] = self._to_graph_node(pk, data)
+            edges: list[GraphEdge] = []
+            for u, v, k, data in self._graph.edges(keys=True, data=True):
+                if u not in nodes or v not in nodes:
+                    continue
+                props = {key: val for key, val in data.items() if not key.startswith("_")}
+                if not props.get("source_doc_id") and data.get(_REL) not in UNEVIDENCED_META_REL_TYPES:
+                    continue
+                edges.append(
+                    GraphEdge(
+                        source_key=u,
+                        target_key=v,
+                        rel_type=data.get(_REL, "RELATED"),
+                        properties=props,
+                        key=k,
+                    )
+                )
+            return CaseGraphSnapshot(case_id="", nodes=nodes, edges=edges)
+
     def timeline(
         self,
         case_id: str,

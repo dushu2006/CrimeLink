@@ -417,6 +417,26 @@ class EntityResolutionItem(Base):
     )
 
 
+class InvestigationSession(Base):
+    """One investigation thread, pinned to the dataset that bore it.
+
+    Continuing a thread against a different active dataset is refused:
+    memory must never leak conclusions across data replacements.
+    """
+
+    __tablename__ = "investigation_sessions"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    case_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="master")
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    state: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+
 class DetectedPattern(Base):
     """Review queue 2 — suspicious behaviour, never a confirmed finding (PRD 11.3)."""
 
