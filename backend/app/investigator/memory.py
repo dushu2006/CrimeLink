@@ -28,6 +28,9 @@ MAX_ENTITIES = 100
 MAX_GAPS = 50
 MAX_UNRESOLVED = 50
 MAX_CONTRADICTIONS = 20
+MAX_RELATIONSHIPS = 30
+MAX_REJECTED = 20
+MAX_FINDINGS = 20
 
 
 def blank_state(objective: str = "") -> dict[str, Any]:
@@ -41,6 +44,9 @@ def blank_state(objective: str = "") -> dict[str, Any]:
         "gaps": [],
         "unresolved": [],
         "contradictions": [],
+        "relationships": [],
+        "rejected": [],
+        "findings": [],
     }
 
 
@@ -53,14 +59,23 @@ def record_turn(
     state: dict[str, Any],
     *,
     question: str,
+    objective: str | None = None,
     facts: list[str] | None = None,
     hypotheses: list[dict[str, Any]] | None = None,
     entities: list[str] | None = None,
     gaps: list[str] | None = None,
     unresolved: list[str] | None = None,
     contradictions: list[str] | None = None,
+    relationships: list[str] | None = None,
+    rejected: list[dict[str, Any]] | None = None,
+    findings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Merge one answered question into the thread state (bounded)."""
+    """Merge one answered question into the thread state (bounded).
+
+    The objective is sticky: whatever an investigation set out to establish on
+    its first turn (or whatever the investigator stated explicitly) keeps
+    governing the follow-up questions, which is what makes continuity visible.
+    """
     merged = dict(state or blank_state())
     merged["questions"] = _bounded(merged.get("questions", []), [question], MAX_QUESTIONS)
     merged["confirmed"] = _bounded(merged.get("confirmed", []), facts or [], MAX_CONFIRMED)
@@ -71,8 +86,29 @@ def record_turn(
     merged["contradictions"] = _bounded(
         merged.get("contradictions", []), contradictions or [], MAX_CONTRADICTIONS
     )
+    merged["relationships"] = _bounded(
+        merged.get("relationships", []), relationships or [], MAX_RELATIONSHIPS
+    )
+    merged["findings"] = _bounded(
+        merged.get("findings", []), findings or [], MAX_FINDINGS
+    )
+    # Rejected hypotheses are remembered so a later turn does not quietly
+    # re-propose a reading this investigation already tested and set aside.
+    prior_rejected = {
+        str(item.get("id")) for item in merged.get("rejected", []) if isinstance(item, dict)
+    }
+    fresh_rejected = [
+        dict(item)
+        for item in (rejected or [])
+        if isinstance(item, dict) and str(item.get("id")) not in prior_rejected
+    ]
+    merged["rejected"] = _bounded(
+        merged.get("rejected", []), fresh_rejected, MAX_REJECTED
+    )
+    if objective and objective.strip():
+        merged["objective"] = objective.strip()[:400]
     if not merged.get("objective"):
-        merged["objective"] = question[:300]
+        merged["objective"] = question[:400]
     return merged
 
 
@@ -126,6 +162,7 @@ def memory_section(row: InvestigationSession) -> MemorySection:
     questions = [str(question) for question in state.get("questions", [])]
     return MemorySection(
         investigation_id=row.id,
+        objective=str(state.get("objective") or ""),
         questions_asked=len(questions),
         prior_questions=questions,
         confirmed_facts=[str(item) for item in state.get("confirmed", [])],
@@ -133,4 +170,10 @@ def memory_section(row: InvestigationSession) -> MemorySection:
         examined_entities=[str(item) for item in state.get("entities", [])],
         open_gaps=[str(item) for item in state.get("gaps", [])],
         unresolved=[str(item) for item in state.get("unresolved", [])],
+        contradictions=[str(item) for item in state.get("contradictions", [])],
+        relationships=[str(item) for item in state.get("relationships", [])],
+        rejected_hypotheses=[
+            dict(item) for item in state.get("rejected", []) if isinstance(item, dict)
+        ],
+        prior_findings=[str(item) for item in state.get("findings", [])],
     )

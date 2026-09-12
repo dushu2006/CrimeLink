@@ -7,6 +7,7 @@ import Cases from "./pages/Cases";
 import CaseDetail from "./pages/CaseDetail";
 import GraphPage from "./pages/GraphPage";
 import InvestigationPage from "./pages/InvestigationPage";
+import InvestigatorWorkspace from "./pages/InvestigatorWorkspace";
 import Review from "./pages/Review";
 import Admin from "./pages/Admin";
 import Documents from "./pages/Documents";
@@ -64,6 +65,10 @@ export default function App() {
           <Route path="/cases/:caseId" element={<CaseDetail />} />
           <Route path="/cases/:caseId/graph" element={<GraphPage />} />
           <Route path="/cases/:caseId/investigation" element={<InvestigationPage />} />
+          {/* The evidence-driven reasoning workspace: case scope, or the
+              master network when opened from the cross-case analysis. */}
+          <Route path="/cases/:caseId/investigate" element={<InvestigatorWorkspace />} />
+          <Route path="/investigate" element={<InvestigatorWorkspace />} />
           <Route path="/cases/:caseId/review" element={<Review />} />
           <Route path="/review" element={<Review />} />
 

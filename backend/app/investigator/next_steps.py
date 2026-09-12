@@ -12,6 +12,7 @@ the magistrate decide the rest.
 
 from __future__ import annotations
 
+from .evidence import roll_up_provenance
 from .schemas import (
     DataGap,
     Hypothesis,
@@ -67,6 +68,7 @@ def build_next_steps(
                     rationale="A pending merge/unmerge decision blocks firm conclusions.",
                     priority="high",
                     links={"entities": list(pattern.entities), "case_ids": list(case_ids)},
+                    provenance=roll_up_provenance(pattern.evidence),
                 )
             )
 
@@ -79,6 +81,7 @@ def build_next_steps(
                 rationale=f"Top reading stands at {top.strength}; test it against a fresh record.",
                 priority="high" if top.strength in ("MODERATE", "STRONG") else "medium",
                 links={"entities": list(top.entities), "case_ids": list(case_ids)},
+                provenance=roll_up_provenance([*top.supporting, *top.contradicting]),
             )
         )
 
@@ -110,6 +113,9 @@ def build_next_steps(
                 rationale="Cross-case links need file-level comparison before they mean anything.",
                 priority="medium",
                 links={"case_ids": sorted({case for pattern in cross_case for case in pattern.cases})},
+                provenance=roll_up_provenance(
+                    [item for pattern in cross_case for item in pattern.evidence]
+                ),
             )
         )
 

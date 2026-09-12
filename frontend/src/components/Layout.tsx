@@ -189,6 +189,19 @@ export default function Layout() {
                 <span className="nav-pill nav-pill-primary">AI</span>
               </NavLink>
 
+              {/* The evidence-driven reasoning workspace — a different surface
+                  from the stage workflow above: that one shows how the case was
+                  processed, this one shows what the evidence supports. */}
+              <NavLink
+                to={activeCaseId ? `/cases/${activeCaseId}/investigate` : "/investigate"}
+                className={({ isActive }) =>
+                  `sidebar-link ${isActive ? "active" : ""}`
+                }
+              >
+                <span className="material-symbols-outlined nav-icon">fact_check</span>
+                <span className="nav-label">{t("nav.reasoning", lang)}</span>
+              </NavLink>
+
               <NavLink
                 to="/review"
                 className={({ isActive }) =>

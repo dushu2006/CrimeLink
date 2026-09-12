@@ -25,9 +25,10 @@ from app.domain.models import CaseGraphSnapshot
 
 from .evidence import (
     confidence_label,
-    doc_pointer,
     edge_pointer,
     make_evidence,
+    roll_up_provenance,
+    source_pointer,
     metric_pointer,
 )
 from .labels import (
@@ -207,7 +208,7 @@ def _doc_evidence(
     info = ctx.doc_index.get(doc_id, {})
     label = confidence_label(info.get("source_confidence"))
     origin = info.get("origin_file") or info.get("filename")
-    pointer = doc_pointer(
+    pointer = source_pointer(
         doc_id=doc_id,
         label=str(info.get("filename") or info.get("origin_file") or doc_id),
         origin_file=str(origin) if origin else None,
@@ -1024,4 +1025,9 @@ def detect_all_patterns(
     result = live[: max(1, max_patterns)]
     if include_excluded:
         result.extend(aside[:MAX_EXCLUDED])
+    for pattern in result:
+        # The flat pointer list is derived from the evidence the detector
+        # attached; a pattern with no evidence keeps an empty list rather than a
+        # placeholder pointer.
+        pattern.provenance = roll_up_provenance(pattern.evidence)
     return result

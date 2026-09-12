@@ -24,7 +24,7 @@ from app.analytics.temporal import find_temporal_paths
 from app.domain.enums import LOW_CONFIDENCE_REL_TYPES
 from app.domain.models import CaseGraphSnapshot
 
-from .evidence import doc_pointer, edge_pointer, make_evidence
+from .evidence import edge_pointer, make_evidence, roll_up_provenance, source_pointer
 from .labels import COINCIDENCE, FACT, LEAD
 from .patterns import META_RELS, _benign_kind, _edge_docs
 from .schemas import (
@@ -62,6 +62,43 @@ def _pair_edges(snapshot: CaseGraphSnapshot, first: str, second: str) -> list:
         if edge.rel_type not in META_RELS
         and {edge.source_key, edge.target_key} == {first, second}
     ]
+
+
+def _edges_along(
+    snapshot: CaseGraphSnapshot, keys: list[str], edge_keys: list[str] | None = None
+) -> list:
+    """The stored edges behind a path, in hop order.
+
+    A finding that asserts a route must be able to open every hop it relies
+    on, so this returns real edges (which carry their own document) instead of
+    restating the route as prose.
+    """
+    edges = [edge for edge in (snapshot.edges or []) if edge.rel_type not in META_RELS]
+    wanted = [key for key in (edge_keys or []) if key]
+    used: set[int] = set()
+    hops: list = []
+    for source, target in zip(keys, keys[1:]):
+        chosen = None
+        for key in wanted:
+            for edge in edges:
+                if id(edge) in used or getattr(edge, "key", "") != key:
+                    continue
+                if {edge.source_key, edge.target_key} == {source, target}:
+                    chosen = edge
+                    break
+            if chosen is not None:
+                break
+        if chosen is None:
+            for edge in edges:
+                if id(edge) in used:
+                    continue
+                if {edge.source_key, edge.target_key} == {source, target}:
+                    chosen = edge
+                    break
+        if chosen is not None:
+            used.add(id(chosen))
+            hops.append(chosen)
+    return hops
 
 
 def _adjacency(snapshot: CaseGraphSnapshot) -> dict[str, list[tuple[str, str]]]:
@@ -108,7 +145,7 @@ def _bfs_paths(
 def _doc_provenance(doc_index: dict[str, dict], doc_id: str):
     info = doc_index.get(doc_id, {})
     origin = info.get("origin_file") or info.get("filename")
-    return doc_pointer(
+    return source_pointer(
         doc_id=doc_id,
         label=str(info.get("filename") or info.get("origin_file") or doc_id),
         origin_file=str(origin) if origin else None,
@@ -240,22 +277,23 @@ def discover_relationships(
         else:
             for path in _bfs_paths(adjacency, first, second):
                 via = [names.get(key, key) for key in path[1:-1]]
+                path_edges = _edges_along(snapshot, path)
                 findings.append(
                     RelationshipFinding(
                         kind="indirect",
                         entities=[first_name, second_name],
                         title=f"{first_name} & {second_name}: linked via {', '.join(via)}",
                         description=f"No direct record; shortest route runs through {', '.join(via)}.",
-                        evidence=[
-                            make_evidence(
-                                "relationship",
-                                f"Path: {' → '.join(names.get(key, key) for key in path)}.",
-                                label=LEAD,
-                            )
-                        ],
+                        evidence=_evidence_for_edges(
+                            path_edges,
+                            doc_index,
+                            f"Path: {' → '.join(names.get(key, key) for key in path)}.",
+                            label=LEAD,
+                        ),
                         inference_label=LEAD,
                         path=RelationshipPath(
                             nodes=[names.get(key, key) for key in path],
+                            edges=[edge.key for edge in path_edges if getattr(edge, "key", "")],
                             description=f"{len(path) - 1}-hop route",
                         ),
                         analysis=_analysis(
@@ -273,23 +311,26 @@ def discover_relationships(
             temporal = []
         if temporal:
             best = temporal[0]
+            path_keys = [str(key) for key in best.get("provenance_keys", [])]
             nodes = [names.get(str(key), str(key)) for key in best.get("nodes", best.get("path", []))]
+            path_edges = _edges_along(snapshot, path_keys, best.get("edge_keys"))
             findings.append(
                 RelationshipFinding(
                     kind="temporal",
                     entities=[first_name, second_name],
                     title=f"{first_name} & {second_name}: chronologically linked",
                     description=f"{len(temporal)} chronologically valid path(s) connect the pair.",
-                    evidence=[
-                        make_evidence(
-                            "relationship",
-                            f"Chronological path: {' → '.join(nodes) if nodes else 'present'}.",
-                            label=LEAD,
-                        )
-                    ],
+                    evidence=_evidence_for_edges(
+                        path_edges,
+                        doc_index,
+                        f"Chronological path: {' → '.join(nodes) if nodes else 'present'}.",
+                        label=LEAD,
+                    ),
                     inference_label=LEAD,
                     path=RelationshipPath(
-                        nodes=nodes, description="chronologically valid route"
+                        nodes=nodes,
+                        edges=[edge.key for edge in path_edges if getattr(edge, "key", "")],
+                        description="chronologically valid route",
                     ),
                     analysis=_analysis(
                         "Events order cleanly along the route (no time travel).",
@@ -363,4 +404,9 @@ def discover_relationships(
     findings.sort(
         key=lambda item: (_KIND_ORDER.get(item.kind, 9), item.entities, item.title)
     )
-    return findings[: max(0, limit)]
+    result = findings[: max(0, limit)]
+    for finding in result:
+        # One flat pointer list per finding: the console can open a hop or an
+        # origin file without re-walking the nested evidence.
+        finding.provenance = roll_up_provenance(finding.evidence)
+    return result

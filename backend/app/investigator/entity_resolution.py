@@ -90,6 +90,26 @@ _NAME_STOPWORDS = frozenset(
 )
 
 
+#: Words that *open* a question and would otherwise be glued onto the first
+#: name ("Are Harish Varma and … connected?" → "Are Harish Varma"). A leading
+#: token is only dropped at a sentence boundary, so a name that legitimately
+#: starts with one of these words is left alone mid-sentence, and a one-word
+#: remainder is still subject to the usual stopword filter.
+_LEADING_QUESTION_WORDS = frozenset(
+    {
+        "are", "is", "was", "were", "am", "be", "been",
+        "do", "does", "did", "has", "have", "had",
+        "can", "could", "should", "would", "will", "shall", "may", "might", "must",
+        "who", "whom", "whose", "what", "when", "where", "why", "how", "which",
+        "tell", "show", "find", "list", "give", "check", "explain",
+    }
+)
+
+#: Characters (other than the start of the text) that end a sentence, so the
+#: next capitalized word opens a new one.
+_SENTENCE_END = ".?!:;\n•-—"
+
+
 @dataclass
 class PendingAlias:
     """An open identity proposal the resolver must flag, never apply."""
@@ -104,6 +124,30 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().casefold())
 
 
+def _opens_sentence(question: str, start: int) -> bool:
+    """True when ``start`` begins the text or follows sentence punctuation."""
+    index = start - 1
+    while index >= 0 and question[index].isspace():
+        index -= 1
+    return index < 0 or question[index] in _SENTENCE_END
+
+
+def _strip_leading_question_word(question: str, run: str, start: int) -> str:
+    """Drop a sentence-opening auxiliary/interrogative from a capitalized run.
+
+    "Are Harish Varma" is a question and a name, not a three-word person. The
+    ordinary lowercase form ("Is there a connection between Harish Varma and
+    …") never produced the artifact because the name did not sit directly after
+    the opening word; this keeps the two shapes consistent.
+    """
+    tokens = run.split()
+    if len(tokens) < 2 or not _opens_sentence(question, start):
+        return run
+    while len(tokens) > 1 and tokens[0].casefold() in _LEADING_QUESTION_WORDS:
+        tokens = tokens[1:]
+    return " ".join(tokens)
+
+
 def extract_mentions(question: str, *, limit: int = 6) -> list[str]:
     """Pull candidate entity mentions out of a question, deterministically.
 
@@ -114,7 +158,7 @@ def extract_mentions(question: str, *, limit: int = 6) -> list[str]:
     seen: set[str] = set()
 
     def _keep(raw: str) -> None:
-        cleaned = raw.strip(" \t\"'“”‘’,.;:()")
+        cleaned = _fold_possessive(raw.strip(" \t\"'“”‘’,.;:()"))
         if len(cleaned) < 2 or len(mentions) >= limit:
             return
         key = _normalize(cleaned)
@@ -123,10 +167,16 @@ def extract_mentions(question: str, *, limit: int = 6) -> list[str]:
         seen.add(key)
         mentions.append(cleaned)
 
-    for quoted in re.findall(r"[\"“”'‘’]([^\"“”'‘’]{2,60})[\"“”'‘’]", question):
-        _keep(quoted)
-    for run in re.findall(r"\b([A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){1,3})", question):
-        _keep(run)
+    for match in re.finditer(r"([\"“”'‘’])([^\"“”'‘’]{2,60})\1", question):
+        opener = match.group(1)
+        preceding = question[match.start() - 1] if match.start() else ""
+        if opener in "'’" and (preceding.isalnum() or preceding in "_’'"):
+            # An apostrophe inside a word ("Iyer's phone") is punctuation, not a
+            # quote: treating it as one invents a mention out of the possessive.
+            continue
+        _keep(match.group(2))
+    for match in re.finditer(r"\b([A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*){1,3})", question):
+        _keep(_strip_leading_question_word(question, match.group(1), match.start()))
     return mentions
 
 
@@ -181,17 +231,24 @@ def _identifier_hit(mention: str, node: Any) -> str | None:
     return None
 
 
+def _fold_possessive(text: str) -> str:
+    """``Sana Iyer's`` is a name in a possessive, not a name of its own."""
+    return re.sub(r"(?<=\w)['’]s\b", "", text)
+
+
 def _name_score(mention: str, node: Any) -> tuple[float, str]:
-    wanted = _normalize(mention)
+    wanted = _normalize(_fold_possessive(mention))
     for name in _node_names(node):
-        if _normalize(name) == wanted:
+        if _normalize(_fold_possessive(name)) == wanted:
             return 1.0, "name"
     for alias in _node_aliases(node):
-        if _normalize(alias) == wanted:
+        if _normalize(_fold_possessive(alias)) == wanted:
             return 0.9, "alias"
     wanted_tokens = {token for token in re.split(r"\W+", wanted) if token}
     for name in _node_names(node):
-        name_tokens = {token for token in re.split(r"\W+", _normalize(name)) if token}
+        name_tokens = {
+            token for token in re.split(r"\W+", _normalize(_fold_possessive(name))) if token
+        }
         if wanted_tokens and wanted_tokens <= name_tokens:
             return 0.75, "name-partial"
     return 0.0, "none"

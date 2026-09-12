@@ -115,6 +115,7 @@ def build_investigation_prompt(
     hypothesis_lines: list[str],
     convergence_line: str,
     gap_lines: list[str],
+    memory_lines: list[str] | None = None,
     per_section_cap: int = 8,
     line_cap: int = 300,
 ) -> str:
@@ -134,4 +135,8 @@ def build_investigation_prompt(
         f"Convergence: {convergence_line[:300]}",
         _block("Data gaps", gap_lines),
     ]
+    # Thread context is only sent when the investigation has one; a first
+    # question carries no memory block at all.
+    if memory_lines:
+        sections.append(_block("Earlier in this investigation", memory_lines))
     return "\n\n".join(sections)

@@ -187,8 +187,13 @@ accordingly.
 
 ### Optional: ingest the local synthetic corpus from disk
 
-The development dataset lives at **`backend/CrimeLink_Synthetic_Corpus_v1/`**
-(gitignored; its absence from GitHub does not mean it is absent locally):
+An optional synthetic **evaluation/demo fixture** lives at
+**`backend/CrimeLink_Synthetic_Corpus_v1/`** (committed to this repository; nothing
+at runtime requires it). CrimeLink starts with **no active dataset** — nothing is
+ingested at startup — and any external dataset (this fixture, an investigator
+upload, or an arbitrary folder via `POST /api/v1/datasets/import/path`) becomes the
+analysis universe only through an explicit ingestion and activation step. The
+fixture's layout:
 
 ```
 CrimeLink/

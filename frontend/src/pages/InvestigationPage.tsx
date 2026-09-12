@@ -182,6 +182,9 @@ export default function InvestigationPage() {
           <p className="muted">{t("investigation.subtitle")}</p>
         </div>
         <div className="row-actions">
+          <Link className="btn btn-primary" to={`/cases/${caseId}/investigate`}>
+            {t("inv.title")}
+          </Link>
           <Link className="btn btn-secondary" to={`/cases/${caseId}/review`}>
             {t("nav.review")}
           </Link>

@@ -12,7 +12,7 @@ every hypothesis, so the weakest honest reading is never missing.
 
 from __future__ import annotations
 
-from .evidence import make_evidence
+from .evidence import make_evidence, roll_up_provenance
 from .labels import (
     CORROBORATED_LEAD,
     HYPOTHESIS,
@@ -46,15 +46,28 @@ _GROUNDED_ALTERNATIVES: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Pointer kinds that stand for a record, as opposed to a computed analytic.
+_RECORD_KINDS = frozenset({"document", "source_row", "dataset"})
+
+
 def _pair_docs(items: list) -> set[str]:
+    """The independent sources behind a pair, counted one per record set.
+
+    Two rows of the same source file are one origin, so the key is the document
+    where there is one, else the origin file, else the dataset-level ref the
+    importer stamped. Metrics are not sources and never count.
+    """
     docs: set[str] = set()
     for item in items:
         for evidence in list(item.evidence if hasattr(item, "evidence") else []) + list(
             getattr(item, "supporting", []) or []
         ):
             for pointer in evidence.provenance or []:
-                if pointer.doc_id:
-                    docs.add(pointer.doc_id)
+                if pointer.kind not in _RECORD_KINDS:
+                    continue
+                key = pointer.doc_id or pointer.origin_file or pointer.ref
+                if key:
+                    docs.add(key)
     return docs
 
 
@@ -303,6 +316,12 @@ def build_hypotheses(
                     ),
                 ),
             )
+        )
+    for hypothesis in hypotheses:
+        # Both sides stay visible in the flat list: what supports the reading and
+        # what argues against it are equally openable.
+        hypothesis.provenance = roll_up_provenance(
+            [*hypothesis.supporting, *hypothesis.contradicting]
         )
     return hypotheses
 

@@ -227,6 +227,57 @@ async def _make_case(session, owner, number: str, jurisdiction: str) -> Any:
     return case
 
 
+@pytest.fixture(autouse=True)
+def _no_leaked_cases() -> Iterator[None]:
+    """Delete the cases and datasets a test created once that test is done.
+
+    The whole session shares one database (creating the schema once is the
+    point), so a row left behind by one test is visible to every later test —
+    including the acceptance test that asserts a fresh start really is empty
+    (``test_single_active_dataset_acceptance``). Cleanup is by difference, so it
+    covers rows made through the fixtures and through the API alike. Rows that
+    hang off a case cascade at the database level (``PRAGMA foreign_keys=ON``);
+    the append-only audit chain is never rewritten.
+
+    Datasets are cleaned for the same reason, and because a leaked dataset is
+    not merely visible: ``is_active`` is what the rest of the application reads,
+    so a leftover *active* dataset made the fresh-start test list another test's
+    files. Dataset-owned tables key on ``dataset_id`` rather than a foreign key,
+    so their rows are removed explicitly before the dataset itself.
+    """
+    from app.db import models as db_models
+    from app.db.models import Case, Dataset
+    from app.db.session import sync_session
+
+    owned_models = [
+        model
+        for model in vars(db_models).values()
+        if isinstance(model, type) and hasattr(model, "dataset_id")
+    ]
+
+    def _missing(session, column, known: set[str]):
+        query = session.query(column)
+        if known:
+            query = query.filter(~column.in_(known))
+        return [row[0] for row in query.all()]
+
+    with sync_session() as session:
+        case_ids = {row[0] for row in session.query(Case.id).all()}
+        dataset_ids = {row[0] for row in session.query(Dataset.id).all()}
+    yield
+    with sync_session() as session:
+        for dataset_id in _missing(session, Dataset.id, dataset_ids):
+            for model in owned_models:
+                session.query(model).filter(model.dataset_id == dataset_id).delete(
+                    synchronize_session=False
+                )
+            session.query(Dataset).filter(Dataset.id == dataset_id).delete(
+                synchronize_session=False
+            )
+        for case_id in _missing(session, Case.id, case_ids):
+            session.query(Case).filter(Case.id == case_id).delete(synchronize_session=False)
+
+
 @pytest.fixture()
 async def case(db, users) -> Any:
     return await _make_case(db, users["INV-0001"], "FIR/2024/0001/PS-TEST", "RJ-JAIPUR")

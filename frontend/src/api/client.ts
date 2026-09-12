@@ -1376,3 +1376,352 @@ export async function askCaseStream(
     else handlers.onError?.({ type: "error", message: "The answer stream was interrupted." });
   }
 }
+
+/* ------------------------------------------------------------------------- *
+ * Investigator reasoning layer
+ *
+ * The structured answer of `POST /investigate`. Every structural claim is
+ * computed by the backend's deterministic orchestrator; the language model
+ * only contributes narrative text, which is why `assessment.model` is a
+ * separate, clearly-attributable object rather than a "summary" field.
+ *
+ * Inference labels are the six-value vocabulary the whole console shares:
+ * FACT, CORROBORATED_LEAD, LEAD, HYPOTHESIS, COINCIDENCE, DATA_GAP.
+ * ------------------------------------------------------------------------- */
+
+export type InferenceLabel =
+  | "FACT"
+  | "CORROBORATED_LEAD"
+  | "LEAD"
+  | "HYPOTHESIS"
+  | "COINCIDENCE"
+  | "DATA_GAP";
+
+export type EvidenceStance = "supports" | "contradicts" | "context";
+
+export type Strength = "INSUFFICIENT" | "WEAK" | "MODERATE" | "STRONG";
+
+/** One openable pointer behind a claim. */
+export interface ProvenanceItem {
+  kind: string;
+  ref: string;
+  label: string;
+  detail: string | null;
+  doc_id: string | null;
+  origin_file: string | null;
+  row_number: number | null;
+  line_start: number | null;
+  line_end: number | null;
+  content_hash: string | null;
+}
+
+export interface EvidenceItem {
+  kind: "document" | "record" | "relationship" | "metric" | "note";
+  summary: string;
+  inference_label: string;
+  stance: EvidenceStance;
+  provenance: ProvenanceItem[];
+}
+
+export interface ResolvedEntity {
+  canonical_id: string;
+  label: string;
+  display_name: string;
+  aliases: string[];
+  confidence: number;
+  matched_by: string;
+  entity_keys: string[];
+  /** Echoed from the dataset; the investigator layer never infers this. */
+  criminal_status: string | null;
+  resolved: boolean;
+  ambiguity_note: string | null;
+}
+
+export interface ObservationBlock {
+  observation: string;
+  interpretation: string;
+  assessment: string;
+}
+
+export interface RelationshipPath {
+  nodes: string[];
+  edges: string[];
+  description: string;
+}
+
+export interface RelationshipFinding {
+  kind:
+    | "direct"
+    | "indirect"
+    | "temporal"
+    | "repeated"
+    | "cross_case"
+    | "suspicious"
+    | "coincidental";
+  entities: string[];
+  title: string;
+  description: string;
+  evidence: EvidenceItem[];
+  inference_label: string;
+  /** Flat pointers rolled up from `evidence`: one openable list per finding. */
+  provenance: ProvenanceItem[];
+  path: RelationshipPath | null;
+  analysis: ObservationBlock | null;
+}
+
+export interface StrengthFactors {
+  independent_sources: number;
+  corroborating_records: number;
+  temporal_relevance: string;
+  directness: string;
+  consistency: string;
+  contradiction_level: string;
+  entity_certainty: string;
+  notes: string[];
+}
+
+export interface SuspiciousPattern {
+  kind: string;
+  title: string;
+  explanation: string;
+  entities: string[];
+  entity_keys: string[];
+  cases: string[];
+  time_range: Record<string, string | null>;
+  evidence: EvidenceItem[];
+  inference_label: string;
+  strength: Strength;
+  strength_factors: StrengthFactors;
+  contradictions_considered: string[];
+  innocent_alternatives: string[];
+  excluded: boolean;
+  exclusion_reason: string | null;
+  provenance: ProvenanceItem[];
+}
+
+export interface Hypothesis {
+  id: string;
+  statement: string;
+  entities: string[];
+  supporting: EvidenceItem[];
+  contradicting: EvidenceItem[];
+  innocent_alternatives: string[];
+  inference_label: string;
+  strength: Strength;
+  strength_factors: StrengthFactors;
+  /** Both sides rolled up: supporting and contradicting sources alike. */
+  provenance: ProvenanceItem[];
+  analysis: ObservationBlock | null;
+}
+
+export interface DataGap {
+  category: string;
+  description: string;
+  what_would_help: string;
+  inference_label: string;
+  entities: string[];
+  cases: string[];
+}
+
+export interface NextStep {
+  action: string;
+  rationale: string;
+  priority: "high" | "medium" | "low";
+  links: Record<string, string[]>;
+  /** Empty on purpose for gap-closing steps: the record is not in the data yet. */
+  provenance: ProvenanceItem[];
+}
+
+/** What the language model contributed — or why it contributed nothing. */
+export interface ModelSection {
+  available: boolean;
+  role: string;
+  model: string | null;
+  reason: string | null;
+  summary: string;
+  observation: string;
+  interpretation: string;
+  assessment: string;
+  convergence_note: string;
+  caveats: string[];
+  suggested_next_actions: string[];
+  language_edits: string[];
+}
+
+export interface AssessmentSection {
+  overall_strength: Strength;
+  overall_confidence: number;
+  convergence: Record<string, unknown>;
+  observation: string;
+  interpretation: string;
+  assessment: string;
+  caveats: string[];
+  model: ModelSection;
+}
+
+export interface MemorySection {
+  investigation_id: string;
+  /** What this investigation set out to establish (sticky across turns). */
+  objective: string;
+  questions_asked: number;
+  prior_questions: string[];
+  confirmed_facts: string[];
+  open_hypotheses: Record<string, unknown>[];
+  examined_entities: string[];
+  open_gaps: string[];
+  unresolved: string[];
+  /** What earlier turns recorded, including what they ruled out. */
+  contradictions: string[];
+  relationships: string[];
+  rejected_hypotheses: { id?: string; statement?: string; reason?: string }[];
+  prior_findings: string[];
+}
+
+export interface ScopeSection {
+  mode: "case" | "master";
+  /** Human reading of the scope: "Case C106" or "Master Network". */
+  label: string;
+  dataset_id: string | null;
+  dataset_name: string | null;
+  case_id: string | null;
+  case_number: string | null;
+  case_title: string | null;
+  case_ids: string[];
+  nodes_considered: number;
+  edges_considered: number;
+  documents_considered: number;
+}
+
+export interface FocusedGraphNode {
+  key: string;
+  label: string;
+  name: string;
+  focus: boolean;
+}
+
+export interface FocusedGraphEdge {
+  source: string;
+  target: string;
+  rel_type: string;
+}
+
+export interface FocusedGraph {
+  nodes?: FocusedGraphNode[];
+  edges?: FocusedGraphEdge[];
+  truncated?: boolean;
+}
+
+export interface TimelineEntry {
+  ts?: string;
+  timestamp?: string;
+  label?: string;
+  summary?: string;
+  rel_type?: string;
+  source?: string;
+  doc_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface InvestigatorResponse {
+  question: string;
+  objective: string;
+  investigation_id: string;
+  scope: ScopeSection;
+  entities: ResolvedEntity[];
+  facts: EvidenceItem[];
+  relationships: RelationshipFinding[];
+  patterns: SuspiciousPattern[];
+  hypotheses: Hypothesis[];
+  alternative_explanations: string[];
+  assessment: AssessmentSection;
+  gaps: DataGap[];
+  next_steps: NextStep[];
+  timeline: TimelineEntry[];
+  focused_graph: FocusedGraph;
+  provenance: ProvenanceItem[];
+  memory: MemorySection | null;
+  timing_ms: Record<string, number>;
+}
+
+export interface InvestigatePayload {
+  question: string;
+  case_id?: string | null;
+  investigation_id?: string | null;
+  objective?: string | null;
+  max_patterns?: number;
+  include_excluded?: boolean;
+}
+
+/**
+ * Run an investigation question.
+ *
+ * A POST is deliberately not deduplicated by ``api()`` (only GETs are), so
+ * two identical questions asked in sequence are two genuine investigations.
+ */
+export function investigate(payload: InvestigatePayload): Promise<InvestigatorResponse> {
+  return api("/investigate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question: payload.question,
+      case_id: payload.case_id ?? null,
+      investigation_id: payload.investigation_id ?? null,
+      objective: payload.objective ?? null,
+      max_patterns: payload.max_patterns ?? 25,
+      include_excluded: payload.include_excluded ?? true,
+    }),
+  });
+}
+
+export interface PatternDetectionResult {
+  dataset_id: string;
+  dataset_name: string | null;
+  mode: "case" | "master";
+  scope_label: string;
+  case_id: string | null;
+  case_number: string | null;
+  case_ids: string[];
+  nodes_considered: number;
+  edges_considered: number;
+  patterns: SuspiciousPattern[];
+  count: number;
+  excluded_count: number;
+}
+
+/**
+ * Structured pattern detection without a question — the same detectors the
+ * orchestrator runs, exposed on their own so the workspace can show the
+ * signal list before anyone types anything.
+ */
+export function investigationPatterns(opts: {
+  caseId?: string | null;
+  maxPatterns?: number;
+  includeExcluded?: boolean;
+} = {}): Promise<PatternDetectionResult> {
+  const params = new URLSearchParams();
+  if (opts.caseId) params.set("case_id", opts.caseId);
+  params.set("max_patterns", String(opts.maxPatterns ?? 25));
+  params.set("include_excluded", String(opts.includeExcluded ?? true));
+  return api(`/investigate/patterns?${params.toString()}`);
+}
+
+export interface InvestigationSessionPayload {
+  investigation_id: string;
+  dataset_id: string;
+  case_id: string | null;
+  scope: string;
+  title: string;
+  created_at: string | null;
+  updated_at: string | null;
+  memory: MemorySection;
+  objective: string;
+  questions: string[];
+  contradictions: string[];
+}
+
+/** Read a thread's memory (dataset-pinned) so a page reload can resume it. */
+export function investigationSession(
+  investigationId: string,
+): Promise<InvestigationSessionPayload> {
+  return api(`/investigate/sessions/${encodeURIComponent(investigationId)}`);
+}
