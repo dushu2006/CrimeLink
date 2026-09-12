@@ -1,5 +1,0 @@
-SURVEILLANCE LOG
-Case: CASE_0035
-Window: 2024-01-27
-
-A contact involving Rajesh Iyer was recorded. The duration and timing are noted for chronology; the contact is not inherently suspicious. Analysts should look for recurrence close to relevant incidents rather than treating a single contact as dispositive.

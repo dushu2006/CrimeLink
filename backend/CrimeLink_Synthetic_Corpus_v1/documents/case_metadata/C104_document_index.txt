@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C104
+Case Number: FIR/2024/00104
+Case Title: Suspicious Financial Transfer Chain
+Registered Date: 2024-06-18
+Police Station: PS-04 Cyber
+
+Physical Files in Dossier:
+  - documents/case_metadata/C104_summary.txt
+  - documents/fir/C104_fir.txt
+  - documents/investigation_reports/C104_case_diary.txt
+  - documents/cdr/C104_cdr.csv
+  - documents/bank_statements/C104_bank_statement.csv
+  - documents/surveillance_logs/C104_cctv_log.csv
+  - documents/field_reports/C104_patrol_log.txt
+  - documents/surveillance_logs/C104_surveillance_report.txt
+  - documents/witness_statements/C104_witness_statements.txt
+  - documents/investigation_reports/C104_scene_report.txt
+  - documents/intel_notes/C104_intel_notes.txt
+  - documents/evidence_indexes/C104_evidence_register.txt
+  - documents/field_reports/C104_relationships.txt
+  - documents/charge_memos/C104_chargesheet.txt
+  - documents/dossiers/C104_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

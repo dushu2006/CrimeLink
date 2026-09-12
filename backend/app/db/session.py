@@ -8,11 +8,12 @@ Both point at the same database and the same models, and both are created from
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import Enum as SAEnum, create_engine, event, inspect, text
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -222,6 +223,14 @@ async def init_db() -> None:
                     column=column_name,
                     reason="model is newer than the existing SQLite schema",
                 )
+            upgraded_enums = await conn.run_sync(sync_sqlite_enum_constraints, Base.metadata)
+            for table_name, column_name in upgraded_enums:
+                log.warning(
+                    "db.sqlite_enum_constraint_upgraded",
+                    table=table_name,
+                    column=column_name,
+                    reason="enum values in model are newer than the existing SQLite CHECK constraint",
+                )
     if settings.effective_relational_backend == "postgres":
         await _bootstrap_postgres(engine)
     log.info("db.ready", backend=settings.effective_relational_backend, url=_redact(async_url()))
@@ -346,6 +355,97 @@ def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]
                     )
             added.append((table.name, column.name))
     return added
+
+
+def sync_sqlite_enum_constraints(connection: Any, metadata: Any) -> list[tuple[str, str]]:
+    """Update SQLite CHECK constraints on enum columns when model enums gain new values.
+
+    SQLite does not support ``ALTER TABLE ... DROP/ADD CONSTRAINT``, so a CHECK
+    constraint baked into a table definition at creation time can drift when an
+    enum acquires new members (e.g. ``AuditAction.INVESTIGATE``).  This helper
+    detects when an existing SQLite table's CHECK constraint is missing values
+    present in the model enum and rebuilds the table preserving all data,
+    rowids, and indexes.
+    """
+    upgraded: list[tuple[str, str]] = []
+    for table in metadata.sorted_tables:
+        row = connection.execute(
+            text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"),
+            {"name": table.name},
+        ).fetchone()
+        if not row or not row[0]:
+            continue
+        table_sql = str(row[0])
+
+        for column in table.columns:
+            col_type = column.type
+            if not isinstance(col_type, SAEnum):
+                continue
+
+            enum_cls = getattr(col_type, "enum_class", None)
+            if enum_cls:
+                expected_values = [str(m.value) for m in enum_cls]
+            else:
+                expected_values = [str(e) for e in getattr(col_type, "enums", [])]
+
+            pattern = re.compile(
+                rf"(?:CONSTRAINT\s+([^\s]+)\s+)?CHECK\s*\(\s*{re.escape(column.name)}\s+IN\s*\(([^)]+)\)\)",
+                re.IGNORECASE,
+            )
+            match = pattern.search(table_sql)
+            if not match:
+                continue
+
+            existing_clause = match.group(2)
+            existing_values = re.findall(r"'([^']*)'", existing_clause)
+            missing = [v for v in expected_values if v not in existing_values]
+            if not missing:
+                continue
+
+            new_clause = ", ".join(f"'{v}'" for v in expected_values)
+            span_start, span_end = match.span(2)
+            new_table_sql = table_sql[:span_start] + new_clause + table_sql[span_end:]
+
+            temp_name = f"{table.name}__upgrade"
+            temp_create_sql = re.sub(
+                rf"CREATE\s+TABLE\s+(?:\"?{re.escape(table.name)}\"?)",
+                f"CREATE TABLE {temp_name}",
+                new_table_sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+            indexes = connection.execute(
+                text(
+                    "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=:name AND sql IS NOT NULL"
+                ),
+                {"name": table.name},
+            ).fetchall()
+
+            cols_info = connection.execute(
+                text(f"PRAGMA table_info({_quote_ident(table.name)})")
+            ).fetchall()
+            cols = [c[1] for c in cols_info]
+            cols_str = ", ".join(f'"{c}"' for c in cols)
+
+            connection.execute(text("PRAGMA foreign_keys=OFF"))
+            connection.execute(text(temp_create_sql))
+            connection.execute(
+                text(
+                    f"INSERT INTO {temp_name} ({cols_str}) SELECT {cols_str} FROM {_quote_ident(table.name)}"
+                )
+            )
+            connection.execute(text(f"DROP TABLE {_quote_ident(table.name)}"))
+            connection.execute(text(f"ALTER TABLE {temp_name} RENAME TO {_quote_ident(table.name)}"))
+            for idx in indexes:
+                if idx[1]:
+                    connection.execute(text(idx[1]))
+            connection.execute(text("PRAGMA foreign_keys=ON"))
+
+            table_sql = new_table_sql
+            upgraded.append((table.name, column.name))
+
+    return upgraded
 
 
 async def _bootstrap_postgres(engine: AsyncEngine) -> None:

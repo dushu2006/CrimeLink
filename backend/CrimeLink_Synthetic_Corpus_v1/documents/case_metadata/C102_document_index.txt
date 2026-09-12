@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C102
+Case Number: FIR/2024/00102
+Case Title: Commercial Vehicle Theft
+Registered Date: 2024-04-10
+Police Station: PS-02 Highway
+
+Physical Files in Dossier:
+  - documents/case_metadata/C102_summary.txt
+  - documents/fir/C102_fir.txt
+  - documents/investigation_reports/C102_case_diary.txt
+  - documents/cdr/C102_cdr.csv
+  - documents/bank_statements/C102_bank_statement.csv
+  - documents/surveillance_logs/C102_cctv_log.csv
+  - documents/field_reports/C102_patrol_log.txt
+  - documents/surveillance_logs/C102_surveillance_report.txt
+  - documents/witness_statements/C102_witness_statements.txt
+  - documents/investigation_reports/C102_scene_report.txt
+  - documents/intel_notes/C102_intel_notes.txt
+  - documents/evidence_indexes/C102_evidence_register.txt
+  - documents/field_reports/C102_relationships.txt
+  - documents/charge_memos/C102_chargesheet.txt
+  - documents/dossiers/C102_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

@@ -1,61 +1,11 @@
-case_id,case_type,opened_date,police_unit,status
-CASE_0001,extortion,2023-01-03,South Zone Police,Trial Pending
-CASE_0002,vehicle theft,2025-01-12,Cyber Crime Cell,Trial Pending
-CASE_0003,cyber fraud,2025-08-11,City Crime Branch,Charge Sheet Filed
-CASE_0004,land document fraud,2023-11-19,District Investigation Unit 02,Closed - No Further Action
-CASE_0005,narcotics,2023-07-02,Cyber Crime Cell,Closed - No Further Action
-CASE_0006,counterfeit goods,2025-09-12,District Investigation Unit 02,Under Investigation
-CASE_0007,insurance fraud,2026-01-11,District Investigation Unit 01,Under Investigation
-CASE_0008,procurement fraud,2025-01-09,North Zone Police,Charge Sheet Filed
-CASE_0009,missing person,2025-02-12,North Zone Police,Under Investigation
-CASE_0010,warehouse theft,2024-10-29,Property Offences Cell,Charge Sheet Filed
-CASE_0011,loan fraud,2025-08-09,District Investigation Unit 01,Trial Pending
-CASE_0012,smuggling,2024-06-18,North Zone Police,Under Investigation
-CASE_0013,suspicious financial activity,2024-02-25,Economic Offences Wing,Charge Sheet Filed
-CASE_0014,stolen vehicle reuse,2023-10-31,Property Offences Cell,Trial Pending
-CASE_0015,forged recruitment,2025-01-13,North Zone Police,Under Investigation
-CASE_0016,account mule investigation,2023-10-17,Traffic Investigation Unit,Under Investigation
-CASE_0017,extortion,2025-03-11,South Zone Police,Under Investigation
-CASE_0018,vehicle theft,2024-08-22,City Crime Branch,Charge Sheet Filed
-CASE_0019,cyber fraud,2025-01-04,Special Operations Cell,Charge Sheet Filed
-CASE_0020,land document fraud,2024-02-23,Economic Offences Wing,Trial Pending
-CASE_0021,narcotics,2024-10-11,South Zone Police,Under Investigation
-CASE_0022,counterfeit goods,2025-02-16,Traffic Investigation Unit,Trial Pending
-CASE_0023,insurance fraud,2023-05-30,Economic Offences Wing,Charge Sheet Filed
-CASE_0024,procurement fraud,2025-01-11,District Investigation Unit 01,Charge Sheet Filed
-CASE_0025,missing person,2022-06-26,North Zone Police,Under Investigation
-CASE_0026,warehouse theft,2023-01-05,South Zone Police,Charge Sheet Filed
-CASE_0027,loan fraud,2024-07-11,South Zone Police,Under Investigation
-CASE_0028,smuggling,2022-01-16,Economic Offences Wing,Under Investigation
-CASE_0029,suspicious financial activity,2023-08-30,Property Offences Cell,Charge Sheet Filed
-CASE_0030,stolen vehicle reuse,2023-02-06,District Investigation Unit 01,Charge Sheet Filed
-CASE_0031,forged recruitment,2024-01-02,Special Operations Cell,Charge Sheet Filed
-CASE_0032,account mule investigation,2024-01-29,City Crime Branch,Closed - No Further Action
-CASE_0033,extortion,2022-12-17,Economic Offences Wing,Under Investigation
-CASE_0034,vehicle theft,2022-03-24,North Zone Police,Trial Pending
-CASE_0035,cyber fraud,2022-10-15,Economic Offences Wing,Charge Sheet Filed
-CASE_0036,land document fraud,2023-02-14,Traffic Investigation Unit,Under Investigation
-CASE_0037,narcotics,2023-12-10,Property Offences Cell,Trial Pending
-CASE_0038,counterfeit goods,2023-09-02,District Investigation Unit 02,Trial Pending
-CASE_0039,insurance fraud,2024-06-04,City Crime Branch,Under Investigation
-CASE_0040,procurement fraud,2022-02-18,City Crime Branch,Charge Sheet Filed
-CASE_0041,missing person,2024-08-17,City Crime Branch,Charge Sheet Filed
-CASE_0042,warehouse theft,2023-03-19,Special Operations Cell,Under Investigation
-CASE_0043,loan fraud,2022-02-07,Cyber Crime Cell,Trial Pending
-CASE_0044,smuggling,2022-10-03,Special Operations Cell,Under Investigation
-CASE_0045,suspicious financial activity,2022-12-27,Cyber Crime Cell,Charge Sheet Filed
-CASE_0046,stolen vehicle reuse,2024-02-22,District Investigation Unit 02,Charge Sheet Filed
-CASE_0047,forged recruitment,2025-03-03,North Zone Police,Closed - No Further Action
-CASE_0048,account mule investigation,2023-04-19,Special Operations Cell,Charge Sheet Filed
-CASE_0049,extortion,2025-12-21,Cyber Crime Cell,Under Investigation
-CASE_0050,vehicle theft,2023-04-18,Traffic Investigation Unit,Trial Pending
-CASE_0051,cyber fraud,2023-02-18,City Crime Branch,Trial Pending
-CASE_0052,land document fraud,2023-05-08,District Investigation Unit 02,Trial Pending
-CASE_0053,narcotics,2022-01-31,Property Offences Cell,Trial Pending
-CASE_0054,counterfeit goods,2025-06-09,Property Offences Cell,Closed - No Further Action
-CASE_0055,insurance fraud,2022-02-10,North Zone Police,Under Investigation
-CASE_0056,procurement fraud,2023-10-09,Special Operations Cell,Trial Pending
-CASE_0057,missing person,2025-12-13,City Crime Branch,Under Investigation
-CASE_0058,warehouse theft,2025-09-18,South Zone Police,Trial Pending
-CASE_0059,loan fraud,2024-02-21,District Investigation Unit 02,Closed - No Further Action
-CASE_0060,smuggling,2023-03-01,District Investigation Unit 01,Trial Pending
+case_id,case_number,registered_date,case_type,police_station,city,status
+C101,FIR/2024/00101,2024-03-15,ROBBERY,PS-01 Central,Pune,CLOSED
+C102,FIR/2024/00102,2024-04-10,THEFT,PS-02 Highway,Pune,CLOSED
+C103,FIR/2024/00103,2024-05-02,EXTORTION,PS-03 Market,Pune,CLOSED
+C104,FIR/2024/00104,2024-06-18,FINANCIAL_FRAUD,PS-04 Cyber,Bengaluru,CLOSED
+C105,FIR/2024/00105,2024-07-22,THEFT,PS-05 Suburban,Bengaluru,CLOSED
+C106,FIR/2024/00106,2024-08-30,THEFT,PS-06 Industrial,Hyderabad,CLOSED
+C107,FIR/2024/00107,2024-09-14,FINANCIAL_FRAUD,PS-07 Revenue,Hyderabad,CLOSED
+C108,FIR/2024/00108,2024-10-05,THEFT,PS-08 Logistics Hub,Jaipur,UNDER_INVESTIGATION
+C109,FIR/2024/00109,2024-11-12,EXTORTION,PS-09 North,Jaipur,UNDER_INVESTIGATION
+C110,FIR/2024/00110,2024-12-01,FINANCIAL_FRAUD,PS-10 Special Cell,Jaipur,UNDER_INVESTIGATION

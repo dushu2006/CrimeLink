@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C109
+Case Number: FIR/2024/00109
+Case Title: Unsolved Extortion Network
+Registered Date: 2024-11-12
+Police Station: PS-09 North
+
+Physical Files in Dossier:
+  - documents/case_metadata/C109_summary.txt
+  - documents/fir/C109_fir.txt
+  - documents/investigation_reports/C109_case_diary.txt
+  - documents/cdr/C109_cdr.csv
+  - documents/bank_statements/C109_bank_statement.csv
+  - documents/surveillance_logs/C109_cctv_log.csv
+  - documents/field_reports/C109_patrol_log.txt
+  - documents/surveillance_logs/C109_surveillance_report.txt
+  - documents/witness_statements/C109_witness_statements.txt
+  - documents/investigation_reports/C109_scene_report.txt
+  - documents/intel_notes/C109_intel_notes.txt
+  - documents/evidence_indexes/C109_evidence_register.txt
+  - documents/field_reports/C109_relationships.txt
+  - documents/investigator_notes/C109_unsolved_note.txt
+  - documents/dossiers/C109_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

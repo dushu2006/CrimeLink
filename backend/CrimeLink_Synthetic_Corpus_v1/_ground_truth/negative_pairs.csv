@@ -1,3 +1,0 @@
-pair_id,person_a,person_b,reason
-NEG_001,PERSON_00072,PERSON_00173,same name; distinct KYC/address/employment
-NEG_002,PERSON_00281,PERSON_00361,same name; distinct KYC/phone/city

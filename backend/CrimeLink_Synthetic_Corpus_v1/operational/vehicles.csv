@@ -1,231 +1,31 @@
-vehicle_id,registration,make_model,fuel,registered_state
-VEH_0001,AP21CE9967,Maruti Baleno,Diesel,Andhra Pradesh
-VEH_0002,TN28PQ9649,Hyundai i20,CNG,Tamil Nadu
-VEH_0003,KL74KI7883,Ashok Leyland Dost,CNG,Kerala
-VEH_0004,RJ99PQ3819,Mahindra Bolero,Diesel,Rajasthan
-VEH_0005,MP93MN8063,Ashok Leyland Dost,Diesel,Madhya Pradesh
-VEH_0006,RJ83KI2296,Hyundai Aura,Diesel,Rajasthan
-VEH_0007,PB81KI4725,Ashok Leyland Dost,CNG,Punjab
-VEH_0008,MP25CE8702,Mahindra Scorpio,CNG,Madhya Pradesh
-VEH_0009,MP87KI4505,Honda City,CNG,Madhya Pradesh
-VEH_0010,DL69PQ2911,Honda City,Petrol,Delhi
-VEH_0011,UP31PQ2250,Maruti Swift,Petrol,Uttar Pradesh
-VEH_0012,KA88KI3173,Hyundai Aura,CNG,Karnataka
-VEH_0013,DL57TR6576,Toyota Innova,CNG,Delhi
-VEH_0014,GJ37AB9573,Maruti Baleno,CNG,Gujarat
-VEH_0015,JH56CE0972,Maruti Baleno,Petrol,Jharkhand
-VEH_0016,MH97PQ0948,Force Traveller,Diesel,Maharashtra
-VEH_0017,AP99ZX4166,Force Traveller,CNG,Andhra Pradesh
-VEH_0018,RJ28TR6293,Mahindra Bolero,Petrol,Rajasthan
-VEH_0019,RJ74CE4083,Maruti Baleno,CNG,Rajasthan
-VEH_0020,KL44MN5414,Force Traveller,Petrol,Kerala
-VEH_0021,MP60ZX9362,Ashok Leyland Dost,Petrol,Madhya Pradesh
-VEH_0022,PB18PQ4157,Force Traveller,Petrol,Punjab
-VEH_0023,MH90KI9604,Mahindra Scorpio,Petrol,Maharashtra
-VEH_0024,WB61AB1527,Ashok Leyland Dost,Petrol,West Bengal
-VEH_0025,MP21MN0750,Ashok Leyland Dost,CNG,Madhya Pradesh
-VEH_0026,TS04MN3050,Tata Nexon,Diesel,Telangana
-VEH_0027,JH31CE5991,Hyundai i20,CNG,Jharkhand
-VEH_0028,OD61KI2277,Ashok Leyland Dost,CNG,Odisha
-VEH_0029,JH55ZX6032,Mahindra Scorpio,CNG,Jharkhand
-VEH_0030,KL04MN7020,Mahindra Scorpio,Petrol,Kerala
-VEH_0031,GJ01PQ1361,Ashok Leyland Dost,Diesel,Gujarat
-VEH_0032,OD57PQ0828,Hyundai i20,CNG,Odisha
-VEH_0033,KL76MN2957,Honda City,Petrol,Kerala
-VEH_0034,RJ89ZX8000,Mahindra Bolero,Petrol,Rajasthan
-VEH_0035,TN02AB5351,Tata Nexon,Petrol,Tamil Nadu
-VEH_0036,UP46PQ7697,Maruti Swift,CNG,Uttar Pradesh
-VEH_0037,AP76PQ6543,Hyundai Aura,Diesel,Andhra Pradesh
-VEH_0038,KA41ZX4261,Honda City,Diesel,Karnataka
-VEH_0039,RJ66AB6189,Honda City,Petrol,Rajasthan
-VEH_0040,WB94AB8304,Honda City,Petrol,West Bengal
-VEH_0041,UP05PQ4019,Maruti Baleno,Diesel,Uttar Pradesh
-VEH_0042,OD56TR5560,Tata Nexon,CNG,Odisha
-VEH_0043,RJ88TR4566,Hyundai i20,CNG,Rajasthan
-VEH_0044,DL58KI9911,Ashok Leyland Dost,CNG,Delhi
-VEH_0045,PB52TR3825,Force Traveller,CNG,Punjab
-VEH_0046,GJ37KI2336,Honda City,Diesel,Gujarat
-VEH_0047,OD40MN3104,Mahindra Bolero,Diesel,Odisha
-VEH_0048,MP49AB3493,Hyundai i20,Diesel,Madhya Pradesh
-VEH_0049,OD05MN2873,Honda City,Petrol,Odisha
-VEH_0050,WB50PQ6717,Force Traveller,CNG,West Bengal
-VEH_0051,TS87TR6982,Force Traveller,Diesel,Telangana
-VEH_0052,MH38KI1801,Maruti Baleno,Diesel,Maharashtra
-VEH_0053,MP70KI2262,Toyota Innova,Petrol,Madhya Pradesh
-VEH_0054,MH46TR4532,Tata Nexon,CNG,Maharashtra
-VEH_0055,PB49TR7329,Force Traveller,CNG,Punjab
-VEH_0056,TN47ZX8818,Tata Nexon,CNG,Tamil Nadu
-VEH_0057,TS11PQ5488,Mahindra Bolero,Diesel,Telangana
-VEH_0058,GJ95KI3384,Toyota Innova,CNG,Gujarat
-VEH_0059,KL20CE8183,Honda City,Petrol,Kerala
-VEH_0060,TN89ZX1552,Ashok Leyland Dost,CNG,Tamil Nadu
-VEH_0061,AP70TR9726,Toyota Innova,Diesel,Andhra Pradesh
-VEH_0062,KL57CE6004,Tata Nexon,CNG,Kerala
-VEH_0063,AP11MN1253,Force Traveller,Petrol,Andhra Pradesh
-VEH_0064,BR03TR3696,Honda City,CNG,Bihar
-VEH_0065,MP71AB9802,Force Traveller,Diesel,Madhya Pradesh
-VEH_0066,GJ85MN4616,Ashok Leyland Dost,CNG,Gujarat
-VEH_0067,KL45MN7638,Hyundai Aura,CNG,Kerala
-VEH_0068,BR21AB0361,Maruti Baleno,CNG,Bihar
-VEH_0069,AP18CE5657,Toyota Innova,Diesel,Andhra Pradesh
-VEH_0070,UP16TR9910,Force Traveller,Petrol,Uttar Pradesh
-VEH_0071,RJ14ZX0099,Honda City,Diesel,Rajasthan
-VEH_0072,GJ85CE1903,Maruti Baleno,CNG,Gujarat
-VEH_0073,MH92CE1666,Mahindra Bolero,Diesel,Maharashtra
-VEH_0074,WB87CE9632,Ashok Leyland Dost,Petrol,West Bengal
-VEH_0075,RJ77PQ3880,Ashok Leyland Dost,CNG,Rajasthan
-VEH_0076,TN51MN1771,Maruti Baleno,Petrol,Tamil Nadu
-VEH_0077,TS78MN2204,Maruti Swift,CNG,Telangana
-VEH_0078,KL96KI5298,Mahindra Bolero,Petrol,Kerala
-VEH_0079,PB51CE3408,Tata Nexon,Petrol,Punjab
-VEH_0080,RJ13AB4844,Mahindra Bolero,Diesel,Rajasthan
-VEH_0081,GJ75MN6033,Force Traveller,Diesel,Gujarat
-VEH_0082,KL71AB4076,Maruti Baleno,CNG,Kerala
-VEH_0083,KL53KI9539,Hyundai i20,CNG,Kerala
-VEH_0084,TN01ZX5910,Hyundai i20,Diesel,Tamil Nadu
-VEH_0085,UP22MN3032,Maruti Swift,Petrol,Uttar Pradesh
-VEH_0086,DL73CE3897,Hyundai Aura,CNG,Delhi
-VEH_0087,AP33MN8452,Mahindra Scorpio,Petrol,Andhra Pradesh
-VEH_0088,WB70PQ4562,Ashok Leyland Dost,CNG,West Bengal
-VEH_0089,JH77MN3129,Honda City,Diesel,Jharkhand
-VEH_0090,KA46TR3104,Mahindra Scorpio,CNG,Karnataka
-VEH_0091,TN44CE2943,Toyota Innova,Diesel,Tamil Nadu
-VEH_0092,MP78CE2547,Maruti Baleno,Petrol,Madhya Pradesh
-VEH_0093,MP67AB1874,Force Traveller,Diesel,Madhya Pradesh
-VEH_0094,WB30TR9394,Honda City,Diesel,West Bengal
-VEH_0095,MH97AB5965,Hyundai Aura,Diesel,Maharashtra
-VEH_0096,RJ95KI9941,Mahindra Bolero,Diesel,Rajasthan
-VEH_0097,JH55PQ0944,Hyundai i20,Petrol,Jharkhand
-VEH_0098,DL01AB8367,Maruti Swift,Diesel,Delhi
-VEH_0099,DL65PQ3509,Hyundai Aura,Diesel,Delhi
-VEH_0100,OD84KI6887,Hyundai Aura,Petrol,Odisha
-VEH_0101,WB44CE0383,Tata Nexon,Diesel,West Bengal
-VEH_0102,WB02AB4666,Hyundai i20,Diesel,West Bengal
-VEH_0103,MP06CE9614,Force Traveller,Petrol,Madhya Pradesh
-VEH_0104,BR22CE3423,Hyundai i20,Petrol,Bihar
-VEH_0105,AP83PQ9222,Ashok Leyland Dost,Petrol,Andhra Pradesh
-VEH_0106,TN65KI7287,Maruti Baleno,CNG,Tamil Nadu
-VEH_0107,KA53TR1128,Toyota Innova,Diesel,Karnataka
-VEH_0108,PB24AB6770,Maruti Swift,CNG,Punjab
-VEH_0109,MH44MN9093,Maruti Baleno,Diesel,Maharashtra
-VEH_0110,WB07CE2710,Maruti Swift,CNG,West Bengal
-VEH_0111,TS26KI4814,Maruti Baleno,Petrol,Telangana
-VEH_0112,MH15ZX0964,Toyota Innova,Diesel,Maharashtra
-VEH_0113,TS46AB7160,Toyota Innova,Diesel,Telangana
-VEH_0114,AP25PQ6850,Maruti Swift,Diesel,Andhra Pradesh
-VEH_0115,MP74TR8653,Honda City,Diesel,Madhya Pradesh
-VEH_0116,KA51MN2728,Hyundai i20,CNG,Karnataka
-VEH_0117,RJ76MN7821,Mahindra Bolero,CNG,Rajasthan
-VEH_0118,RJ28KI6306,Hyundai Aura,Diesel,Rajasthan
-VEH_0119,PB35CE6903,Maruti Swift,CNG,Punjab
-VEH_0120,KA24TR6217,Force Traveller,CNG,Karnataka
-VEH_0121,RJ67KI7884,Maruti Swift,Petrol,Rajasthan
-VEH_0122,TN61CE4447,Honda City,Petrol,Tamil Nadu
-VEH_0123,WB20AB3226,Hyundai Aura,CNG,West Bengal
-VEH_0124,GJ40ZX2540,Maruti Baleno,Diesel,Gujarat
-VEH_0125,OD14MN3220,Maruti Swift,Petrol,Odisha
-VEH_0126,TS22ZX6100,Tata Nexon,Petrol,Telangana
-VEH_0127,KL21KI5121,Tata Nexon,CNG,Kerala
-VEH_0128,JH29MN8529,Force Traveller,Petrol,Jharkhand
-VEH_0129,TN65AB8256,Maruti Baleno,CNG,Tamil Nadu
-VEH_0130,JH99AB2563,Ashok Leyland Dost,Petrol,Jharkhand
-VEH_0131,KL98TR9939,Tata Nexon,CNG,Kerala
-VEH_0132,BR88TR1417,Hyundai i20,Petrol,Bihar
-VEH_0133,UP31PQ0361,Tata Nexon,Petrol,Uttar Pradesh
-VEH_0134,WB24TR3568,Mahindra Bolero,Diesel,West Bengal
-VEH_0135,MP79KI0143,Ashok Leyland Dost,CNG,Madhya Pradesh
-VEH_0136,MP28AB6227,Hyundai i20,CNG,Madhya Pradesh
-VEH_0137,TS39KI8539,Mahindra Bolero,CNG,Telangana
-VEH_0138,MH75PQ3797,Maruti Baleno,CNG,Maharashtra
-VEH_0139,AP24ZX2907,Force Traveller,CNG,Andhra Pradesh
-VEH_0140,OD30PQ0687,Toyota Innova,CNG,Odisha
-VEH_0141,MH71TR2538,Hyundai Aura,Petrol,Maharashtra
-VEH_0142,OD44KI3534,Mahindra Scorpio,Petrol,Odisha
-VEH_0143,MH89ZX1639,Tata Nexon,Diesel,Maharashtra
-VEH_0144,KA10CE4082,Hyundai Aura,Diesel,Karnataka
-VEH_0145,OD53PQ0731,Honda City,Petrol,Odisha
-VEH_0146,RJ16PQ6461,Maruti Swift,CNG,Rajasthan
-VEH_0147,JH87AB4360,Ashok Leyland Dost,CNG,Jharkhand
-VEH_0148,UP19AB9592,Ashok Leyland Dost,Petrol,Uttar Pradesh
-VEH_0149,JH13MN8889,Mahindra Bolero,Petrol,Jharkhand
-VEH_0150,GJ04AB9050,Mahindra Bolero,CNG,Gujarat
-VEH_0151,AP43ZX5998,Force Traveller,Petrol,Andhra Pradesh
-VEH_0152,RJ17AB1929,Hyundai Aura,Petrol,Rajasthan
-VEH_0153,MH47MN6634,Force Traveller,Diesel,Maharashtra
-VEH_0154,TS95TR0437,Maruti Swift,Diesel,Telangana
-VEH_0155,JH19CE8932,Maruti Swift,Petrol,Jharkhand
-VEH_0156,OD95PQ1265,Hyundai i20,Petrol,Odisha
-VEH_0157,RJ44CE8125,Toyota Innova,Diesel,Rajasthan
-VEH_0158,GJ41MN7364,Mahindra Scorpio,Diesel,Gujarat
-VEH_0159,BR75KI7267,Force Traveller,Petrol,Bihar
-VEH_0160,JH93MN9154,Maruti Baleno,Petrol,Jharkhand
-VEH_0161,MH28MN6945,Toyota Innova,Petrol,Maharashtra
-VEH_0162,TN43AB0048,Maruti Swift,Diesel,Tamil Nadu
-VEH_0163,TS55KI3805,Hyundai i20,CNG,Telangana
-VEH_0164,UP34TR6274,Maruti Baleno,Petrol,Uttar Pradesh
-VEH_0165,UP14MN3841,Honda City,CNG,Uttar Pradesh
-VEH_0166,WB21MN7484,Mahindra Scorpio,Petrol,West Bengal
-VEH_0167,RJ98CE1353,Maruti Baleno,Diesel,Rajasthan
-VEH_0168,RJ99PQ5821,Toyota Innova,Petrol,Rajasthan
-VEH_0169,UP14AB2684,Maruti Baleno,Petrol,Uttar Pradesh
-VEH_0170,AP16PQ6853,Mahindra Scorpio,Diesel,Andhra Pradesh
-VEH_0171,PB71CE7094,Maruti Swift,CNG,Punjab
-VEH_0172,MH81ZX4384,Toyota Innova,Petrol,Maharashtra
-VEH_0173,JH72AB5169,Mahindra Scorpio,Diesel,Jharkhand
-VEH_0174,WB77TR5925,Tata Nexon,CNG,West Bengal
-VEH_0175,PB61ZX9723,Mahindra Scorpio,Petrol,Punjab
-VEH_0176,AP06ZX9623,Hyundai Aura,Diesel,Andhra Pradesh
-VEH_0177,UP74AB7982,Mahindra Bolero,Petrol,Uttar Pradesh
-VEH_0178,JH04KI5190,Mahindra Bolero,Petrol,Jharkhand
-VEH_0179,JH12TR5380,Toyota Innova,Diesel,Jharkhand
-VEH_0180,KL70CE0426,Toyota Innova,Petrol,Kerala
-VEH_0181,DL45PQ8352,Force Traveller,CNG,Delhi
-VEH_0182,OD51CE5044,Honda City,CNG,Odisha
-VEH_0183,WB75MN5761,Hyundai i20,CNG,West Bengal
-VEH_0184,JH94AB3334,Honda City,Petrol,Jharkhand
-VEH_0185,AP86MN6903,Honda City,Petrol,Andhra Pradesh
-VEH_0186,MH83KI0931,Toyota Innova,Petrol,Maharashtra
-VEH_0187,MH22KI6486,Tata Nexon,CNG,Maharashtra
-VEH_0188,BR37TR6998,Hyundai Aura,CNG,Bihar
-VEH_0189,WB97MN3374,Hyundai i20,Diesel,West Bengal
-VEH_0190,RJ18CE5972,Toyota Innova,Petrol,Rajasthan
-VEH_0191,DL87CE0249,Hyundai i20,Petrol,Delhi
-VEH_0192,MP69CE9451,Maruti Swift,CNG,Madhya Pradesh
-VEH_0193,MP57KI7143,Maruti Baleno,CNG,Madhya Pradesh
-VEH_0194,BR32ZX8875,Honda City,Petrol,Bihar
-VEH_0195,KA05MN9910,Maruti Swift,Petrol,Karnataka
-VEH_0196,TS32TR3426,Toyota Innova,Petrol,Telangana
-VEH_0197,RJ60CE9168,Mahindra Bolero,CNG,Rajasthan
-VEH_0198,RJ51MN0705,Maruti Baleno,Petrol,Rajasthan
-VEH_0199,TS62ZX4384,Mahindra Scorpio,Diesel,Telangana
-VEH_0200,OD45TR5246,Mahindra Bolero,CNG,Odisha
-VEH_0201,BR11ZX1178,Tata Nexon,Diesel,Bihar
-VEH_0202,UP91MN3830,Hyundai i20,CNG,Uttar Pradesh
-VEH_0203,TS29CE2817,Hyundai i20,Diesel,Telangana
-VEH_0204,AP67TR4573,Hyundai Aura,Petrol,Andhra Pradesh
-VEH_0205,RJ11ZX3819,Mahindra Scorpio,CNG,Rajasthan
-VEH_0206,KL39KI1023,Hyundai Aura,Petrol,Kerala
-VEH_0207,KA44MN7569,Force Traveller,Diesel,Karnataka
-VEH_0208,JH75KI1256,Toyota Innova,Petrol,Jharkhand
-VEH_0209,TS11MN6914,Force Traveller,Diesel,Telangana
-VEH_0210,AP99TR5659,Ashok Leyland Dost,Diesel,Andhra Pradesh
-VEH_0211,KA26AB4789,Maruti Baleno,Diesel,Karnataka
-VEH_0212,RJ49MN7086,Ashok Leyland Dost,CNG,Rajasthan
-VEH_0213,MH50AB2488,Toyota Innova,Petrol,Maharashtra
-VEH_0214,BR81PQ5562,Ashok Leyland Dost,Diesel,Bihar
-VEH_0215,MH80CE9479,Tata Nexon,Petrol,Maharashtra
-VEH_0216,MP28TR8603,Tata Nexon,Petrol,Madhya Pradesh
-VEH_0217,MP19CE1562,Maruti Baleno,Petrol,Madhya Pradesh
-VEH_0218,WB70TR1883,Hyundai Aura,Diesel,West Bengal
-VEH_0219,RJ91CE3556,Maruti Baleno,Diesel,Rajasthan
-VEH_0220,OD17AB4736,Maruti Baleno,Diesel,Odisha
-VEH_0221,JH64PQ0850,Mahindra Scorpio,Diesel,Jharkhand
-VEH_0222,DL78MN9884,Toyota Innova,CNG,Delhi
-VEH_0223,TN77TR5762,Hyundai Aura,Petrol,Tamil Nadu
-VEH_0224,GJ27ZX7571,Tata Nexon,Diesel,Gujarat
-VEH_0225,MP61TR4963,Honda City,Diesel,Madhya Pradesh
-VEH_0226,JH82KI4757,Toyota Innova,Diesel,Jharkhand
-VEH_0227,DL29MN7946,Mahindra Scorpio,Petrol,Delhi
-VEH_0228,KL59PQ8239,Maruti Baleno,CNG,Kerala
-VEH_0229,BR58PQ9673,Maruti Baleno,Petrol,Bihar
-VEH_0230,GJ54PQ3930,Maruti Baleno,Petrol,Gujarat
+vehicle_id,registration_number,vehicle_type,owner_person_id,color
+V0001,MH11AB1001,SUV,P001,White
+V0002,MH12AB1002,SEDAN,P002,Black
+V0003,MH13AB1003,SUV,P003,Grey
+V0004,MH14AB1004,SEDAN,P004,Blue
+V0005,MH15AB1005,SUV,P005,Silver
+V0006,MH16AB1006,SEDAN,P006,White
+V0007,KA17AB1007,SUV,P007,Black
+V0008,KA18AB1008,SEDAN,P008,Grey
+V0009,TS19AB1009,SUV,P009,Blue
+V0010,MH20AB1010,SEDAN,P010,Silver
+V0011,MH21AB1011,SUV,P011,White
+V0012,TS22AB1012,SEDAN,P012,Black
+V0013,RJ23AB1013,SUV,P013,Grey
+V0014,KA24AB1014,SEDAN,P014,Blue
+V0015,MH25AB1015,SUV,P015,Silver
+V0016,MH26AB1016,SEDAN,P016,White
+V0017,KA27AB1017,SUV,P017,Black
+V0018,MH28AB1018,SEDAN,P018,Grey
+V0019,MH29AB1019,SUV,P019,Blue
+V0020,KA10AB1020,SEDAN,P020,Silver
+V0021,KA11AB1021,SUV,P021,White
+V0022,KA12AB1022,SEDAN,P022,Black
+V0023,TS13AB1023,SUV,P023,Grey
+V0024,RJ14AB1024,SEDAN,P024,Blue
+V0025,RJ15AB1025,SUV,P025,Silver
+V0026,RJ16AB1026,SEDAN,P026,White
+V0027,RJ17AB1027,SUV,P027,Black
+V0028,RJ18AB1028,SEDAN,P028,Grey
+V0029,RJ19AB1029,SUV,P029,Blue
+V0030,RJ20AB1030,SEDAN,P030,Silver

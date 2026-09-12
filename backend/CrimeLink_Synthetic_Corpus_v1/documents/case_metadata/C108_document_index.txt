@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C108
+Case Number: FIR/2024/00108
+Case Title: Unsolved Warehouse Theft
+Registered Date: 2024-10-05
+Police Station: PS-08 Logistics Hub
+
+Physical Files in Dossier:
+  - documents/case_metadata/C108_summary.txt
+  - documents/fir/C108_fir.txt
+  - documents/investigation_reports/C108_case_diary.txt
+  - documents/cdr/C108_cdr.csv
+  - documents/bank_statements/C108_bank_statement.csv
+  - documents/surveillance_logs/C108_cctv_log.csv
+  - documents/field_reports/C108_patrol_log.txt
+  - documents/surveillance_logs/C108_surveillance_report.txt
+  - documents/witness_statements/C108_witness_statements.txt
+  - documents/investigation_reports/C108_scene_report.txt
+  - documents/intel_notes/C108_intel_notes.txt
+  - documents/evidence_indexes/C108_evidence_register.txt
+  - documents/field_reports/C108_relationships.txt
+  - documents/investigator_notes/C108_unsolved_note.txt
+  - documents/dossiers/C108_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

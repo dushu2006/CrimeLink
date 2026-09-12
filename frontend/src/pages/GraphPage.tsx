@@ -327,7 +327,7 @@ export default function GraphPage() {
               return name.length > 22 ? `${name.slice(0, 21)}…` : name;
             },
             color: "#0F172A",
-            "font-family": "'Inter', -apple-system, sans-serif",
+            "font-family": "Inter, -apple-system, sans-serif",
             "font-size": 11,
             "font-weight": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? 700 : 500,
@@ -374,7 +374,7 @@ export default function GraphPage() {
             "curve-style": "straight",
             "line-style": (ele: cytoscape.EdgeSingular) => (ele.data("staging") ? "dashed" : "solid"),
             label: "data(rel)",
-            "font-family": "'Inter', -apple-system, sans-serif",
+            "font-family": "Inter, -apple-system, sans-serif",
             "font-size": 8.5,
             "font-weight": 600,
             color: "#334155",

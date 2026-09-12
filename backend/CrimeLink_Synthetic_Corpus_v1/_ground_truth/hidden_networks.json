@@ -1,0 +1,32 @@
+[
+  {
+    "network_id": "NET-ROBBERY-EXTORTION",
+    "cases": [
+      "C101",
+      "C102",
+      "C103",
+      "C106"
+    ],
+    "key_members": [
+      "P001",
+      "P002",
+      "P004",
+      "P005"
+    ]
+  },
+  {
+    "network_id": "NET-FINANCIAL-FORGERY",
+    "cases": [
+      "C101",
+      "C104",
+      "C107",
+      "C110"
+    ],
+    "key_members": [
+      "P003",
+      "P007",
+      "P012",
+      "P017"
+    ]
+  }
+]

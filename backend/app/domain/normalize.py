@@ -197,6 +197,7 @@ def normalize_name(raw: str) -> str:
     if not raw:
         return ""
     text = unicodedata.normalize("NFKC", raw).strip()
+    text = re.sub(r"(?<=\w)['’]s\b", "", text)
     text = text.replace("'", "").replace(".", " ").replace("-", " ")
     text = re.sub(r"\s+", " ", text)
     tokens = [t for t in text.split(" ") if t and t.lower().strip(":") not in _HONORIFICS]

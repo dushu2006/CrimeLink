@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C106
+Case Number: FIR/2024/00106
+Case Title: Organized Electronics Theft and Resale
+Registered Date: 2024-08-30
+Police Station: PS-06 Industrial
+
+Physical Files in Dossier:
+  - documents/case_metadata/C106_summary.txt
+  - documents/fir/C106_fir.txt
+  - documents/investigation_reports/C106_case_diary.txt
+  - documents/cdr/C106_cdr.csv
+  - documents/bank_statements/C106_bank_statement.csv
+  - documents/surveillance_logs/C106_cctv_log.csv
+  - documents/field_reports/C106_patrol_log.txt
+  - documents/surveillance_logs/C106_surveillance_report.txt
+  - documents/witness_statements/C106_witness_statements.txt
+  - documents/investigation_reports/C106_scene_report.txt
+  - documents/intel_notes/C106_intel_notes.txt
+  - documents/evidence_indexes/C106_evidence_register.txt
+  - documents/field_reports/C106_relationships.txt
+  - documents/charge_memos/C106_chargesheet.txt
+  - documents/dossiers/C106_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

@@ -1,0 +1,10 @@
+{
+  "dataset_name": "CrimeLink_Synthetic_Corpus_v1",
+  "dataset_version": "2.1",
+  "seed": 20260902,
+  "cases": 10,
+  "persons": 42,
+  "documents": 160,
+  "operational_csvs": 17,
+  "ground_truth_isolated": true
+}

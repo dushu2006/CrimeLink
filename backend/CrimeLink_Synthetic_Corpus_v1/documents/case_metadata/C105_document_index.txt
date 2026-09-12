@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C105
+Case Number: FIR/2024/00105
+Case Title: Residential Burglary Series
+Registered Date: 2024-07-22
+Police Station: PS-05 Suburban
+
+Physical Files in Dossier:
+  - documents/case_metadata/C105_summary.txt
+  - documents/fir/C105_fir.txt
+  - documents/investigation_reports/C105_case_diary.txt
+  - documents/cdr/C105_cdr.csv
+  - documents/bank_statements/C105_bank_statement.csv
+  - documents/surveillance_logs/C105_cctv_log.csv
+  - documents/field_reports/C105_patrol_log.txt
+  - documents/surveillance_logs/C105_surveillance_report.txt
+  - documents/witness_statements/C105_witness_statements.txt
+  - documents/investigation_reports/C105_scene_report.txt
+  - documents/intel_notes/C105_intel_notes.txt
+  - documents/evidence_indexes/C105_evidence_register.txt
+  - documents/field_reports/C105_relationships.txt
+  - documents/charge_memos/C105_chargesheet.txt
+  - documents/dossiers/C105_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

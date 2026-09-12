@@ -1,5 +1,0 @@
-SURVEILLANCE LOG
-Case: CASE_0045
-Window: 2024-03-30
-
-A contact involving Amit Vyas was recorded. The duration and timing are noted for chronology; the contact is not inherently suspicious. Analysts should look for recurrence close to relevant incidents rather than treating a single contact as dispositive.

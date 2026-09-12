@@ -1,31 +1,8 @@
 {
-  "version": "V1-compatible realism rebuild",
+  "version": "v2.1 Master Index",
   "operational": "operational/",
   "documents": "documents/",
   "ground_truth": "_ground_truth/",
-  "preserved_csv_schema": [
-    "addresses.csv",
-    "bank_accounts.csv",
-    "call_records.csv",
-    "case_entities.csv",
-    "cases.csv",
-    "devices.csv",
-    "emails.csv",
-    "employment_history.csv",
-    "evidence_register.csv",
-    "locations.csv",
-    "officers.csv",
-    "organizations.csv",
-    "person_name_variants.csv",
-    "persons.csv",
-    "phones.csv",
-    "properties.csv",
-    "relationship_seed_edges.csv",
-    "sms_records.csv",
-    "transactions.csv",
-    "travel_records.csv",
-    "vehicle_ownership_history.csv",
-    "vehicle_sightings.csv",
-    "vehicles.csv"
-  ]
+  "cases_count": 10,
+  "documents_count": 160
 }

@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C107
+Case Number: FIR/2024/00107
+Case Title: Forged Identity and Property Documents
+Registered Date: 2024-09-14
+Police Station: PS-07 Revenue
+
+Physical Files in Dossier:
+  - documents/case_metadata/C107_summary.txt
+  - documents/fir/C107_fir.txt
+  - documents/investigation_reports/C107_case_diary.txt
+  - documents/cdr/C107_cdr.csv
+  - documents/bank_statements/C107_bank_statement.csv
+  - documents/surveillance_logs/C107_cctv_log.csv
+  - documents/field_reports/C107_patrol_log.txt
+  - documents/surveillance_logs/C107_surveillance_report.txt
+  - documents/witness_statements/C107_witness_statements.txt
+  - documents/investigation_reports/C107_scene_report.txt
+  - documents/intel_notes/C107_intel_notes.txt
+  - documents/evidence_indexes/C107_evidence_register.txt
+  - documents/field_reports/C107_relationships.txt
+  - documents/charge_memos/C107_chargesheet.txt
+  - documents/dossiers/C107_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

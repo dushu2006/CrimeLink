@@ -412,6 +412,9 @@ EXTRA_ENGLISH_STOPWORDS: frozenset[str] = frozenset(
     above below under over between through during after before
     proprietor owner trader businessman shopkeeper
     white black blue red green yellow
+    are is was were am be been do does did has have had can could should
+    would will shall may might must who whom whose what when where why how
+    which tell show find check list explain
     """.split()
 )
 

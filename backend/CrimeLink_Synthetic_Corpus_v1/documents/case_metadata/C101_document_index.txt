@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C101
+Case Number: FIR/2024/00101
+Case Title: Central Branch Bank Robbery
+Registered Date: 2024-03-15
+Police Station: PS-01 Central
+
+Physical Files in Dossier:
+  - documents/case_metadata/C101_summary.txt
+  - documents/fir/C101_fir.txt
+  - documents/investigation_reports/C101_case_diary.txt
+  - documents/cdr/C101_cdr.csv
+  - documents/bank_statements/C101_bank_statement.csv
+  - documents/surveillance_logs/C101_cctv_log.csv
+  - documents/field_reports/C101_patrol_log.txt
+  - documents/surveillance_logs/C101_surveillance_report.txt
+  - documents/witness_statements/C101_witness_statements.txt
+  - documents/investigation_reports/C101_scene_report.txt
+  - documents/intel_notes/C101_intel_notes.txt
+  - documents/evidence_indexes/C101_evidence_register.txt
+  - documents/field_reports/C101_relationships.txt
+  - documents/charge_memos/C101_chargesheet.txt
+  - documents/dossiers/C101_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

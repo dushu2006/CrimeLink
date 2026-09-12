@@ -1,0 +1,10 @@
+INVESTIGATOR NOTE — UNSOLVED / ONGOING CASE
+Case: FIR/2024/00108 (Unsolved Warehouse Theft)
+Status: UNDER INVESTIGATION (UNSOLVED)
+
+Investigation Status Report:
+The investigation into Unsolved Warehouse Theft remains open and unsolved due to critical data gaps.
+Identified Data Gaps:
+- CDR Gap: Cell tower sector L008 experienced power outage and maintenance downtime between 00:45:00 and 04:00:00; tower dump unavailable.
+- CCTV Gap: CCTV camera 3 video corrupted and power feed interrupted between 01:00:00 and 03:30:00 on 2024-10-05.
+Outstanding Leads: Alibis of examined persons remain uncorroborated. No charge sheet filed.

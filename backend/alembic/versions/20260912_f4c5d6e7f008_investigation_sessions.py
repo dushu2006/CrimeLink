@@ -47,8 +47,9 @@ def upgrade() -> None:
     )
     if _is_postgres():
         op.execute("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS ck_audit_logs_action_type;")
+        op.execute("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS ck_audit_logs_audit_action_type;")
         op.execute(
-            "ALTER TABLE audit_logs ADD CONSTRAINT ck_audit_logs_action_type "
+            "ALTER TABLE audit_logs ADD CONSTRAINT ck_audit_logs_audit_action_type "
             f"CHECK (action_type IN ({_audit_values_new}));"
         )
 
@@ -58,8 +59,9 @@ def downgrade() -> None:
     op.execute("DELETE FROM audit_logs WHERE action_type = 'INVESTIGATE'")
     if _is_postgres():
         op.execute("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS ck_audit_logs_action_type;")
+        op.execute("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS ck_audit_logs_audit_action_type;")
         op.execute(
-            "ALTER TABLE audit_logs ADD CONSTRAINT ck_audit_logs_action_type "
+            "ALTER TABLE audit_logs ADD CONSTRAINT ck_audit_logs_audit_action_type "
             f"CHECK (action_type IN ({_audit_values_old}));"
         )
     op.drop_table("investigation_sessions")

@@ -1,0 +1,14 @@
+[
+  {
+    "case_id": "C108",
+    "domain": "CCTV",
+    "description": "Camera 3 power disruption and footage corruption between 01:00:00 and 03:30:00 on 2024-10-05.",
+    "status": "UNRESOLVED_GAP"
+  },
+  {
+    "case_id": "C108",
+    "domain": "CDR",
+    "description": "Cell tower sector L008 maintenance downtime between 00:45:00 and 04:00:00; tower dump unavailable.",
+    "status": "UNRESOLVED_GAP"
+  }
+]

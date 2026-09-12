@@ -1,0 +1,1122 @@
+[
+  {
+    "document_id": "DOC00001",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C101_summary.txt",
+    "byte_size": 509
+  },
+  {
+    "document_id": "DOC00002",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C101_fir.txt",
+    "byte_size": 373
+  },
+  {
+    "document_id": "DOC00003",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C101_case_diary.txt",
+    "byte_size": 435
+  },
+  {
+    "document_id": "DOC00004",
+    "case_id": "C101",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C101_cdr.csv",
+    "byte_size": 726
+  },
+  {
+    "document_id": "DOC00005",
+    "case_id": "C101",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C101_bank_statement.csv",
+    "byte_size": 454
+  },
+  {
+    "document_id": "DOC00006",
+    "case_id": "C101",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C101_cctv_log.csv",
+    "byte_size": 284
+  },
+  {
+    "document_id": "DOC00007",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C101_patrol_log.txt",
+    "byte_size": 238
+  },
+  {
+    "document_id": "DOC00008",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C101_surveillance_report.txt",
+    "byte_size": 268
+  },
+  {
+    "document_id": "DOC00009",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C101_witness_statements.txt",
+    "byte_size": 829
+  },
+  {
+    "document_id": "DOC00010",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C101_scene_report.txt",
+    "byte_size": 316
+  },
+  {
+    "document_id": "DOC00011",
+    "case_id": "C101",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C101_intel_notes.txt",
+    "byte_size": 262
+  },
+  {
+    "document_id": "DOC00012",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C101_evidence_register.txt",
+    "byte_size": 304
+  },
+  {
+    "document_id": "DOC00013",
+    "case_id": "C101",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C101_relationships.txt",
+    "byte_size": 353
+  },
+  {
+    "document_id": "DOC00014",
+    "case_id": "C101",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C101_chargesheet.txt",
+    "byte_size": 401
+  },
+  {
+    "document_id": "DOC00015",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C101_complete_dossier.pdf",
+    "byte_size": 3310
+  },
+  {
+    "document_id": "DOC00016",
+    "case_id": "C101",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C101_document_index.txt",
+    "byte_size": 1001
+  },
+  {
+    "document_id": "DOC00017",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C102_summary.txt",
+    "byte_size": 460
+  },
+  {
+    "document_id": "DOC00018",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C102_fir.txt",
+    "byte_size": 372
+  },
+  {
+    "document_id": "DOC00019",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C102_case_diary.txt",
+    "byte_size": 431
+  },
+  {
+    "document_id": "DOC00020",
+    "case_id": "C102",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C102_cdr.csv",
+    "byte_size": 581
+  },
+  {
+    "document_id": "DOC00021",
+    "case_id": "C102",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C102_bank_statement.csv",
+    "byte_size": 377
+  },
+  {
+    "document_id": "DOC00022",
+    "case_id": "C102",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C102_cctv_log.csv",
+    "byte_size": 285
+  },
+  {
+    "document_id": "DOC00023",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C102_patrol_log.txt",
+    "byte_size": 238
+  },
+  {
+    "document_id": "DOC00024",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C102_surveillance_report.txt",
+    "byte_size": 264
+  },
+  {
+    "document_id": "DOC00025",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C102_witness_statements.txt",
+    "byte_size": 645
+  },
+  {
+    "document_id": "DOC00026",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C102_scene_report.txt",
+    "byte_size": 313
+  },
+  {
+    "document_id": "DOC00027",
+    "case_id": "C102",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C102_intel_notes.txt",
+    "byte_size": 260
+  },
+  {
+    "document_id": "DOC00028",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C102_evidence_register.txt",
+    "byte_size": 301
+  },
+  {
+    "document_id": "DOC00029",
+    "case_id": "C102",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C102_relationships.txt",
+    "byte_size": 349
+  },
+  {
+    "document_id": "DOC00030",
+    "case_id": "C102",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C102_chargesheet.txt",
+    "byte_size": 397
+  },
+  {
+    "document_id": "DOC00031",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C102_complete_dossier.pdf",
+    "byte_size": 3228
+  },
+  {
+    "document_id": "DOC00032",
+    "case_id": "C102",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C102_document_index.txt",
+    "byte_size": 998
+  },
+  {
+    "document_id": "DOC00033",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C103_summary.txt",
+    "byte_size": 444
+  },
+  {
+    "document_id": "DOC00034",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C103_fir.txt",
+    "byte_size": 367
+  },
+  {
+    "document_id": "DOC00035",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C103_case_diary.txt",
+    "byte_size": 439
+  },
+  {
+    "document_id": "DOC00036",
+    "case_id": "C103",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C103_cdr.csv",
+    "byte_size": 433
+  },
+  {
+    "document_id": "DOC00037",
+    "case_id": "C103",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C103_bank_statement.csv",
+    "byte_size": 300
+  },
+  {
+    "document_id": "DOC00038",
+    "case_id": "C103",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C103_cctv_log.csv",
+    "byte_size": 279
+  },
+  {
+    "document_id": "DOC00039",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C103_patrol_log.txt",
+    "byte_size": 237
+  },
+  {
+    "document_id": "DOC00040",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C103_surveillance_report.txt",
+    "byte_size": 273
+  },
+  {
+    "document_id": "DOC00041",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C103_witness_statements.txt",
+    "byte_size": 562
+  },
+  {
+    "document_id": "DOC00042",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C103_scene_report.txt",
+    "byte_size": 322
+  },
+  {
+    "document_id": "DOC00043",
+    "case_id": "C103",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C103_intel_notes.txt",
+    "byte_size": 260
+  },
+  {
+    "document_id": "DOC00044",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C103_evidence_register.txt",
+    "byte_size": 310
+  },
+  {
+    "document_id": "DOC00045",
+    "case_id": "C103",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C103_relationships.txt",
+    "byte_size": 355
+  },
+  {
+    "document_id": "DOC00046",
+    "case_id": "C103",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C103_chargesheet.txt",
+    "byte_size": 403
+  },
+  {
+    "document_id": "DOC00047",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C103_complete_dossier.pdf",
+    "byte_size": 3166
+  },
+  {
+    "document_id": "DOC00048",
+    "case_id": "C103",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C103_document_index.txt",
+    "byte_size": 1006
+  },
+  {
+    "document_id": "DOC00049",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C104_summary.txt",
+    "byte_size": 467
+  },
+  {
+    "document_id": "DOC00050",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C104_fir.txt",
+    "byte_size": 379
+  },
+  {
+    "document_id": "DOC00051",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C104_case_diary.txt",
+    "byte_size": 438
+  },
+  {
+    "document_id": "DOC00052",
+    "case_id": "C104",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C104_cdr.csv",
+    "byte_size": 582
+  },
+  {
+    "document_id": "DOC00053",
+    "case_id": "C104",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C104_bank_statement.csv",
+    "byte_size": 376
+  },
+  {
+    "document_id": "DOC00054",
+    "case_id": "C104",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C104_cctv_log.csv",
+    "byte_size": 282
+  },
+  {
+    "document_id": "DOC00055",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C104_patrol_log.txt",
+    "byte_size": 241
+  },
+  {
+    "document_id": "DOC00056",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C104_surveillance_report.txt",
+    "byte_size": 278
+  },
+  {
+    "document_id": "DOC00057",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C104_witness_statements.txt",
+    "byte_size": 734
+  },
+  {
+    "document_id": "DOC00058",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C104_scene_report.txt",
+    "byte_size": 329
+  },
+  {
+    "document_id": "DOC00059",
+    "case_id": "C104",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C104_intel_notes.txt",
+    "byte_size": 261
+  },
+  {
+    "document_id": "DOC00060",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C104_evidence_register.txt",
+    "byte_size": 312
+  },
+  {
+    "document_id": "DOC00061",
+    "case_id": "C104",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C104_relationships.txt",
+    "byte_size": 357
+  },
+  {
+    "document_id": "DOC00062",
+    "case_id": "C104",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C104_chargesheet.txt",
+    "byte_size": 410
+  },
+  {
+    "document_id": "DOC00063",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C104_complete_dossier.pdf",
+    "byte_size": 3259
+  },
+  {
+    "document_id": "DOC00064",
+    "case_id": "C104",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C104_document_index.txt",
+    "byte_size": 1007
+  },
+  {
+    "document_id": "DOC00065",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C105_summary.txt",
+    "byte_size": 431
+  },
+  {
+    "document_id": "DOC00066",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C105_fir.txt",
+    "byte_size": 360
+  },
+  {
+    "document_id": "DOC00067",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C105_case_diary.txt",
+    "byte_size": 433
+  },
+  {
+    "document_id": "DOC00068",
+    "case_id": "C105",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C105_cdr.csv",
+    "byte_size": 289
+  },
+  {
+    "document_id": "DOC00069",
+    "case_id": "C105",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C105_bank_statement.csv",
+    "byte_size": 223
+  },
+  {
+    "document_id": "DOC00070",
+    "case_id": "C105",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C105_cctv_log.csv",
+    "byte_size": 281
+  },
+  {
+    "document_id": "DOC00071",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C105_patrol_log.txt",
+    "byte_size": 244
+  },
+  {
+    "document_id": "DOC00072",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C105_surveillance_report.txt",
+    "byte_size": 270
+  },
+  {
+    "document_id": "DOC00073",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C105_witness_statements.txt",
+    "byte_size": 334
+  },
+  {
+    "document_id": "DOC00074",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C105_scene_report.txt",
+    "byte_size": 321
+  },
+  {
+    "document_id": "DOC00075",
+    "case_id": "C105",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C105_intel_notes.txt",
+    "byte_size": 261
+  },
+  {
+    "document_id": "DOC00076",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C105_evidence_register.txt",
+    "byte_size": 304
+  },
+  {
+    "document_id": "DOC00077",
+    "case_id": "C105",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C105_relationships.txt",
+    "byte_size": 349
+  },
+  {
+    "document_id": "DOC00078",
+    "case_id": "C105",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C105_chargesheet.txt",
+    "byte_size": 402
+  },
+  {
+    "document_id": "DOC00079",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C105_complete_dossier.pdf",
+    "byte_size": 3098
+  },
+  {
+    "document_id": "DOC00080",
+    "case_id": "C105",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C105_document_index.txt",
+    "byte_size": 1002
+  },
+  {
+    "document_id": "DOC00081",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C106_summary.txt",
+    "byte_size": 453
+  },
+  {
+    "document_id": "DOC00082",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C106_fir.txt",
+    "byte_size": 377
+  },
+  {
+    "document_id": "DOC00083",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C106_case_diary.txt",
+    "byte_size": 448
+  },
+  {
+    "document_id": "DOC00084",
+    "case_id": "C106",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C106_cdr.csv",
+    "byte_size": 436
+  },
+  {
+    "document_id": "DOC00085",
+    "case_id": "C106",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C106_bank_statement.csv",
+    "byte_size": 300
+  },
+  {
+    "document_id": "DOC00086",
+    "case_id": "C106",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C106_cctv_log.csv",
+    "byte_size": 284
+  },
+  {
+    "document_id": "DOC00087",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C106_patrol_log.txt",
+    "byte_size": 246
+  },
+  {
+    "document_id": "DOC00088",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C106_surveillance_report.txt",
+    "byte_size": 283
+  },
+  {
+    "document_id": "DOC00089",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C106_witness_statements.txt",
+    "byte_size": 362
+  },
+  {
+    "document_id": "DOC00090",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C106_scene_report.txt",
+    "byte_size": 332
+  },
+  {
+    "document_id": "DOC00091",
+    "case_id": "C106",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C106_intel_notes.txt",
+    "byte_size": 265
+  },
+  {
+    "document_id": "DOC00092",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C106_evidence_register.txt",
+    "byte_size": 315
+  },
+  {
+    "document_id": "DOC00093",
+    "case_id": "C106",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C106_relationships.txt",
+    "byte_size": 363
+  },
+  {
+    "document_id": "DOC00094",
+    "case_id": "C106",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C106_chargesheet.txt",
+    "byte_size": 416
+  },
+  {
+    "document_id": "DOC00095",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C106_complete_dossier.pdf",
+    "byte_size": 3180
+  },
+  {
+    "document_id": "DOC00096",
+    "case_id": "C106",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C106_document_index.txt",
+    "byte_size": 1015
+  },
+  {
+    "document_id": "DOC00097",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C107_summary.txt",
+    "byte_size": 439
+  },
+  {
+    "document_id": "DOC00098",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C107_fir.txt",
+    "byte_size": 382
+  },
+  {
+    "document_id": "DOC00099",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C107_case_diary.txt",
+    "byte_size": 443
+  },
+  {
+    "document_id": "DOC00100",
+    "case_id": "C107",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C107_cdr.csv",
+    "byte_size": 434
+  },
+  {
+    "document_id": "DOC00101",
+    "case_id": "C107",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C107_bank_statement.csv",
+    "byte_size": 300
+  },
+  {
+    "document_id": "DOC00102",
+    "case_id": "C107",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C107_cctv_log.csv",
+    "byte_size": 281
+  },
+  {
+    "document_id": "DOC00103",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C107_patrol_log.txt",
+    "byte_size": 243
+  },
+  {
+    "document_id": "DOC00104",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C107_surveillance_report.txt",
+    "byte_size": 281
+  },
+  {
+    "document_id": "DOC00105",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C107_witness_statements.txt",
+    "byte_size": 355
+  },
+  {
+    "document_id": "DOC00106",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C107_scene_report.txt",
+    "byte_size": 332
+  },
+  {
+    "document_id": "DOC00107",
+    "case_id": "C107",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C107_intel_notes.txt",
+    "byte_size": 261
+  },
+  {
+    "document_id": "DOC00108",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C107_evidence_register.txt",
+    "byte_size": 315
+  },
+  {
+    "document_id": "DOC00109",
+    "case_id": "C107",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C107_relationships.txt",
+    "byte_size": 362
+  },
+  {
+    "document_id": "DOC00110",
+    "case_id": "C107",
+    "document_type": "CRIMINAL_HISTORY",
+    "file_path": "documents/charge_memos/C107_chargesheet.txt",
+    "byte_size": 415
+  },
+  {
+    "document_id": "DOC00111",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C107_complete_dossier.pdf",
+    "byte_size": 3185
+  },
+  {
+    "document_id": "DOC00112",
+    "case_id": "C107",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C107_document_index.txt",
+    "byte_size": 1012
+  },
+  {
+    "document_id": "DOC00113",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C108_summary.txt",
+    "byte_size": 548
+  },
+  {
+    "document_id": "DOC00114",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C108_fir.txt",
+    "byte_size": 365
+  },
+  {
+    "document_id": "DOC00115",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C108_case_diary.txt",
+    "byte_size": 438
+  },
+  {
+    "document_id": "DOC00116",
+    "case_id": "C108",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C108_cdr.csv",
+    "byte_size": 145
+  },
+  {
+    "document_id": "DOC00117",
+    "case_id": "C108",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C108_bank_statement.csv",
+    "byte_size": 223
+  },
+  {
+    "document_id": "DOC00118",
+    "case_id": "C108",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C108_cctv_log.csv",
+    "byte_size": 236
+  },
+  {
+    "document_id": "DOC00119",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C108_patrol_log.txt",
+    "byte_size": 246
+  },
+  {
+    "document_id": "DOC00120",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C108_surveillance_report.txt",
+    "byte_size": 267
+  },
+  {
+    "document_id": "DOC00121",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C108_witness_statements.txt",
+    "byte_size": 518
+  },
+  {
+    "document_id": "DOC00122",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C108_scene_report.txt",
+    "byte_size": 315
+  },
+  {
+    "document_id": "DOC00123",
+    "case_id": "C108",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C108_intel_notes.txt",
+    "byte_size": 264
+  },
+  {
+    "document_id": "DOC00124",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C108_evidence_register.txt",
+    "byte_size": 301
+  },
+  {
+    "document_id": "DOC00125",
+    "case_id": "C108",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C108_relationships.txt",
+    "byte_size": 351
+  },
+  {
+    "document_id": "DOC00126",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/investigator_notes/C108_unsolved_note.txt",
+    "byte_size": 631
+  },
+  {
+    "document_id": "DOC00127",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C108_complete_dossier.pdf",
+    "byte_size": 3161
+  },
+  {
+    "document_id": "DOC00128",
+    "case_id": "C108",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C108_document_index.txt",
+    "byte_size": 1012
+  },
+  {
+    "document_id": "DOC00129",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C109_summary.txt",
+    "byte_size": 462
+  },
+  {
+    "document_id": "DOC00130",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C109_fir.txt",
+    "byte_size": 361
+  },
+  {
+    "document_id": "DOC00131",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C109_case_diary.txt",
+    "byte_size": 431
+  },
+  {
+    "document_id": "DOC00132",
+    "case_id": "C109",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C109_cdr.csv",
+    "byte_size": 289
+  },
+  {
+    "document_id": "DOC00133",
+    "case_id": "C109",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C109_bank_statement.csv",
+    "byte_size": 223
+  },
+  {
+    "document_id": "DOC00134",
+    "case_id": "C109",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C109_cctv_log.csv",
+    "byte_size": 284
+  },
+  {
+    "document_id": "DOC00135",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C109_patrol_log.txt",
+    "byte_size": 238
+  },
+  {
+    "document_id": "DOC00136",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C109_surveillance_report.txt",
+    "byte_size": 268
+  },
+  {
+    "document_id": "DOC00137",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C109_witness_statements.txt",
+    "byte_size": 333
+  },
+  {
+    "document_id": "DOC00138",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C109_scene_report.txt",
+    "byte_size": 317
+  },
+  {
+    "document_id": "DOC00139",
+    "case_id": "C109",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C109_intel_notes.txt",
+    "byte_size": 262
+  },
+  {
+    "document_id": "DOC00140",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C109_evidence_register.txt",
+    "byte_size": 303
+  },
+  {
+    "document_id": "DOC00141",
+    "case_id": "C109",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C109_relationships.txt",
+    "byte_size": 350
+  },
+  {
+    "document_id": "DOC00142",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/investigator_notes/C109_unsolved_note.txt",
+    "byte_size": 501
+  },
+  {
+    "document_id": "DOC00143",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C109_complete_dossier.pdf",
+    "byte_size": 3085
+  },
+  {
+    "document_id": "DOC00144",
+    "case_id": "C109",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C109_document_index.txt",
+    "byte_size": 1006
+  },
+  {
+    "document_id": "DOC00145",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C110_summary.txt",
+    "byte_size": 484
+  },
+  {
+    "document_id": "DOC00146",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/fir/C110_fir.txt",
+    "byte_size": 389
+  },
+  {
+    "document_id": "DOC00147",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C110_case_diary.txt",
+    "byte_size": 437
+  },
+  {
+    "document_id": "DOC00148",
+    "case_id": "C110",
+    "document_type": "CDR",
+    "file_path": "documents/cdr/C110_cdr.csv",
+    "byte_size": 437
+  },
+  {
+    "document_id": "DOC00149",
+    "case_id": "C110",
+    "document_type": "FINANCIAL",
+    "file_path": "documents/bank_statements/C110_bank_statement.csv",
+    "byte_size": 300
+  },
+  {
+    "document_id": "DOC00150",
+    "case_id": "C110",
+    "document_type": "SURVEILLANCE",
+    "file_path": "documents/surveillance_logs/C110_cctv_log.csv",
+    "byte_size": 285
+  },
+  {
+    "document_id": "DOC00151",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/field_reports/C110_patrol_log.txt",
+    "byte_size": 245
+  },
+  {
+    "document_id": "DOC00152",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/surveillance_logs/C110_surveillance_report.txt",
+    "byte_size": 267
+  },
+  {
+    "document_id": "DOC00153",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/witness_statements/C110_witness_statements.txt",
+    "byte_size": 338
+  },
+  {
+    "document_id": "DOC00154",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/investigation_reports/C110_scene_report.txt",
+    "byte_size": 318
+  },
+  {
+    "document_id": "DOC00155",
+    "case_id": "C110",
+    "document_type": "INTEL",
+    "file_path": "documents/intel_notes/C110_intel_notes.txt",
+    "byte_size": 258
+  },
+  {
+    "document_id": "DOC00156",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/evidence_indexes/C110_evidence_register.txt",
+    "byte_size": 304
+  },
+  {
+    "document_id": "DOC00157",
+    "case_id": "C110",
+    "document_type": "INTEL",
+    "file_path": "documents/field_reports/C110_relationships.txt",
+    "byte_size": 352
+  },
+  {
+    "document_id": "DOC00158",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/investigator_notes/C110_unsolved_note.txt",
+    "byte_size": 503
+  },
+  {
+    "document_id": "DOC00159",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/dossiers/C110_complete_dossier.pdf",
+    "byte_size": 3180
+  },
+  {
+    "document_id": "DOC00160",
+    "case_id": "C110",
+    "document_type": "FIR",
+    "file_path": "documents/case_metadata/C110_document_index.txt",
+    "byte_size": 1014
+  }
+]

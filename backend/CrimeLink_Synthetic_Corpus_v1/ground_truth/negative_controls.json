@@ -1,0 +1,26 @@
+[
+  {
+    "person_id": "P010",
+    "name": "Anand Kulkarni",
+    "case_id": "C101",
+    "observed_association": "Central Bank Cash Counter",
+    "legitimate_explanation": "Authorized senior bank teller executing official banking counter duties; no criminal conspiracy.",
+    "expected_classification": "LEGITIMATE_CIVILIAN"
+  },
+  {
+    "person_id": "P011",
+    "name": "Ramesh Yadav",
+    "case_id": "C102",
+    "observed_association": "Commercial Freight Truck Maintenance",
+    "legitimate_explanation": "Licensed automotive mechanic servicing vehicle under valid job card JC-8821; no criminal conspiracy.",
+    "expected_classification": "LEGITIMATE_CIVILIAN"
+  },
+  {
+    "person_id": "P014",
+    "name": "Sunita Verma",
+    "case_id": "C104",
+    "observed_association": "Commercial Invoiced Bank Transfer (INR 45,000)",
+    "legitimate_explanation": "Registered supplier of corrugated packaging materials to Apex Logistics under invoice INV-4491; commercial vendor.",
+    "expected_classification": "LEGITIMATE_CIVILIAN"
+  }
+]

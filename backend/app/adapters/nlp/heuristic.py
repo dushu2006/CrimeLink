@@ -89,10 +89,11 @@ def _classify_token(token: str) -> str:
         if len(token) < 3:
             return "stop"
         return "name"
-    if not re.match(r"^[A-Z][a-z]{2,}$", token):
+    clean_token = re.sub(r"['’]s$", "", token).rstrip(".,;:!?")
+    if not re.match(r"^[A-Z][a-z]{2,}$", clean_token):
         return "stop"
-    lowered = token.lower().rstrip(".")
-    if token.lower() in _LATIN_ROLE_TOKENS:
+    lowered = clean_token.lower()
+    if clean_token.lower() in _LATIN_ROLE_TOKENS:
         return "role"
     if lowered in PERSON_STOPWORDS or lowered in EXTRA_ENGLISH_STOPWORDS:
         return "stop"
@@ -191,7 +192,7 @@ class HeuristicNLPProvider:
         for first, last in spans:
             start = tokens[first][0]
             end = tokens[last][1]
-            raw = " ".join(tokens[idx][2] for idx in range(first, last + 1))
+            raw = " ".join(re.sub(r"['’]s$", "", tokens[idx][2]).rstrip(".,;:!?") for idx in range(first, last + 1))
             name = display_name(raw)
             if not is_probable_person_name(name):
                 continue

@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C103
+Case Number: FIR/2024/00103
+Case Title: Extortion of Small Business Owner
+Registered Date: 2024-05-02
+Police Station: PS-03 Market
+
+Physical Files in Dossier:
+  - documents/case_metadata/C103_summary.txt
+  - documents/fir/C103_fir.txt
+  - documents/investigation_reports/C103_case_diary.txt
+  - documents/cdr/C103_cdr.csv
+  - documents/bank_statements/C103_bank_statement.csv
+  - documents/surveillance_logs/C103_cctv_log.csv
+  - documents/field_reports/C103_patrol_log.txt
+  - documents/surveillance_logs/C103_surveillance_report.txt
+  - documents/witness_statements/C103_witness_statements.txt
+  - documents/investigation_reports/C103_scene_report.txt
+  - documents/intel_notes/C103_intel_notes.txt
+  - documents/evidence_indexes/C103_evidence_register.txt
+  - documents/field_reports/C103_relationships.txt
+  - documents/charge_memos/C103_chargesheet.txt
+  - documents/dossiers/C103_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

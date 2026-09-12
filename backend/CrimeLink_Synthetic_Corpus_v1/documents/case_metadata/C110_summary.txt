@@ -1,0 +1,10 @@
+CASE SUMMARY — Suspicious Transfer Network
+Case Number: FIR/2024/00110
+Police Station: PS-10 Special Cell, Jaipur
+Registration Date: 2024-12-01
+Status: UNDER_INVESTIGATION
+
+Investigation Summary:
+Complex multi-hop transaction chain spanning multiple banking entities. Primary beneficiary accounts unverified; forensic audit ongoing.
+Key Parties Examined: Vikram Rao, Manoj Kulkarni, Zoya Chauhan, Kavya Sharma.
+This document is an official case record under the Police Regulations.

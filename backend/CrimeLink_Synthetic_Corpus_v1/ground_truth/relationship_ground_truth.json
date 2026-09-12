@@ -1,0 +1,314 @@
+[
+  {
+    "source_person_id": "P001",
+    "target_person_id": "P002",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P001",
+    "target_person_id": "P003",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P002",
+    "target_person_id": "P003",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P002",
+    "target_person_id": "P005",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P005",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P010",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P010",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P016",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P010",
+    "target_person_id": "P016",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C101"
+  },
+  {
+    "source_person_id": "P002",
+    "target_person_id": "P004",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P002",
+    "target_person_id": "P005",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P004",
+    "target_person_id": "P005",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P004",
+    "target_person_id": "P011",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P011",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P018",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P011",
+    "target_person_id": "P018",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C102"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P006",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C103"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P015",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C103"
+  },
+  {
+    "source_person_id": "P006",
+    "target_person_id": "P015",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C103"
+  },
+  {
+    "source_person_id": "P006",
+    "target_person_id": "P019",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C103"
+  },
+  {
+    "source_person_id": "P015",
+    "target_person_id": "P019",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C103"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P007",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P014",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P007",
+    "target_person_id": "P014",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P007",
+    "target_person_id": "P017",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P014",
+    "target_person_id": "P017",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P014",
+    "target_person_id": "P020",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P017",
+    "target_person_id": "P020",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C104"
+  },
+  {
+    "source_person_id": "P008",
+    "target_person_id": "P021",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C105"
+  },
+  {
+    "source_person_id": "P008",
+    "target_person_id": "P022",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C105"
+  },
+  {
+    "source_person_id": "P021",
+    "target_person_id": "P022",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C105"
+  },
+  {
+    "source_person_id": "P004",
+    "target_person_id": "P005",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C106"
+  },
+  {
+    "source_person_id": "P004",
+    "target_person_id": "P009",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C106"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P009",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C106"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P016",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C106"
+  },
+  {
+    "source_person_id": "P009",
+    "target_person_id": "P016",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C106"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P012",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C107"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P017",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C107"
+  },
+  {
+    "source_person_id": "P012",
+    "target_person_id": "P017",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C107"
+  },
+  {
+    "source_person_id": "P012",
+    "target_person_id": "P023",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C107"
+  },
+  {
+    "source_person_id": "P017",
+    "target_person_id": "P023",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C107"
+  },
+  {
+    "source_person_id": "P013",
+    "target_person_id": "P024",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C108"
+  },
+  {
+    "source_person_id": "P013",
+    "target_person_id": "P025",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C108"
+  },
+  {
+    "source_person_id": "P024",
+    "target_person_id": "P025",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C108"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P026",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C109"
+  },
+  {
+    "source_person_id": "P005",
+    "target_person_id": "P027",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C109"
+  },
+  {
+    "source_person_id": "P026",
+    "target_person_id": "P027",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C109"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P028",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C110"
+  },
+  {
+    "source_person_id": "P003",
+    "target_person_id": "P029",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C110"
+  },
+  {
+    "source_person_id": "P028",
+    "target_person_id": "P029",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C110"
+  },
+  {
+    "source_person_id": "P028",
+    "target_person_id": "P030",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C110"
+  },
+  {
+    "source_person_id": "P029",
+    "target_person_id": "P030",
+    "relationship_type": "ASSOCIATE_OF",
+    "case_id": "C110"
+  }
+]

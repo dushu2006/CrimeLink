@@ -1,0 +1,10 @@
+{
+  "version": "2.1",
+  "structured_sources": "CSV",
+  "unstructured_sources": [
+    "TXT",
+    "CSV",
+    "PDF"
+  ],
+  "ground_truth": "JSON (evaluation-only)"
+}

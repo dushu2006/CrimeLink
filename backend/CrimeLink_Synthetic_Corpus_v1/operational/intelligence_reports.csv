@@ -1,0 +1,11 @@
+report_id,report_date,subject_person_id,location_id,case_id,source_type,summary
+IR00001,2024-03-15,P001,L001,C101,SURVEILLANCE_NOTE,Field observation confirms subject P001 active in vicinity of Central Branch Bank Robbery.
+IR00002,2024-04-10,P002,L001,C102,SURVEILLANCE_NOTE,Field observation confirms subject P002 active in vicinity of Commercial Vehicle Theft.
+IR00003,2024-05-02,P005,L001,C103,SURVEILLANCE_NOTE,Field observation confirms subject P005 active in vicinity of Extortion of Small Business Owner.
+IR00004,2024-06-18,P003,L001,C104,SURVEILLANCE_NOTE,Field observation confirms subject P003 active in vicinity of Suspicious Financial Transfer Chain.
+IR00005,2024-07-22,P008,L001,C105,SURVEILLANCE_NOTE,Field observation confirms subject P008 active in vicinity of Residential Burglary Series.
+IR00006,2024-08-30,P004,L001,C106,SURVEILLANCE_NOTE,Field observation confirms subject P004 active in vicinity of Organized Electronics Theft and Resale.
+IR00007,2024-09-14,P003,L001,C107,SURVEILLANCE_NOTE,Field observation confirms subject P003 active in vicinity of Forged Identity and Property Documents.
+IR00008,2024-10-05,P013,L001,C108,SURVEILLANCE_NOTE,Field observation confirms subject P013 active in vicinity of Unsolved Warehouse Theft.
+IR00009,2024-11-12,P005,L001,C109,SURVEILLANCE_NOTE,Field observation confirms subject P005 active in vicinity of Unsolved Extortion Network.
+IR00010,2024-12-01,P003,L001,C110,SURVEILLANCE_NOTE,Field observation confirms subject P003 active in vicinity of Suspicious Transfer Network.

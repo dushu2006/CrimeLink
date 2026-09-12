@@ -1,0 +1,29 @@
+[
+  {
+    "person_id": "P003",
+    "name": "Vikram Rao",
+    "alias": "Vicky",
+    "cases": [
+      "C101",
+      "C104",
+      "C107",
+      "C110"
+    ],
+    "role": "Financial and Document Bridge",
+    "analytical_target": "Weighted Betweenness Centrality"
+  },
+  {
+    "person_id": "P005",
+    "name": "Imran Sheikh",
+    "alias": "Immu",
+    "cases": [
+      "C101",
+      "C102",
+      "C103",
+      "C106",
+      "C109"
+    ],
+    "role": "Telecom and Cross-Case Communication Connector",
+    "analytical_target": "Cross-case Degree and Network Hub"
+  }
+]

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import ErrorBoundary from "./ErrorBoundary";
 import { useAuth } from "../store/auth";
 import { currentLang, setLang, t } from "../i18n";
@@ -22,7 +22,7 @@ export default function Layout() {
 
   // Remember active case ID from URL or sessionStorage
   const activeCaseId = useMemo(() => {
-    const match = location.pathname.match(/^\/cases\/([0-9a-fA-F-]+)/);
+    const match = location.pathname.match(/^\/cases\/([^/]+)/);
     if (match) {
       sessionStorage.setItem("crimelink:last_case_id", match[1]);
       return match[1];
@@ -40,6 +40,9 @@ export default function Layout() {
       if (path.includes("/investigation")) {
         return { section: "AI Reasoning", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Analysis Gateway", badge: "Audited Model" };
       }
+      if (path.includes("/investigate")) {
+        return { section: "Investigation Analysis", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Evidence Scan", badge: "Pattern Detectors" };
+      }
       if (path.includes("/review")) {
         return { section: "HITL Review", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Human-in-the-Loop", badge: "Action Req." };
       }
@@ -47,6 +50,9 @@ export default function Layout() {
         return { section: "Case Dossier", detail: `Case #${activeCaseId.slice(0, 8)}`, badge: "Active Case" };
       }
       return { section: "Cases Registry", detail: "Active Criminal Files", badge: "24 Open" };
+    }
+    if (path.startsWith("/investigate")) {
+      return { section: "Investigation Analysis", detail: "Cross-Case Patterns", badge: "Master Scope" };
     }
     if (path.startsWith("/entities")) {
       return { section: "Entity Directory", detail: "Persons, Accounts & Vehicles", badge: "Biometrics & PII" };
@@ -103,6 +109,24 @@ export default function Layout() {
     return parts[0].slice(0, 2).toUpperCase();
   }, [session]);
 
+  // Mutually exclusive active route determination for sidebar navigation
+  const currentPath = location.pathname;
+  const isGraphActive = currentPath.includes("/graph");
+  const isAiActive = currentPath.includes("/investigation");
+  const isAnalysisActive = currentPath.includes("/investigate");
+  const isReviewActive = currentPath.startsWith("/review") || currentPath.includes("/review");
+  const isCasesActive =
+    (currentPath === "/cases" || currentPath.startsWith("/cases/")) &&
+    !isGraphActive &&
+    !isAiActive &&
+    !isAnalysisActive &&
+    !isReviewActive;
+  const isEntitiesActive = currentPath.startsWith("/entities");
+  const isRelationshipsActive = currentPath.startsWith("/relationships");
+  const isSourcesActive = currentPath.startsWith("/sources");
+  const isDocumentsActive = currentPath.startsWith("/documents");
+  const isAdminActive = currentPath.startsWith("/admin");
+
   return (
     <div className="stitch-shell">
       {/* -------------------------------------------------------------
@@ -120,57 +144,51 @@ export default function Layout() {
           <div className="nav-section">
             <div className="nav-section-title">{t("nav.sectionOperations", lang)}</div>
             <nav className="nav-links-col">
-              <NavLink
+              <Link
                 to="/cases"
-                end
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive && !location.pathname.includes("/graph") && !location.pathname.includes("/investigation") ? "active" : ""}`
-                }
+                className={`sidebar-link ${isCasesActive ? "active" : ""}`}
+                aria-current={isCasesActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">folder_open</span>
                 <span className="nav-label">{t("nav.cases", lang)}</span>
                 <span className="nav-pill">{t("cases.title", lang)}</span>
-              </NavLink>
+              </Link>
 
-              <NavLink
+              <Link
                 to={activeCaseId ? `/cases/${activeCaseId}/graph` : "/cases"}
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isGraphActive ? "active" : ""}`}
+                aria-current={isGraphActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">hub</span>
                 <span className="nav-label">{t("nav.graph", lang)}</span>
-              </NavLink>
+              </Link>
 
-              <NavLink
+              <Link
                 to="/entities"
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isEntitiesActive ? "active" : ""}`}
+                aria-current={isEntitiesActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">person_search</span>
                 <span className="nav-label">{t("nav.entities", lang)}</span>
-              </NavLink>
+              </Link>
 
-              <NavLink
+              <Link
                 to="/relationships"
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isRelationshipsActive ? "active" : ""}`}
+                aria-current={isRelationshipsActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">polyline</span>
                 <span className="nav-label">{t("nav.relationships", lang)}</span>
-              </NavLink>
+              </Link>
 
-              <NavLink
+              <Link
                 to="/sources"
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isSourcesActive ? "active" : ""}`}
+                aria-current={isSourcesActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">dataset</span>
                 <span className="nav-label">{t("nav.sources", lang)}</span>
-              </NavLink>
+              </Link>
             </nav>
           </div>
 
@@ -178,50 +196,46 @@ export default function Layout() {
           <div className="nav-section">
             <div className="nav-section-title">{t("nav.sectionIntelligence", lang)}</div>
             <nav className="nav-links-col">
-              <NavLink
+              <Link
                 to={activeCaseId ? `/cases/${activeCaseId}/investigation` : "/cases"}
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isAiActive ? "active" : ""}`}
+                aria-current={isAiActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">psychology</span>
                 <span className="nav-label">{t("nav.ai", lang)}</span>
                 <span className="nav-pill nav-pill-primary">AI</span>
-              </NavLink>
+              </Link>
 
               {/* The evidence-driven reasoning workspace — a different surface
                   from the stage workflow above: that one shows how the case was
                   processed, this one shows what the evidence supports. */}
-              <NavLink
+              <Link
                 to={activeCaseId ? `/cases/${activeCaseId}/investigate` : "/investigate"}
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isAnalysisActive ? "active" : ""}`}
+                aria-current={isAnalysisActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">fact_check</span>
                 <span className="nav-label">{t("nav.reasoning", lang)}</span>
-              </NavLink>
+              </Link>
 
-              <NavLink
-                to="/review"
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+              <Link
+                to={activeCaseId ? `/cases/${activeCaseId}/review` : "/review"}
+                className={`sidebar-link ${isReviewActive ? "active" : ""}`}
+                aria-current={isReviewActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">compare_arrows</span>
                 <span className="nav-label">{t("nav.review", lang)}</span>
                 <span className="nav-pill nav-pill-amber">HITL</span>
-              </NavLink>
+              </Link>
 
-              <NavLink
+              <Link
                 to="/documents"
-                className={({ isActive }) =>
-                  `sidebar-link ${isActive ? "active" : ""}`
-                }
+                className={`sidebar-link ${isDocumentsActive ? "active" : ""}`}
+                aria-current={isDocumentsActive ? "page" : undefined}
               >
                 <span className="material-symbols-outlined nav-icon">shield</span>
                 <span className="nav-label">{t("nav.vault", lang)}</span>
-              </NavLink>
+              </Link>
             </nav>
           </div>
 
@@ -230,15 +244,14 @@ export default function Layout() {
             <div className="nav-section">
               <div className="nav-section-title">{t("nav.sectionGovernance", lang)}</div>
               <nav className="nav-links-col">
-                <NavLink
+                <Link
                   to="/admin"
-                  className={({ isActive }) =>
-                    `sidebar-link ${isActive ? "active" : ""}`
-                  }
+                  className={`sidebar-link ${isAdminActive ? "active" : ""}`}
+                  aria-current={isAdminActive ? "page" : undefined}
                 >
                   <span className="material-symbols-outlined nav-icon">settings</span>
                   <span className="nav-label">{t("nav.admin", lang)}</span>
-                </NavLink>
+                </Link>
               </nav>
             </div>
           )}

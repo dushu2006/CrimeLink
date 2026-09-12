@@ -1,0 +1,24 @@
+DOCUMENT DOSSIER INDEX — C110
+Case Number: FIR/2024/00110
+Case Title: Suspicious Transfer Network
+Registered Date: 2024-12-01
+Police Station: PS-10 Special Cell
+
+Physical Files in Dossier:
+  - documents/case_metadata/C110_summary.txt
+  - documents/fir/C110_fir.txt
+  - documents/investigation_reports/C110_case_diary.txt
+  - documents/cdr/C110_cdr.csv
+  - documents/bank_statements/C110_bank_statement.csv
+  - documents/surveillance_logs/C110_cctv_log.csv
+  - documents/field_reports/C110_patrol_log.txt
+  - documents/surveillance_logs/C110_surveillance_report.txt
+  - documents/witness_statements/C110_witness_statements.txt
+  - documents/investigation_reports/C110_scene_report.txt
+  - documents/intel_notes/C110_intel_notes.txt
+  - documents/evidence_indexes/C110_evidence_register.txt
+  - documents/field_reports/C110_relationships.txt
+  - documents/investigator_notes/C110_unsolved_note.txt
+  - documents/dossiers/C110_complete_dossier.pdf
+
+Total Physical Records: 15 case documents + 1 index = 16 records.

@@ -51,7 +51,7 @@ export default function CrimeLinkLogo({
       <text
         x="64"
         y="28"
-        fontFamily="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+        fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
         fontWeight="800"
         fontSize="20"
         fill="#0F172A"
@@ -63,7 +63,7 @@ export default function CrimeLinkLogo({
         <text
           x="64"
           y="43"
-          fontFamily="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+          fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
           fontWeight="600"
           fontSize="7.5"
           fill="#475569"

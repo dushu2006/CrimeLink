@@ -163,18 +163,7 @@ async def dataset_files(
     """
     dataset = await _active_dataset(session)
     if dataset is None:
-        return {
-            "root": None,
-            "dataset_id": None,
-            "dataset_name": None,
-            "dataset_version": None,
-            "dataset_status": None,
-            "ok": True,
-            "issues": [],
-            "warnings": [],
-            "counts": {"files": 0},
-            "items": [],
-        }
+        return await _legacy_corpus_files(session)
 
     root = await _dataset_root(session, dataset.id)
     rows = list(
@@ -216,6 +205,8 @@ async def dataset_files(
 
     items = []
     for row in rows:
+        if _is_evaluation_path(row.relative_path):
+            continue
         document = documents_by_id.get(row.doc_id) if row.doc_id else None
         exists = bool(root and (root / row.relative_path).is_file())
         status, openable = _file_availability(row, exists)
@@ -321,6 +312,8 @@ async def _legacy_corpus_files(session: AsyncSession) -> dict:
     }
     items = []
     for entry in scan.files:
+        if entry.status in {"excluded", "ignored"} or _is_evaluation_path(entry.relative_path):
+            continue
         items.append(
             {
                 "path": entry.relative_path,
@@ -353,11 +346,21 @@ async def _legacy_corpus_files(session: AsyncSession) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _evaluation_guard(clean: str) -> None:
+def _is_evaluation_path(path_str: str) -> bool:
     from app.adapters.sources.synthetic_external import NEVER_INGEST_COMPONENTS
 
-    parts = {p.lower().replace("-", "").replace("_", "") for p in clean.split("/")[:-1]}
-    if parts & NEVER_INGEST_COMPONENTS:
+    normalized = path_str.replace("\\", "/").strip("/")
+    parts = normalized.split("/")
+    dir_parts = {p.lower().replace("-", "").replace("_", "") for p in parts[:-1]}
+    if dir_parts & NEVER_INGEST_COMPONENTS:
+        return True
+    if any(p.startswith(("_", ".")) for p in parts):
+        return True
+    return False
+
+
+def _evaluation_guard(clean: str) -> None:
+    if _is_evaluation_path(clean):
         raise NotFoundError(
             "This file is evaluation-only material and is not available as evidence."
         )
@@ -386,10 +389,17 @@ async def preview_file(
     replacement characters.
     """
     clean = path.split("#", 1)[0]
+    _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
-        raise NotFoundError("No dataset is currently active.")
-    root = await _dataset_root(session, dataset.id)
+        from app.adapters.sources import get_source_adapter
+
+        adapter = get_source_adapter("synthetic_external")
+        root = adapter.resolve_root()
+        dataset_id = "synthetic-corpus"
+    else:
+        root = await _dataset_root(session, dataset.id)
+        dataset_id = dataset.id
 
     result = source_viewer.preview(
         path,
@@ -401,7 +411,7 @@ async def preview_file(
         limit=limit,
         offset=offset,
         sheet=sheet,
-        dataset_id=dataset.id,
+        dataset_id=dataset_id,
         raw_url=_raw_url(clean),
         download_url=_raw_url(clean),
     )
@@ -431,10 +441,15 @@ async def read_file(
     ``/preview``, which is the same read plus the explicit status.
     """
     clean = path.split("#", 1)[0]
+    _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
-        raise NotFoundError("No dataset is currently active.")
-    root = await _dataset_root(session, dataset.id)
+        from app.adapters.sources import get_source_adapter
+
+        adapter = get_source_adapter("synthetic_external")
+        root = adapter.resolve_root()
+    else:
+        root = await _dataset_root(session, dataset.id)
     try:
         window = source_viewer.read_window(
             path,
@@ -510,8 +525,12 @@ async def raw_file(
 
     dataset = await _active_dataset(session)
     if dataset is None:
-        raise NotFoundError("No dataset is currently active.")
-    root = await _dataset_root(session, dataset.id)
+        from app.adapters.sources import get_source_adapter
+
+        adapter = get_source_adapter("synthetic_external")
+        root = adapter.resolve_root()
+    else:
+        root = await _dataset_root(session, dataset.id)
     try:
         resolved = source_viewer.resolve_in_dataset(clean, root=root)
     except SourceNotFoundError as exc:

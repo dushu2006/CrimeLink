@@ -1,0 +1,13 @@
+[
+  {
+    "cycle_id": "MC001",
+    "case_id": "C104",
+    "accounts": [
+      "100000000003",
+      "100000000007",
+      "100000000017",
+      "100000000003"
+    ],
+    "note": "Circular money routing through intermediate mule accounts."
+  }
+]

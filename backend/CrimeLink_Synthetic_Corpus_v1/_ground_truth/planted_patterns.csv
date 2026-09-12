@@ -1,7 +1,0 @@
-pattern_id,type,anchor,path,expected_interpretation
-PAT_01,cross-network bridge,PERSON_00072,EVNET_03 -> PERSON_00072 -> EVNET_01,bridge person appears across two otherwise separate networks
-PAT_02,cross-network bridge,PERSON_00173,EVNET_05 -> PERSON_00173 -> EVNET_01,bridge person appears across two networks
-PAT_03,vehicle ownership change,VEH_0001,old owner -> ownership transfer -> later sighting,ownership change precedes later investigative sighting
-PAT_04,legitimate decoy,EVNET_12,cash deposits + jewellery/festival trading,suspicious-looking cash pattern has ordinary commercial explanation
-PAT_05,identity ambiguity,PERSON_00072 / PERSON_00173,same surface name,must remain distinct
-PAT_06,burner-phone pattern,EVNET_05,short-lived phone + clustered calls,telecom burst near case period
