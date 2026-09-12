@@ -226,10 +226,13 @@ class AIModelRouter:
             }
             if response_format is not None:
                 kwargs["response_format"] = response_format
-            if getattr(self.settings, "nim_disable_thinking", True) and (
-                "nvidia" in (invocation.base_url or "").lower()
-                or "deepseek" in (invocation.model or "").lower()
-                or "nemotron" in (invocation.model or "").lower()
+            # ``settings`` may be absent entirely on a router built without
+            # __init__ (the streaming tests do exactly that), so this lookup is
+            # defensive in the same way as the timeout lookup below.
+            if getattr(getattr(self, "settings", None), "nim_disable_thinking", True) and (
+                "nvidia" in str(getattr(invocation, "base_url", "") or "").lower()
+                or "deepseek" in str(getattr(invocation, "model", "") or "").lower()
+                or "nemotron" in str(getattr(invocation, "model", "") or "").lower()
             ):
                 kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": False}}
             effective_timeout = timeout_override or getattr(invocation, "timeout", getattr(getattr(self, "settings", None), "ai_timeout_s", 60.0))

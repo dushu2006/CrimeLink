@@ -58,6 +58,7 @@ async def run_investigation(
         question=payload.question,
         case_id=payload.case_id,
         investigation_id=payload.investigation_id,
+        objective=payload.objective,
         max_patterns=payload.max_patterns,
         include_excluded=payload.include_excluded,
     )

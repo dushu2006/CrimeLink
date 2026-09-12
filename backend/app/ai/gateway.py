@@ -1465,13 +1465,17 @@ class AIGateway:
                     uncertainties=["Model generated a reasoning preamble that was interrupted."],
                 )
             if text:
+                # Unstructured prose is kept so nothing the model said is lost,
+                # but it must not borrow the weight of a parsed finding: no
+                # structured claim was made, so it carries no confidence and
+                # no evidence level until a human reads it.
                 return FindingResult(
                     finding_type="GENERAL",
                     summary=text,
-                    confidence=0.8,
-                    evidence_level="FACT",
+                    confidence=0.0,
+                    evidence_level="UNKNOWN",
                     recommended_review=True,
-                    uncertainties=[],
+                    uncertainties=["Model output was not valid JSON; it is unverified prose."],
                 )
             return FindingResult(
                 finding_type="GENERAL",

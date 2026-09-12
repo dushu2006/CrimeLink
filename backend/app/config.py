@@ -227,7 +227,8 @@ class Settings(BaseSettings):
     synthetic_data_mode: Literal["generate", "external"] = "external"
     # Root of the external corpus. Absolute paths are honoured verbatim;
     # relative paths resolve against the CrimeLink repository root.
-    # Default: backend/CrimeLink_Synthetic_Corpus_v1 (gitignored local dataset).
+    # Default: backend/CrimeLink_Synthetic_Corpus_v1 (optional evaluation
+    # fixture committed to this repository; never read at startup).
     # Only `operational/` and `documents/` under this root are ingestion
     # sources; `ground_truth/` and `metadata/` are never operational input.
     synthetic_data_root: Path = Field(

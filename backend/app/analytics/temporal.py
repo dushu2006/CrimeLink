@@ -347,6 +347,9 @@ def _describe(snapshot: CaseGraphSnapshot, nodes: list[str], edges: list[Any]) -
     return {
         "path": names,
         "provenance_keys": nodes,
+        # The edges themselves, so a caller can point at the exact record that
+        # justifies each hop instead of asserting a route it cannot open.
+        "edge_keys": [getattr(edge, "key", "") or "" for _src, _tgt, edge in edges],
         "hops": len(edges),
         "steps": steps,
         "evidence_doc_ids": evidence,

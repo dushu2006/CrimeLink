@@ -20,7 +20,8 @@ class ProvenanceItem(BaseModel):
     Conventional ``kind`` values: ``document`` (an ingested file),
     ``source_row`` (a row inside a source file), ``graph_edge`` (an edge key),
     ``metric`` (a computed analytic, e.g. ``centrality:betweenness``),
-    ``audit`` (an audit-log row), ``note`` (investigator-supplied context).
+    ``audit`` (an audit-log row), ``note`` (investigator-supplied context),
+    ``dataset`` (a record whose origin is the dataset itself, not a file).
     ``ref`` is the stable identifier; ``label`` is what a human reads.
     """
 
@@ -97,6 +98,10 @@ class RelationshipFinding(BaseModel):
     description: str
     evidence: list[EvidenceItem] = Field(default_factory=list)
     inference_label: str = "LEAD"
+    provenance: list[ProvenanceItem] = Field(
+        default_factory=list,
+        description="Flat pointers rolled up from the evidence, so each edge is openable.",
+    )
     path: RelationshipPath | None = None
     analysis: ObservationBlock | None = None
 
@@ -147,6 +152,7 @@ class Hypothesis(BaseModel):
     inference_label: str = "HYPOTHESIS"
     strength: str = "INSUFFICIENT"
     strength_factors: StrengthFactors = Field(default_factory=StrengthFactors)
+    provenance: list[ProvenanceItem] = Field(default_factory=list)
     analysis: ObservationBlock | None = None
 
 
@@ -168,6 +174,13 @@ class NextStep(BaseModel):
     rationale: str
     priority: Literal["high", "medium", "low"] = "medium"
     links: dict[str, list[str]] = Field(default_factory=dict)
+    provenance: list[ProvenanceItem] = Field(
+        default_factory=list,
+        description=(
+            "Pointers behind the finding this step follows up. Gap-closing steps "
+            "cite nothing on purpose: the record they ask for is not in the data."
+        ),
+    )
 
 
 class ModelSection(BaseModel):
@@ -204,6 +217,8 @@ class MemorySection(BaseModel):
     """The thread's memory as returned with an answer."""
 
     investigation_id: str
+    #: The thread's own objective — what this investigation set out to establish.
+    objective: str = ""
     questions_asked: int = 0
     prior_questions: list[str] = Field(default_factory=list)
     confirmed_facts: list[str] = Field(default_factory=list)
@@ -211,14 +226,30 @@ class MemorySection(BaseModel):
     examined_entities: list[str] = Field(default_factory=list)
     open_gaps: list[str] = Field(default_factory=list)
     unresolved: list[str] = Field(default_factory=list)
+    #: What earlier turns in this thread established and what they ruled out —
+    #: continuity means remembering the negative results too.
+    contradictions: list[str] = Field(default_factory=list)
+    relationships: list[str] = Field(default_factory=list)
+    rejected_hypotheses: list[dict[str, Any]] = Field(default_factory=list)
+    prior_findings: list[str] = Field(default_factory=list)
 
 
 class ScopeSection(BaseModel):
-    """What the investigation was allowed to look at."""
+    """What the investigation was allowed to look at.
+
+    ``label`` is the human reading of the scope ("Case C106", "Master Network")
+    so every surface renders the same scope wording and no page has to invent
+    its own. ``case_number``/``case_title`` are echoed from the case row when a
+    single case is in scope — never synthesised.
+    """
 
     mode: Literal["case", "master"]
+    label: str = "Master Network"
     dataset_id: str | None = None
+    dataset_name: str | None = None
     case_id: str | None = None
+    case_number: str | None = None
+    case_title: str | None = None
     case_ids: list[str] = Field(default_factory=list)
     nodes_considered: int = 0
     edges_considered: int = 0
@@ -226,15 +257,43 @@ class ScopeSection(BaseModel):
 
 
 class InvestigatorResponse(BaseModel):
-    """The complete, structured answer to an investigation question."""
+    """The complete, structured answer to an investigation question.
+
+    Ordering mirrors the investigative flow the workspace renders:
+    objective → facts → relationships → patterns → hypotheses →
+    supporting/contradictory evidence → alternatives → assessment →
+    gaps → next direction → provenance.
+    """
 
     question: str
+    objective: str = Field(
+        default="",
+        description=(
+            "What this investigation is trying to establish. Stable across the "
+            "thread's follow-up questions, so continuity is visible."
+        ),
+    )
     investigation_id: str
     scope: ScopeSection
     entities: list[ResolvedEntity] = Field(default_factory=list)
+    facts: list[EvidenceItem] = Field(
+        default_factory=list,
+        description=(
+            "Deterministic FACT-stance observations. These are what the records "
+            "directly establish — never a model's reading."
+        ),
+    )
     relationships: list[RelationshipFinding] = Field(default_factory=list)
     patterns: list[SuspiciousPattern] = Field(default_factory=list)
     hypotheses: list[Hypothesis] = Field(default_factory=list)
+    alternative_explanations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Reasonable non-criminal readings collected from the hypotheses and "
+            "detected patterns. Grounded in the record types present, not "
+            "invented to reassure."
+        ),
+    )
     assessment: AssessmentSection = Field(default_factory=AssessmentSection)
     gaps: list[DataGap] = Field(default_factory=list)
     next_steps: list[NextStep] = Field(default_factory=list)
@@ -254,6 +313,14 @@ class InvestigateRequest(BaseModel):
     )
     investigation_id: str | None = Field(
         default=None, description="Continue a previous investigation (memory)."
+    )
+    objective: str | None = Field(
+        default=None,
+        max_length=400,
+        description=(
+            "Optional investigator-stated objective. Omit to let the first "
+            "question of the thread set it."
+        ),
     )
     max_patterns: int = Field(default=25, ge=1, le=100)
     include_excluded: bool = Field(

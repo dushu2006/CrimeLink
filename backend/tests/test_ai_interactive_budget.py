@@ -166,12 +166,21 @@ class TestInteractiveContextBudget:
         assert result.confidence == 0.9
 
     def test_parse_and_validate_with_unstructured_text(self):
-        """Gateway._parse_and_validate uses natural language text rather than failing."""
+        """Unstructured prose is kept, flagged for review, and carries no confidence.
+
+        The text is not thrown away — losing what the model said would be worse
+        than keeping it — but no structured claim was made, so nothing may be
+        asserted about its weight: confidence stays at zero and the evidence
+        level stays UNKNOWN until a human reads it. (This is the same contract
+        ``test_ai_provider_roundtrip.py::test_non_json_output_is_flagged_for_review``
+        pins from the endpoint side.)
+        """
         settings = Settings()
         gateway = AIGateway(settings=settings, router=MagicMock())
         content = "This case involves money laundering coordinated between Asha Reddy and Ramesh Kumar."
         result = gateway._parse_and_validate(content)
         assert "Asha Reddy" in result.summary
-        assert result.confidence > 0
+        assert result.confidence == 0.0
+        assert result.evidence_level == "UNKNOWN"
         assert result.recommended_review is True
 

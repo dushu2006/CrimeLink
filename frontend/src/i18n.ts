@@ -91,6 +91,30 @@ export const STRINGS: Record<string, Record<Lang, string>> = {
     te: "కృత్రిమ మేధ దర్యాప్తు",
     ta: "AI புலனாய்வு",
   },
+  "nav.reasoning": {
+    en: "Investigation Analysis",
+    hi: "जाँच विश्लेषण",
+    te: "దర్యాప్తు విశ్లేషణ",
+    ta: "புலனாய்வு பகுப்பாய்வு",
+  },
+  "inv.title": {
+    en: "Investigation Analysis",
+    hi: "जाँच विश्लेषण",
+    te: "దర్యాప్తు విశ్లేషణ",
+    ta: "புலனாய்வு பகுப்பாய்வு",
+  },
+  "inv.subtitle": {
+    en: "Evidence-backed assessment: findings, patterns, hypotheses, contradictions, gaps and next direction.",
+    hi: "साक्ष्य-आधारित आकलन: निष्कर्ष, पैटर्न, परिकल्पनाएँ, विरोधाभास, कमियाँ और अगली दिशा।",
+    te: "సాక్ష్యాధారిత అంచనా: కనుగొన్నవి, నమూనాలు, ఊహలు, వైరుధ్యాలు, లోటుపాట్లు, తదుపరి దిశ.",
+    ta: "சான்று அடிப்படையிலான மதிப்பீடு: கண்டுபிடிப்புகள், வடிவங்கள், கருதுகோள்கள், முரண்பாடுகள், இடைவெளிகள், அடுத்த திசை.",
+  },
+  "inv.objective": {
+    en: "Investigation objective",
+    hi: "जाँच का उद्देश्य",
+    te: "దర్యాప్తు లక్ష్యం",
+    ta: "புலனாய்வு நோக்கம்",
+  },
   "nav.review": {
     en: "Review queue",
     hi: "समीक्षा सूची",

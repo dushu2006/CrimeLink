@@ -8,6 +8,8 @@ claim, so the console can open each one and the reviewer can check it.
 
 from __future__ import annotations
 
+from typing import Iterable
+
 from app.domain.enums import SourceConfidence
 
 from .labels import COINCIDENCE, CORROBORATED_LEAD, FACT, HYPOTHESIS, LEAD
@@ -59,6 +61,44 @@ def doc_pointer(
         line_start=line_start,
         line_end=line_end,
         content_hash=content_hash,
+    )
+
+
+def dataset_pointer(
+    *, dataset_id: str, label: str, detail: str | None = None
+) -> ProvenanceItem:
+    """Pointer to the dataset itself, for rows with no source document.
+
+    The importer stamps operational-table rows with ``source_doc_id =
+    dataset:<id>``. Dressing that up as a document made the console offer a
+    link that goes nowhere, so the fallback is named for what it is.
+    """
+    return ProvenanceItem(
+        kind="dataset", ref=f"dataset:{dataset_id}", label=label, detail=detail
+    )
+
+
+def source_pointer(
+    *,
+    doc_id: str,
+    label: str,
+    origin_file: str | None = None,
+    row_number: int | None = None,
+    content_hash: str | None = None,
+    detail: str | None = None,
+) -> ProvenanceItem:
+    """Pointer for whatever a record's ``source_doc_id`` actually names."""
+    if doc_id.startswith("dataset:"):
+        return dataset_pointer(
+            dataset_id=doc_id.split(":", 1)[1], label=label, detail=detail
+        )
+    return doc_pointer(
+        doc_id=doc_id,
+        label=label,
+        origin_file=origin_file,
+        row_number=row_number,
+        content_hash=content_hash,
+        detail=detail,
     )
 
 
@@ -118,3 +158,31 @@ def make_evidence(
         stance=stance,  # type: ignore[arg-type]
         provenance=list(provenance or []),
     )
+
+
+#: Most pointers a single finding may carry; the rest stay in the evidence items.
+FINDING_PROVENANCE_CAP = 20
+
+
+def roll_up_provenance(
+    items: Iterable[EvidenceItem], *, cap: int = FINDING_PROVENANCE_CAP
+) -> list[ProvenanceItem]:
+    """Flatten the pointers behind a finding's own evidence, deduped and capped.
+
+    Findings carry both the evidence items and a flat pointer list so a console
+    (or an auditor reading the JSON) can open the sources without walking the
+    nested structure. The roll-up is derived, never invented: it is exactly the
+    union of the evidence items' pointers, in the order they were attached.
+    """
+    seen: set[tuple[str, str]] = set()
+    pointers: list[ProvenanceItem] = []
+    for item in items or []:
+        for pointer in getattr(item, "provenance", []) or []:
+            signature = (str(pointer.kind), str(pointer.ref))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            pointers.append(pointer)
+            if len(pointers) >= cap:
+                return pointers
+    return pointers

@@ -271,6 +271,11 @@ export default function CaseDetail() {
               </div>
             </div>
             <div className="row-actions">
+              {/* Analysis first: it is where an investigator forms a view;
+                  the stage workflow below it explains how the case got here. */}
+              <Link className="btn btn-primary" to={`/cases/${caseId}/investigate`}>
+                {t("inv.title")}
+              </Link>
               <Link className="btn btn-secondary" to={`/cases/${caseId}/investigation`}>
                 {t("investigation.workspaceLink")}
               </Link>
