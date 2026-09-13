@@ -45,6 +45,7 @@ import {
 } from "../components/investigator/FocusedEvidenceGraph";
 import { InvestigationTimeline } from "../components/investigator/InvestigationTimeline";
 import NetworkAnalysisPanel from "../components/investigator/NetworkAnalysisPanel";
+import MasterCaseNetwork from "../components/investigator/MasterCaseNetwork";
 import {
   centralityNarrative,
   convergenceSentence,
@@ -528,6 +529,9 @@ export default function InvestigatorWorkspace() {
 
       {/* ------------------------------------------------ NETWORK ANALYSIS (explicit trigger, 3 scopes) */}
       <NetworkAnalysisPanel />
+
+      {/* ------------------------------------------------ MASTER CASE NETWORK (Cross-case active dataset) */}
+      <MasterCaseNetwork activeDatasetId={activeDataset?.id} />
 
       {/* ------------------------------------------------ objective */}
       <section className="panel inv-objective" aria-labelledby="inv-objective-title">

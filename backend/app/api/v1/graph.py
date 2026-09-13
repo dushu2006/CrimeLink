@@ -127,6 +127,34 @@ async def master_graph(
     return payload
 
 
+@router.get("/master/case-network")
+async def master_case_network(
+    include_staging: bool = Query(False),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Master case network: cross-case connections across active dataset.
+
+    Cases are nodes (all circles); edges are evidence-backed shared entities/links.
+    """
+    payload = await GraphService().master_case_network(
+        session, scope, include_staging=include_staging
+    )
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource="master_case_network",
+        details={
+            "kind": "master_case_network",
+            "cases": len(payload.get("nodes", [])),
+            "connections": len(payload.get("edges", [])),
+        },
+    )
+    await recorder.flush()
+    return payload
+
+
 @router.get("/master/centrality")
 async def master_centrality(
     metric: str = Query("betweenness", pattern="^(betweenness|pagerank|degree|eigenvector)$"),

@@ -255,6 +255,8 @@ async def project_dataset(
     ).scalars().all()
     case_by_key: dict[str, Case] = {}
     for case in cases:
+        if case.dataset_case_key == "ALL":
+            continue
         store.ensure_case_node(
             case.id, case.case_number, case.jurisdiction_id, dataset_id
         )
@@ -275,6 +277,7 @@ async def project_dataset(
     # and case-scoped reads can find it. The dataset's container case ("ALL")
     # catches whatever no investigation claims.
     container_case = case_by_key.get("ALL")
+    default_case_id = container_case.id if container_case else (next(iter(case_by_key.values())).id if len(case_by_key) == 1 else None)
     case_links = await _case_links(
         session,
         dataset_id,
@@ -284,7 +287,7 @@ async def project_dataset(
             for entity in entity_rows
             if entity.entity_type != sm.CASE
         ],
-        default_case_id=container_case.id if container_case else None,
+        default_case_id=default_case_id,
     )
 
     fallback_doc_id = f"dataset:{dataset_id}"

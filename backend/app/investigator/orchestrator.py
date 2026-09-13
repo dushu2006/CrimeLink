@@ -953,6 +953,9 @@ async def investigate(
             entity.analytical_basis = basis
             entity.entity_type = node.label.upper() if node else entity.label.upper()
             entity.legal_status = (node.properties or {}).get("legal_status") or (node.properties or {}).get("criminal_status") if node else entity.criminal_status
+            crm_st = (node.properties or {}).get("criminal_status") if node else None
+            if crm_st:
+                entity.criminal_status = str(crm_st)
             entity.network_role = determine_network_role(
                 analytical_basis=basis, cross_case_count=len(set(case_ids_for_entity))
             )
@@ -1543,6 +1546,9 @@ async def investigate_deterministic(
             entity.analytical_basis = basis
             entity.entity_type = node.label.upper() if node else entity.label.upper()
             entity.legal_status = (node.properties or {}).get("legal_status") or (node.properties or {}).get("criminal_status") if node else entity.criminal_status
+            crm_st = (node.properties or {}).get("criminal_status") if node else None
+            if crm_st:
+                entity.criminal_status = str(crm_st)
             entity.network_role = determine_network_role(
                 analytical_basis=basis, cross_case_count=len(set(case_ids_for_entity))
             )

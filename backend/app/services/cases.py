@@ -82,6 +82,9 @@ async def list_cases(
         select(Case)
         .where(scope.case_filter())
         .where(await registry.visibility_filter(session, Case))
+        .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
+        .where(~Case.case_number.like("%(unassigned records)%"))
+        .where(~Case.case_number.like("%(all records)%"))
         .order_by(Case.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -108,6 +111,9 @@ async def visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> s
             select(Case.id)
             .where(scope.case_filter())
             .where(await registry.visibility_filter(session, Case))
+            .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
+            .where(~Case.case_number.like("%(unassigned records)%"))
+            .where(~Case.case_number.like("%(all records)%"))
         )
     ).scalars()
     return set(rows)
@@ -135,6 +141,9 @@ async def active_dataset_case_ids(session: AsyncSession, scope: JurisdictionScop
             select(Case.id)
             .where(scope.case_filter())
             .where(await registry.strict_active_filter(session, Case))
+            .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
+            .where(~Case.case_number.like("%(unassigned records)%"))
+            .where(~Case.case_number.like("%(all records)%"))
         )
     ).scalars()
     return set(rows)
@@ -152,6 +161,9 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
        cases; if two visible cases carry the same number (source data does
        this), the reference is ambiguous and refused rather than guessed.
     """
+    if ref.strip().upper() == "ALL":
+        raise NotFoundError("The container case 'ALL' is not an investigative case.")
+
     active = await registry.active_dataset_id(session)
     if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
         raise NotFoundError("This case belongs to a dataset that is no longer active.")
@@ -166,6 +178,7 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
                     select(Case)
                     .where(Case.case_number == ref)
                     .where(await registry.visibility_filter(session, Case))
+                    .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
                 )
             ).scalars()
         )
@@ -177,6 +190,8 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
         if not candidates:
             raise NotFoundError("Case not found.")
         case = candidates[0]
+    if case.dataset_case_key == "ALL":
+        raise NotFoundError("The container case 'ALL' is not an investigative case.")
     case = scope.assert_case(case)
     if not registry.belongs_to_active(case, active):
         raise NotFoundError(

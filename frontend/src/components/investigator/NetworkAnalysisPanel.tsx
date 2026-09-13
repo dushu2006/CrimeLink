@@ -38,6 +38,7 @@ import { EvidencePointerLink } from "../EvidenceLink";
 import { TechnicalDetails } from "../TechnicalDetails";
 import { NetworkGraph } from "../NetworkGraph";
 import { PatternList } from "./PatternCard";
+import { isConfirmedCriminal, getDisplayLabel } from "../../lib/displayLabels";
 import { HypothesisCard } from "./HypothesisCard";
 import {
   EvidenceList,
@@ -385,8 +386,8 @@ export default function NetworkAnalysisPanel() {
               {selectedNode && (
                 <>
                   <h3>
-                    {selectedNode.name}
-                    {selectedNode.is_criminal && <Badge value="confirmed criminal" />}
+                    {getDisplayLabel(selectedNode)}
+                    {isConfirmedCriminal(selectedNode) && <Badge value="confirmed criminal" />}
                     {selectedNode.provenance_key === graphTarget && (
                       <span className="badge">person target</span>
                     )}

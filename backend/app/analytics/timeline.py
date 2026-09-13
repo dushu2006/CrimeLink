@@ -52,12 +52,26 @@ def build_timeline(
         if node.label != "Event":
             continue
         docs = list(node.properties.get("source_doc_ids") or [])
+        ts = (
+            node.properties.get("timestamp")
+            or node.properties.get("collected_date")
+            or node.properties.get("observed_at")
+        )
+        name = (
+            node.name
+            or node.properties.get("title")
+            or node.properties.get("event_type")
+            or "Event"
+        )
+        desc = node.properties.get("description") or name
         events.append(
             {
                 "event_key": key,
                 "event_type": node.properties.get("event_type"),
-                "timestamp": node.properties.get("timestamp"),
-                "description": node.properties.get("description"),
+                "timestamp": ts,
+                "at": ts,
+                "name": name,
+                "description": desc,
                 "location": location_by_event.get(key) or node.properties.get("address"),
                 "participants": participants_by_event.get(key, []),
                 "source_doc_id": node.properties.get("source_doc_id") or (docs[0] if docs else None),

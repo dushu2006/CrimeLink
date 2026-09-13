@@ -4,6 +4,7 @@ import { api, askCaseStream, download, jobSocket, uploadDocument } from "../api/
 import { t } from "../i18n";
 import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
 import { TechnicalDetails } from "../components/TechnicalDetails";
+import { DocumentFileLink } from "../components/EvidenceLink";
 
 /** The stage messages the AI stream reports while an answer is produced. */
 const AI_PHASE_LABEL: Record<string, string> = {
@@ -507,9 +508,11 @@ export default function CaseDetail() {
                 return (
                   <tr key={doc.id}>
                     <td>
-                      <Link to={`/documents/${doc.id}`} style={{ fontWeight: 600, textDecoration: "underline" }}>
-                        {doc.filename}
-                      </Link>
+                      <DocumentFileLink
+                        docId={doc.id}
+                        originFile={doc.filename}
+                        label={doc.filename}
+                      />
                     </td>
                     <td>{doc.document_type}</td>
                     <td>{doc.language ?? "—"}</td>

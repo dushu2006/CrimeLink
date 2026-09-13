@@ -63,6 +63,7 @@ REL_LOCATED_AT = "LOCATED_AT"
 REL_ASSOCIATE_OF = "ASSOCIATE_OF"
 REL_INVESTIGATES = "INVESTIGATES"
 REL_RELATED_TO = "RELATED_TO"
+REL_HAS_FIR = "HAS_FIR"
 
 #: Columns that identify *which* person a row is about, in priority order.
 #: Consulted by the secondary extraction pass so a person referenced as
@@ -102,6 +103,7 @@ GRAPH_REL_TYPES: dict[str, str] = {
     REL_ASSOCIATE_OF: "ASSOCIATE_OF",
     REL_INVESTIGATES: "PARTICIPATED_IN",
     REL_RELATED_TO: "ASSOCIATE_OF",
+    REL_HAS_FIR: "HAS_FIR",
 }
 
 #: Free-text relationship words a dataset may use in an edge table.
@@ -161,20 +163,28 @@ class CanonicalEntity:
     provenance: dict[str, Any] = field(default_factory=dict)
 
     def merge(self, other: "CanonicalEntity") -> None:
-        if not self.name and other.name:
-            self.name = other.name
-        elif other.name and self.attributes.get("stub") and not other.attributes.get("stub"):
-            # A stub is a placeholder created from a bare cross-reference
-            # ("Z900"). The moment the real record turns up it wins: showing an
-            # investigator an identifier where a name exists is a bug.
-            self.name = other.name
-            self.normalized_value = other.normalized_value or self.normalized_value
-            self.attributes.pop("stub", None)
+        _, _, natural_key = self.canonical_id.partition(":")
+        is_placeholder = (
+            not self.name
+            or self.name.strip() == natural_key.strip()
+            or bool(self.attributes.get("stub"))
+        )
+        if other.name:
+            other_is_not_id = other.name.strip() != natural_key.strip()
+            if is_placeholder and (other_is_not_id or not self.name):
+                self.name = other.name
+                self.normalized_value = other.normalized_value or self.normalized_value
+                self.attributes.pop("stub", None)
+            elif not self.name:
+                self.name = other.name
         if not self.normalized_value and other.normalized_value:
             self.normalized_value = other.normalized_value
         for key, value in other.attributes.items():
             if value not in (None, "") and self.attributes.get(key) in (None, ""):
                 self.attributes[key] = value
+        # Explicit confirmed criminal status must never be lost during merge
+        if str(other.attributes.get("criminal_status", "")).strip().lower() in {"confirmed", "convicted", "accused", "chargesheeted", "criminal"}:
+            self.attributes["criminal_status"] = other.attributes["criminal_status"]
         if not self.provenance:
             self.provenance = other.provenance
 
@@ -334,6 +344,11 @@ class Normalizer:
         known = self._alias.get(f"{entity_type}|{ref}")
         if known:
             return known
+        # When resolving a CASE, also check if reference is an aliased FIR
+        if entity_type == sm.CASE:
+            fir_known = self._alias.get(f"FIR|{ref}")
+            if fir_known:
+                return fir_known
         canonical = cid(entity_type, ref)
         if canonical not in self.result.entities:
             self.result.add_entity(
@@ -369,15 +384,15 @@ class Normalizer:
 
         Returns the number of entities folded away.
         """
-        by_key: dict[str, list[CanonicalEntity]] = {}
+        by_key: dict[tuple[str, str], list[CanonicalEntity]] = {}
         for entity in self.result.entities.values():
             entity_type, _, key = entity.canonical_id.partition(":")
             if not key or key.startswith("~"):
                 continue
-            by_key.setdefault(key, []).append(entity)
+            by_key.setdefault((entity.entity_type, key), []).append(entity)
 
         remap: dict[str, str] = {}
-        for key, entities in by_key.items():
+        for (etype, key), entities in by_key.items():
             if len(entities) < 2:
                 continue
             named = [e for e in entities if (e.name or "").strip() and e.name.strip() != key]
@@ -388,6 +403,8 @@ class Normalizer:
             survivor = named[0]
             for placeholder in placeholders:
                 if placeholder.canonical_id == survivor.canonical_id:
+                    continue
+                if placeholder.entity_type != survivor.entity_type:
                     continue
                 survivor.merge(placeholder)
                 remap[placeholder.canonical_id] = survivor.canonical_id
@@ -502,6 +519,12 @@ class Normalizer:
             # An officer roster's names are officers; the OFFICER handler owns
             # them. Minting a parallel PERSON for each would double every
             # investigator in the graph.
+            return
+        if m.get("LOCATION.id") and not m.get("PERSON.id"):
+            return
+        if m.get("ORGANIZATION.id") and not m.get("PERSON.id"):
+            return
+        if m.get("EVENT.id") and not m.get("PERSON.id"):
             return
 
         # A row may identify its person by any of several reference columns.
@@ -642,6 +665,13 @@ class Normalizer:
         person_id = row.get(m.get("PERSON.id", ""), "")
         if not name and not person_id:
             return False
+        raw_crm_status = row.get(m.get("PERSON.criminal_status", ""), "")
+        if not raw_crm_status and str(row.get(m.get("PERSON.status", ""), "")).lower() in {"confirmed", "convicted", "accused", "chargesheeted"}:
+            raw_crm_status = str(row.get(m.get("PERSON.status", ""), "")).strip()
+        if not raw_crm_status and row.get("status") and (row.get("criminal_record_id") or m.get("CRIMINAL_RECORD.id")):
+            if str(row.get("status", "")).strip().lower() in {"confirmed", "convicted", "accused", "chargesheeted"}:
+                raw_crm_status = str(row.get("status", "")).strip()
+
         attributes = {
             "date_of_birth": sm.normalize_date(row.get(m.get("PERSON.dob", ""), "")) or row.get(m.get("PERSON.dob", ""), ""),
             "gender": row.get(m.get("PERSON.gender", ""), ""),
@@ -653,7 +683,7 @@ class Normalizer:
             "pan": row.get(m.get("PERSON.pan", ""), ""),
             # Stated criminal status travels with the record so downstream
             # surfaces can echo it; nothing here infers it.
-            "criminal_status": row.get(m.get("PERSON.criminal_status", ""), ""),
+            "criminal_status": raw_crm_status,
         }
         pid = self._register(
             sm.PERSON, person_id, name=sm.normalize_name(name),
@@ -672,17 +702,23 @@ class Normalizer:
         return bool(pid)
 
     def _name_variants(self, row: dict, m: dict, prov: dict) -> bool:
-        person = self._resolve(sm.PERSON, row.get(m.get("PERSON.id", ""), ""))
-        alias = row.get(m.get("PERSON.alias", ""), "")
+        person = self._resolve(sm.PERSON, row.get(m.get("PERSON.id", ""), "") or row.get("person_id", ""))
+        alias = row.get(m.get("PERSON.alias", ""), "") or row.get("alias", "")
+        canonical_name = row.get(m.get("PERSON.name", ""), "") or row.get("canonical_name", "")
         if not person or not alias:
             return False
         entity = self.result.entities.get(person)
         if entity is not None:
+            _, _, natural_key = entity.canonical_id.partition(":")
+            if canonical_name and (not entity.name or entity.name.strip() == natural_key.strip()):
+                entity.name = canonical_name.strip()
+                entity.normalized_value = sm.normalize_name(canonical_name) or canonical_name
+                entity.attributes.pop("stub", None)
             aliases = list(entity.attributes.get("aliases") or [])
             if alias not in aliases:
                 aliases.append(alias)
             entity.attributes["aliases"] = aliases
-            entity.attributes.setdefault("alias_source", row.get(m.get("COMMON.source", ""), ""))
+            entity.attributes.setdefault("alias_source", row.get(m.get("COMMON.source", ""), "") or row.get("source_type", ""))
         return True
 
     def _phones(self, row: dict, m: dict, prov: dict) -> bool:
@@ -889,8 +925,8 @@ class Normalizer:
         )
 
     def _locations(self, row: dict, m: dict, prov: dict) -> bool:
-        name = row.get(m.get("LOCATION.name", ""), "")
-        location_id = row.get(m.get("LOCATION.id", ""), "")
+        name = row.get(m.get("LOCATION.name", ""), "") or row.get(m.get("PERSON.name", ""), "") or row.get("name", "") or row.get("location_name", "")
+        location_id = row.get(m.get("LOCATION.id", ""), "") or row.get("location_id", "")
         if not name and not location_id:
             return False
         return bool(
@@ -909,8 +945,8 @@ class Normalizer:
         )
 
     def _organizations(self, row: dict, m: dict, prov: dict) -> bool:
-        name = row.get(m.get("ORGANIZATION.name", ""), "")
-        org_id = row.get(m.get("ORGANIZATION.id", ""), "")
+        name = row.get(m.get("ORGANIZATION.name", ""), "") or row.get(m.get("PERSON.name", ""), "") or row.get("name", "") or row.get("org_name", "") or row.get("company_name", "")
+        org_id = row.get(m.get("ORGANIZATION.id", ""), "") or row.get("organization_id", "") or row.get("org_id", "")
         if not name and not org_id:
             return False
         return bool(
@@ -947,6 +983,18 @@ class Normalizer:
         case_number = row.get(m.get("CASE.number", ""), "") or case_id
         if not case_id and not case_number:
             return False
+        # If this row names an FIR, alias it to the canonical case
+        fir_no = row.get(m.get("FIR.number", ""), "") or row.get("fir_no", "")
+        fir_id = row.get(m.get("FIR.id", ""), "") or row.get("fir_id", "")
+        if case_id:
+            case_cid = cid(sm.CASE, case_id)
+            if fir_id:
+                self._alias[f"FIR|{fir_id}"] = case_cid
+                self._alias[f"CASE|{fir_id}"] = case_cid
+            if fir_no:
+                self._alias[f"FIR|{fir_no}"] = case_cid
+                self._alias[f"CASE|{fir_no}"] = case_cid
+
         case_type = row.get(m.get("CASE.type", ""), "")
         unit = row.get(m.get("CASE.unit", ""), "")
         title = row.get(m.get("CASE.title", ""), "") or " — ".join(
@@ -967,14 +1015,57 @@ class Normalizer:
             )
         )
 
+    def _fir(self, row: dict, m: dict, prov: dict) -> bool:
+        fir_id = str(row.get(m.get("FIR.id", ""), "") or row.get("fir_id", "")).strip()
+        fir_no = str(row.get(m.get("FIR.number", ""), "") or row.get("fir_no", "")).strip() or fir_id
+        case_id = str(row.get(m.get("CASE.id", ""), "") or row.get("case_id", "")).strip()
+        if not fir_id and not fir_no:
+            return False
+        if not fir_id:
+            fir_id = fir_no
+
+        if case_id:
+            case_cid = self._resolve(sm.CASE, case_id)
+            self._alias[f"FIR|{fir_id}"] = case_cid
+            self._alias[f"CASE|{fir_id}"] = case_cid
+            if fir_no:
+                self._alias[f"FIR|{fir_no}"] = case_cid
+                self._alias[f"CASE|{fir_no}"] = case_cid
+
+            fid = self._register(
+                sm.FIR, fir_id, name=fir_no, normalized_value=fir_no.upper(),
+                attributes={
+                    "fir_number": fir_no,
+                    "case_id": case_id,
+                    "registration_date": sm.normalize_date(row.get(m.get("FIR.date", ""), "")) or row.get(m.get("FIR.date", ""), ""),
+                    "police_station": row.get(m.get("CASE.unit", ""), ""),
+                    "status": row.get(m.get("PERSON.status", ""), "") or row.get(m.get("CASE.status", ""), ""),
+                },
+                provenance=prov,
+            )
+            self._relate(case_cid, fid, REL_HAS_FIR, provenance=prov, case_ids=[case_cid])
+        else:
+            fid = self._register(
+                sm.FIR, fir_id, name=fir_no, normalized_value=fir_no.upper(),
+                provenance=prov,
+            )
+
+        complainant = self._resolve(sm.PERSON, row.get(m.get("PERSON.id", ""), ""))
+        if complainant and case_id:
+            case_cid = self._resolve(sm.CASE, case_id)
+            self._relate(complainant, case_cid, REL_INVOLVED_IN, attributes={"role": "Complainant"}, provenance=prov, case_ids=[case_cid])
+        return bool(fid)
+
     def _case_entities(self, row: dict, m: dict, prov: dict) -> bool:
-        case = self._resolve(sm.CASE, row.get(m.get("CASE.id", ""), "") or row.get(m.get("CASE.number", ""), ""))
+        raw_case = row.get(m.get("CASE.id", ""), "") or row.get(m.get("CASE.number", ""), "") or row.get("case_id", "")
+        case = self._resolve(sm.CASE, raw_case)
         person = self._resolve(sm.PERSON, row.get(m.get("PERSON.id", ""), ""))
         if not case or not person:
             return False
+        role = row.get(m.get("COMMON.role", ""), "") or row.get("case_role", "")
         self._relate(
             person, case, REL_INVOLVED_IN,
-            attributes={"role": row.get(m.get("COMMON.role", ""), "")},
+            attributes={"role": role},
             provenance=prov, case_ids=[case],
         )
         return True
@@ -1101,21 +1192,80 @@ class Normalizer:
             )
         )
 
+    def _events(self, row: dict, m: dict, prov: dict) -> bool:
+        event_id = str(row.get(m.get("EVENT.id", ""), "") or row.get("event_id", "")).strip()
+        event_type = str(row.get(m.get("EVENT.type", ""), "") or row.get("event_type", "")).strip()
+        event_time = str(row.get(m.get("EVENT.time", ""), "") or row.get("event_time", "")).strip()
+        summary = str(row.get(m.get("EVENT.summary", ""), "") or row.get("summary", "")).strip()
+        case_id = str(row.get(m.get("CASE.id", ""), "") or row.get("case_id", "")).strip()
+        location_id = str(row.get(m.get("LOCATION.id", ""), "") or row.get("location_id", "")).strip()
+
+        if not event_id and not summary:
+            return False
+        if not event_id:
+            event_id = f"EVT_{abs(hash(summary + event_time))}"
+
+        eid = self._register(
+            sm.EVENT, event_id, name=summary or event_id,
+            normalized_value=(summary or event_id).upper(),
+            attributes={
+                "event_type": event_type,
+                "timestamp": sm.normalize_date(event_time) or event_time,
+                "description": summary,
+                "location_id": location_id,
+            },
+            provenance=prov,
+        )
+        if case_id:
+            case_cid = self._resolve(sm.CASE, case_id)
+            self._relate(case_cid, eid, REL_HAS_EVIDENCE, provenance=prov, case_ids=[case_cid])
+        if location_id:
+            loc_cid = self._resolve(sm.LOCATION, location_id)
+            self._relate(eid, loc_cid, REL_LOCATED_AT, provenance=prov)
+        return bool(eid)
+
     def _relationship_edges(self, row: dict, m: dict, prov: dict) -> bool:
-        source_ref = row.get(m.get("COMMON.source_ref", ""), "")
-        target_ref = row.get(m.get("COMMON.target_ref", ""), "")
-        raw_rel = row.get(m.get("COMMON.relationship", ""), "")
+        source_ref = str(row.get(m.get("COMMON.source_ref", ""), "") or row.get("from_id", "")).strip()
+        target_ref = str(row.get(m.get("COMMON.target_ref", ""), "") or row.get("to_id", "")).strip()
+        raw_rel = str(row.get(m.get("COMMON.relationship", ""), "") or row.get("relationship_type", "")).strip()
         if not source_ref or not target_ref:
             return False
         rel_type = _REL_WORD_MAP.get(sm.norm(raw_rel), REL_RELATED_TO)
-        source = self._resolve(_infer_type(source_ref), source_ref)
-        target = self._resolve(_infer_type(target_ref), target_ref)
+
+        # Determine source entity type using structured from_type or alias lookup
+        raw_source_type = row.get(m.get("COMMON.source_type", ""), "") or row.get("from_type", "")
+        source_type = _clean_entity_type(raw_source_type)
+        if not source_type:
+            for etype in sm.ENTITY_TYPES:
+                if f"{etype}|{source_ref}" in self._alias:
+                    source_type = etype
+                    break
+        if not source_type:
+            source_type = _infer_type(source_ref)
+
+        # Determine target entity type using structured to_type or alias lookup
+        raw_target_type = row.get(m.get("COMMON.target_type", ""), "") or row.get("to_type", "")
+        target_type = _clean_entity_type(raw_target_type)
+        if not target_type:
+            for etype in sm.ENTITY_TYPES:
+                if f"{etype}|{target_ref}" in self._alias:
+                    target_type = etype
+                    break
+        if not target_type:
+            target_type = _infer_type(target_ref)
+
+        case_id = str(row.get(m.get("CASE.id", ""), "") or row.get("case_id", "")).strip()
+        case_ids = [self._resolve(sm.CASE, case_id)] if case_id else []
+
+        source = self._resolve(source_type, source_ref)
+        target = self._resolve(target_type, target_ref)
         self._relate(
             source, target, rel_type,
             valid_from=sm.normalize_date(row.get(m.get("COMMON.valid_from", ""), "")),
             valid_to=sm.normalize_date(row.get(m.get("COMMON.valid_to", ""), "")),
             attributes={"declared_relationship": raw_rel},
             provenance=prov,
+            case_ids=case_ids,
         )
         return True
 
@@ -1137,25 +1287,78 @@ class Normalizer:
         return emitted
 
 
+def _clean_entity_type(raw_type: Any) -> str | None:
+    if not raw_type:
+        return None
+    cleaned = str(raw_type).strip().upper()
+    mapping = {
+        "PERSON": sm.PERSON,
+        "INDIVIDUAL": sm.PERSON,
+        "PHONE": sm.PHONE,
+        "TELEPHONE": sm.PHONE,
+        "MOBILE": sm.PHONE,
+        "VEHICLE": sm.VEHICLE,
+        "ACCOUNT": sm.ACCOUNT,
+        "BANK_ACCOUNT": sm.ACCOUNT,
+        "LOCATION": sm.LOCATION,
+        "ADDRESS": sm.ADDRESS,
+        "ORGANIZATION": sm.ORGANIZATION,
+        "COMPANY": sm.ORGANIZATION,
+        "CASE": sm.CASE,
+        "FIR": sm.FIR,
+        "EVIDENCE": sm.EVIDENCE,
+        "DEVICE": sm.DEVICE,
+        "EMAIL": sm.EMAIL,
+        "PROPERTY": sm.PROPERTY,
+        "OFFICER": sm.OFFICER,
+        "EVENT": sm.EVENT,
+    }
+    return mapping.get(cleaned)
+
+
 def _infer_type(reference: str) -> str:
-    """Guess the entity type of a bare natural id like ``PHONE_00232``."""
-    prefix = str(reference).split("_", 1)[0].upper()
+    """Guess the entity type of a bare natural id like ``PHONE_00232`` or ``P001``."""
+    ref = str(reference).strip()
+    prefix_underscore = ref.split("_", 1)[0].upper()
     table = {
-        "PERSON": sm.PERSON, "PER": sm.PERSON, "P": sm.PERSON,
+        "PERSON": sm.PERSON, "PER": sm.PERSON,
         "PHONE": sm.PHONE, "PH": sm.PHONE,
         "VEH": sm.VEHICLE, "VEHICLE": sm.VEHICLE,
-        "ACCT": sm.ACCOUNT, "ACC": sm.ACCOUNT, "ACCOUNT": sm.ACCOUNT,
+        "ACCT": sm.ACCOUNT, "ACC": sm.ACCOUNT, "ACCOUNT": sm.ACCOUNT, "BA": sm.ACCOUNT,
         "ADDR": sm.ADDRESS, "ADDRESS": sm.ADDRESS,
-        "LOC": sm.LOCATION, "LOCATION": sm.LOCATION,
-        "ORG": sm.ORGANIZATION, "ORGANIZATION": sm.ORGANIZATION,
-        "CASE": sm.CASE,
+        "LOC": sm.LOCATION, "LOCATION": sm.LOCATION, "L": sm.LOCATION,
+        "ORG": sm.ORGANIZATION, "ORGANIZATION": sm.ORGANIZATION, "O": sm.ORGANIZATION,
+        "CASE": sm.CASE, "C": sm.CASE,
+        "FIR": sm.FIR,
         "EVID": sm.EVIDENCE, "EVIDENCE": sm.EVIDENCE,
+        "EVT": sm.EVENT, "EVENT": sm.EVENT,
         "DEV": sm.DEVICE, "DEVICE": sm.DEVICE,
         "EMAIL": sm.EMAIL,
         "PROP": sm.PROPERTY, "PROPERTY": sm.PROPERTY,
         "OFF": sm.OFFICER, "OFFICER": sm.OFFICER,
     }
-    return table.get(prefix, sm.PERSON)
+    if prefix_underscore in table:
+        return table[prefix_underscore]
+
+    # Try alphanumeric pattern without underscore (P001, PH001, VH001, BA001, L001, O001, C101)
+    m = re.match(r"^([A-Z]{1,4})\d+$", ref.upper())
+    if m:
+        pfx = m.group(1)
+        alphanumeric_table = {
+            "P": sm.PERSON,
+            "PH": sm.PHONE,
+            "VH": sm.VEHICLE,
+            "BA": sm.ACCOUNT,
+            "L": sm.LOCATION,
+            "O": sm.ORGANIZATION,
+            "C": sm.CASE,
+            "EVT": sm.EVENT,
+            "FIR": sm.FIR,
+        }
+        if pfx in alphanumeric_table:
+            return alphanumeric_table[pfx]
+
+    return sm.PERSON
 
 
 _HANDLERS = {
@@ -1173,8 +1376,10 @@ _HANDLERS = {
     "ORGANIZATION_TABLE": Normalizer._organizations,
     "EMPLOYMENT": Normalizer._employment,
     "CASE_TABLE": Normalizer._cases,
+    "FIR_TABLE": Normalizer._fir,
     "CASE_ENTITIES": Normalizer._case_entities,
     "EVIDENCE_REGISTER": Normalizer._evidence,
+    "EVENT_TABLE": Normalizer._events,
     "PROPERTY_TABLE": Normalizer._properties,
     "VEHICLE_SIGHTINGS": Normalizer._sightings,
     "TRAVEL": Normalizer._travel,

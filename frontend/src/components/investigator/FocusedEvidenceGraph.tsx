@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
 import type { FocusedGraph } from "../../api/client";
+import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../../lib/displayLabels";
 
 cytoscape.use(fcose);
 
@@ -66,11 +67,11 @@ export function FocusedEvidenceGraph({
     const known = new Set(nodes.map((node) => node.key));
     const definitions: ElementDefinition[] = nodes.map((node) => {
       const anyNode = node as any;
-      const isCriminal = !!(anyNode.is_criminal || anyNode.criminal_status);
+      const isCriminal = isConfirmedCriminal(node);
       return {
         data: {
           id: node.key,
-          label: node.name || node.key,
+          label: getDisplayLabel(node),
           kind: String(node.label).toUpperCase(),
           focus: node.focus ? 1 : 0,
           is_criminal: isCriminal,
@@ -105,7 +106,7 @@ export function FocusedEvidenceGraph({
         {
           selector: "node",
           style: {
-            shape: (ele: cytoscape.NodeSingular) => (ele.data("is_criminal") ? "star" : "ellipse"),
+            shape: (ele: cytoscape.NodeSingular) => nodeShapeRule(Boolean(ele.data("is_criminal"))),
             "background-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_criminal") ? "#DC2626" : colorFor(String(ele.data("kind"))),
             label: "data(label)",
@@ -117,12 +118,6 @@ export function FocusedEvidenceGraph({
             height: (ele: cytoscape.NodeSingular) => (ele.data("focus") ? 26 : 18),
             "border-width": (ele: cytoscape.NodeSingular) => (ele.data("focus") ? 3 : ele.data("is_criminal") ? 3 : 1),
             "border-color": (ele: cytoscape.NodeSingular) => (ele.data("is_criminal") ? "#991B1B" : "#0F172A"),
-          },
-        },
-        {
-          selector: "node[is_criminal]",
-          style: {
-            shape: "star",
           },
         },
         {

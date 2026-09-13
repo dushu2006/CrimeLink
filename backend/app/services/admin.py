@@ -293,13 +293,14 @@ async def counts(session: AsyncSession) -> dict[str, int]:
     from app.datasets import registry
 
     case_visible = await registry.visibility_filter(session, Case)
+    case_filter = case_visible & (Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
     doc_visible = await registry.visibility_filter(session, CaseDocument)
-    active_case_ids = select(Case.id).where(case_visible)
+    active_case_ids = select(Case.id).where(case_filter)
 
     return {
         "users": int((await session.execute(select(func.count(User.id)))).scalar() or 0),
         "cases": int(
-            (await session.execute(select(func.count(Case.id)).where(case_visible))).scalar()
+            (await session.execute(select(func.count(Case.id)).where(case_filter))).scalar()
             or 0
         ),
         "documents": int(

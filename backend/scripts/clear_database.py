@@ -17,6 +17,7 @@ TABLES_TO_CLEAR = [
     "dataset_entities",
     "dataset_files",
     "datasets",
+    "investigation_jobs",
     "investigation_findings",
     "investigation_stage_runs",
     "detected_patterns",
@@ -42,6 +43,16 @@ def clear_database() -> None:
         print(f"Database {DB_PATH} does not exist!")
         return
 
+    # Backup files first
+    backup_db = DB_PATH.with_name("crimelink.db.pre_clear_backup")
+    shutil.copy2(DB_PATH, backup_db)
+    print(f"Backed up {DB_PATH} -> {backup_db}")
+
+    if GRAPH_PATH.exists():
+        backup_graph = GRAPH_PATH.with_name("graph.json.pre_clear_backup")
+        shutil.copy2(GRAPH_PATH, backup_graph)
+        print(f"Backed up {GRAPH_PATH} -> {backup_graph}")
+
     print(f"Connecting to {DB_PATH}...")
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
@@ -58,11 +69,15 @@ def clear_database() -> None:
     # Disable foreign keys during cleanup
     cursor.execute("PRAGMA foreign_keys = OFF;")
 
-    for table in TABLES_TO_CLEAR:
-        cursor.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'")
-        if cursor.fetchone()[0] > 0:
-            cursor.execute(f'DELETE FROM "{table}"')
-            print(f"Cleared table: {table}")
+    # Find all tables in the database
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+    all_tables = [r[0] for r in cursor.fetchall()]
+
+    for table in all_tables:
+        if table == "users":
+            continue
+        cursor.execute(f'DELETE FROM "{table}"')
+        print(f"Cleared table: {table}")
 
     conn.commit()
     cursor.execute("PRAGMA foreign_keys = ON;")
@@ -71,8 +86,8 @@ def clear_database() -> None:
 
     print("\n--- Verification of tables ---")
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
-    all_tables = [r[0] for r in cursor.fetchall()]
-    for t in all_tables:
+    verified_tables = [r[0] for r in cursor.fetchall()]
+    for t in verified_tables:
         cursor.execute(f'SELECT count(*) FROM "{t}"')
         count = cursor.fetchone()[0]
         status = "KEPT (User Data)" if t == "users" else ("EMPTY" if count == 0 else f"NON-EMPTY ({count})")

@@ -1949,6 +1949,86 @@ export function masterGraph(
   return api(`/graph/master${qs ? `?${qs}` : ""}`);
 }
 
+/** Shared entity connecting cases in the Master Case Network. */
+export interface MasterCaseSharedEntity {
+  provenance_key: string;
+  name: string;
+  label: string;
+  is_criminal: boolean;
+  criminal_status: string | null;
+  source_doc_ids: string[];
+  evidence?: NodeEvidence | null;
+}
+
+/** Openable evidence pointer supporting a case connection. */
+export interface MasterCaseSupportingEvidence {
+  source_doc_id?: string | null;
+  category: string;
+  pointer?: NodeEvidence | null;
+  label: string;
+}
+
+/** A CASE node in the Master Case Network (always a circle). */
+export interface MasterCaseNode {
+  id: string;
+  provenance_key: string;
+  case_number: string;
+  title: string;
+  status: string;
+  jurisdiction_id: string;
+  label: "CASE";
+  is_criminal: false;
+  document_count: number;
+  entity_count: number;
+  related_cases_count: number;
+  connected_cases: string[];
+  shared_entities: MasterCaseSharedEntity[];
+}
+
+/** An evidence-backed connection between two cases. */
+export interface MasterCaseEdge {
+  id: string;
+  source: string;
+  target: string;
+  source_case_number: string;
+  target_case_number: string;
+  strength: "STRONG" | "MODERATE" | "WEAK";
+  shared_entities: MasterCaseSharedEntity[];
+  shared_entity_count: number;
+  relationship_count: number;
+  evidence_count: number;
+  source_categories: string[];
+  temporal_overlap: string;
+  why: string;
+  analytical_basis: string[];
+  supporting_evidence: MasterCaseSupportingEvidence[];
+  contradictory_evidence: string;
+  data_gaps: string[];
+  next_direction: string;
+}
+
+/** Complete response from GET /graph/master/case-network. */
+export interface MasterCaseNetworkResult {
+  mode: "master_case";
+  dataset_id: string | null;
+  counts: {
+    cases: number;
+    connections: number;
+  };
+  nodes: MasterCaseNode[];
+  edges: MasterCaseEdge[];
+  empty_reason?: string;
+}
+
+export function masterCaseNetwork(
+  opts: { includeStaging?: boolean } = {},
+): Promise<MasterCaseNetworkResult> {
+  const params = new URLSearchParams();
+  if (opts.includeStaging) params.set("include_staging", "true");
+  const qs = params.toString();
+  return api(`/graph/master/case-network${qs ? `?${qs}` : ""}`);
+}
+
 /** One selectable person target in the active dataset (cross-case). */
 export interface MasterPersonTarget extends PersonTarget {
   case_ids: string[];

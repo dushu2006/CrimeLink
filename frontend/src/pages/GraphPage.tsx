@@ -38,6 +38,7 @@ import {
   relLabel,
   typeSpecificRows,
 } from "../lib/investigation";
+import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../lib/displayLabels";
 import { Empty, ErrorState, Spinner } from "../components/Status";
 import { EvidencePointerLink } from "../components/EvidenceLink";
 import { TechnicalDetails } from "../components/TechnicalDetails";
@@ -282,11 +283,11 @@ export default function GraphPage() {
     const nodes: ElementDefinition[] = visible.nodes.map((node) => ({
       data: {
         id: node.provenance_key,
-        name: node.name,
+        name: getDisplayLabel(node),
         label: node.label,
         confidence: node.confidence,
         is_target: node.provenance_key === visible.targetKey,
-        is_criminal: (node as any).is_criminal || !!(node as any).criminal_status,
+        is_criminal: isConfirmedCriminal(node),
         criminal_status: (node as any).criminal_status || null,
       },
     }));
@@ -328,7 +329,7 @@ export default function GraphPage() {
           selector: "node",
           style: {
             shape: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_criminal") ? "star" : "ellipse",
+              nodeShapeRule(Boolean(ele.data("is_criminal"))),
             "background-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_criminal")
                 ? "#DC2626"
@@ -362,12 +363,6 @@ export default function GraphPage() {
             "border-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? "#B45309" : ele.data("is_criminal") ? "#991B1B" : "#E2E8F0",
             "overlay-padding": 4,
-          },
-        },
-        {
-          selector: "node[is_criminal]",
-          style: {
-            shape: "star",
           },
         },
         {

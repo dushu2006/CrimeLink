@@ -17,6 +17,7 @@ import fcose from "cytoscape-fcose";
 import type { GraphEdgeRow, GraphNodeRow } from "../api/client";
 import { Empty, ErrorState, Spinner } from "./Status";
 import { relLabel } from "../lib/investigation";
+import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../lib/displayLabels";
 
 cytoscape.use(fcose);
 
@@ -40,31 +41,19 @@ const CRIMINAL_FILL = "#DC2626";
 const CRIMINAL_BORDER = "#F59E0B";
 
 /**
- * One shape per canonical entity type so the canvas never renders a bank
- * account, a phone or a city as a person.  The criminal star is reserved for
- * source-derived criminal/legal status — a shape is never a centrality proxy.
+ * Node shape rule:
+ *   ★ STAR  = source-derived confirmed criminal ONLY
+ *   ○ CIRCLE (ellipse) = every other entity, regardless of type
+ *
+ * Entity type is distinguished through colour, label text, tooltips and the
+ * selected-node details panel — never through shape.
  */
-const LABEL_SHAPE: Record<string, string> = {
-  PERSON: "ellipse",
-  PHONE: "rectangle",
-  BANK_ACCOUNT: "diamond",
-  VEHICLE: "hexagon",
-  LOCATION: "round-octagon",
-  ORGANIZATION: "round-rectangle",
-  CASE: "tag",
-  FIR: "round-tag",
-  DOCUMENT: "round-diamond",
-  EVENT: "round-triangle",
-  TRANSACTION: "round-hexagon",
-  SOCIAL_ACCOUNT: "round-rectangle",
-};
+function nodeShape(isCriminal: boolean): string {
+  return isCriminal ? "star" : "ellipse";
+}
 
 function colorFor(label: string): string {
   return LABEL_COLOR[String(label).toUpperCase()] ?? "#1D4ED8";
-}
-
-function shapeFor(label: string): string {
-  return LABEL_SHAPE[String(label).toUpperCase()] ?? "ellipse";
 }
 
 export interface NetworkGraphProps {
@@ -79,6 +68,20 @@ export interface NetworkGraphProps {
   emptyMessage?: string;
   /** Optional focus key (e.g. the person target). */
   targetKey?: string | null;
+  /**
+   * When true, synthesise CASE nodes from entity `case_ids` so the
+   * cross-case structure becomes visible:  CASE ↔ entity ↔ CASE.
+   */
+  showCaseNodes?: boolean;
+  /** Optional callback when a case-connection edge is selected. */
+  onSelectCaseConnection?: (info: CaseConnectionInfo | null) => void;
+}
+
+/** Information about a case-to-case connection via shared entities. */
+export interface CaseConnectionInfo {
+  caseA: string;
+  caseB: string;
+  sharedEntities: { key: string; name: string; label: string }[];
 }
 
 export function NetworkGraph({
@@ -92,6 +95,8 @@ export function NetworkGraph({
   height = 520,
   emptyMessage = "No nodes to draw — the graph for this scope is empty.",
   targetKey = null,
+  showCaseNodes = false,
+  onSelectCaseConnection,
 }: NetworkGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
@@ -130,12 +135,13 @@ export function NetworkGraph({
     const definitions: ElementDefinition[] = visibleNodes.map((node) => ({
       data: {
         id: node.provenance_key,
-        name: node.name,
+        name: getDisplayLabel(node),
         label: String(node.label).toUpperCase(),
         confidence: node.confidence,
         is_target: node.provenance_key === targetKey,
-        is_criminal: !!(node as any).is_criminal || !!(node as any).criminal_status,
+        is_criminal: isConfirmedCriminal(node),
         criminal_status: (node as any).criminal_status || null,
+        is_case_node: false,
       },
     }));
     const nameOf = (key: string) =>
@@ -153,8 +159,50 @@ export function NetworkGraph({
         },
       });
     });
+
+    // Synthesise CASE nodes and CASE↔entity edges from case_ids metadata.
+    if (showCaseNodes) {
+      const existingIds = new Set(definitions.filter((d) => !d.data.source).map((d) => d.data.id));
+      const caseNodeIds = new Set<string>();
+      for (const node of visibleNodes) {
+        const caseIds: string[] = (node as any).case_ids ?? [];
+        for (const caseId of caseIds) {
+          const caseNodeId = `__case__${caseId}`;
+          if (!caseNodeIds.has(caseNodeId) && !existingIds.has(caseNodeId)) {
+            caseNodeIds.add(caseNodeId);
+            definitions.push({
+              data: {
+                id: caseNodeId,
+                name: caseId,
+                label: "CASE",
+                confidence: 1.0,
+                is_target: false,
+                is_criminal: false,
+                criminal_status: null,
+                is_case_node: true,
+              },
+            });
+          }
+          // Add edge from entity to case
+          const edgeId = `${node.provenance_key}--belongs_to--${caseNodeId}`;
+          definitions.push({
+            data: {
+              id: edgeId,
+              source: node.provenance_key,
+              target: caseNodeId,
+              rel: "belongs to case",
+              raw_rel: "BELONGS_TO_CASE",
+              confidence: 1.0,
+              title: `${node.name} belongs to ${caseId}`,
+              is_case_edge: true,
+            },
+          });
+        }
+      }
+    }
+
     return definitions;
-  }, [visibleNodes, visibleEdges, targetKey]);
+  }, [visibleNodes, visibleEdges, targetKey, showCaseNodes]);
 
   useEffect(() => {
     if (!containerRef.current || elements.length === 0) {
@@ -179,36 +227,50 @@ export function NetworkGraph({
           selector: "node",
           style: {
             shape: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_criminal") ? "star" : shapeFor(String(ele.data("label"))),
+              nodeShapeRule(!!ele.data("is_criminal")),
             "background-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_criminal")
                 ? CRIMINAL_FILL
                 : colorFor(String(ele.data("label"))),
             label: (ele: cytoscape.NodeSingular) => {
               const name = String(ele.data("name") ?? "");
-              return name.length > 22 ? `${name.slice(0, 21)}…` : name;
+              const label = ele.data("is_case_node")
+                ? `${name}\n[CASE]`
+                : name.length > 22
+                  ? `${name.slice(0, 21)}…`
+                  : name;
+              return label;
             },
             color: "#0F172A",
             "font-size": 11,
             "font-weight": (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 700 : 500,
+              ele.data("is_target") || ele.data("is_case_node") ? 700 : 500,
             "text-valign": "bottom",
             "text-margin-y": 5,
             "text-outline-width": 2,
             "text-outline-color": "#FFFFFF",
+            "text-wrap": "wrap" as any,
             width: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 58 : ele.data("is_criminal") ? 30 : 22,
+              ele.data("is_target") ? 58
+              : ele.data("is_case_node") ? 36
+              : ele.data("is_criminal") ? 30 : 22,
             height: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 58 : ele.data("is_criminal") ? 30 : 22,
+              ele.data("is_target") ? 58
+              : ele.data("is_case_node") ? 36
+              : ele.data("is_criminal") ? 30 : 22,
             "border-width": (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 4 : ele.data("is_criminal") ? 3 : 1,
+              ele.data("is_target") ? 4
+              : ele.data("is_case_node") ? 3
+              : ele.data("is_criminal") ? 3 : 1,
             "border-style": "solid",
             "border-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_criminal")
                 ? CRIMINAL_BORDER
-                : ele.data("is_target")
-                  ? "#B45309"
-                  : "#E2E8F0",
+                : ele.data("is_case_node")
+                  ? "#1E293B"
+                  : ele.data("is_target")
+                    ? "#B45309"
+                    : "#E2E8F0",
             "overlay-padding": 4,
           },
         },
@@ -383,13 +445,14 @@ export function NetworkGraph({
 
       {legendOpen && (
         <div className="inv-graph-legend">
-          {labelOptions.map((label) => (
-            <span key={label} className="legend-item" title={`${shapeFor(label)} node shape`}>
-              <span className="dot" style={{ background: colorFor(label) }} />
-              {label.replaceAll("_", " ").toLowerCase()}
-            </span>
-          ))}
-          <span className="legend-item">
+          <span className="legend-item" title="All entities and cases are circles">
+            <span
+              className="dot"
+              style={{ background: "#94A3B8", borderRadius: "50%" }}
+            />
+            entity / case (circle)
+          </span>
+          <span className="legend-item" title="Source-derived confirmed criminal">
             <span
               className="dot"
               style={{
@@ -401,6 +464,13 @@ export function NetworkGraph({
             />
             confirmed criminal (source-derived, star shape)
           </span>
+          <span className="legend-item-divider" style={{ borderTop: "1px solid #E2E8F0", width: "100%", margin: "4px 0" }} />
+          {labelOptions.map((label) => (
+            <span key={label} className="legend-item" title={`${label} (circle)`}>
+              <span className="dot" style={{ background: colorFor(label), borderRadius: "50%" }} />
+              {label.replaceAll("_", " ").toLowerCase()}
+            </span>
+          ))}
         </div>
       )}
     </div>

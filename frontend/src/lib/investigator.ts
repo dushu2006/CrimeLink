@@ -841,3 +841,35 @@ export function selectionEntityKeys(
 export function relationshipIsDirect(kind: string | null | undefined): boolean {
   return String(kind ?? "") === "direct";
 }
+
+/**
+ * Universal node shape rule:
+ *   ★ STAR  = source-derived confirmed criminal ONLY
+ *   ○ CIRCLE (ellipse) = every other entity (cases, non-criminal persons, phones, accounts, etc.)
+ */
+export function nodeShapeRule(isCriminal: boolean): "star" | "ellipse" {
+  return isCriminal ? "star" : "ellipse";
+}
+
+/** Case nodes are always circles, never stars or special shapes. */
+export function isCaseNodeCircle(label: string): boolean {
+  if (label.toUpperCase() === "CASE") return true;
+  return true;
+}
+
+/** Format connection strength badge metadata. */
+export function connectionStrengthBadge(strength: "STRONG" | "MODERATE" | "WEAK" | string): {
+  label: string;
+  tone: Tone;
+} {
+  switch (strength) {
+    case "STRONG":
+      return { label: "Strong connection", tone: "ok" };
+    case "MODERATE":
+      return { label: "Moderate connection", tone: "navy" };
+    case "WEAK":
+    default:
+      return { label: "Weak connection", tone: "muted" };
+  }
+}
+

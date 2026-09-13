@@ -148,8 +148,8 @@ class CaseDocument(Base):
     __tablename__ = "case_documents"
 
     id: Mapped[str] = pk_column()
-    case_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
+    case_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("cases.id", ondelete="CASCADE"), nullable=True, index=True
     )
     #: Dataset this document was imported with (NULL for manual uploads).
     dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -197,7 +197,7 @@ class CaseDocument(Base):
     )
     created_at: Mapped[datetime] = created_at_column()
 
-    case: Mapped[Case] = relationship("Case", lazy="selectin")
+    case: Mapped[Case | None] = relationship("Case", lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("case_id", "content_hash", name="uq_case_documents_case_hash"),
@@ -267,7 +267,7 @@ class SourceReference(Base):
         String(36), ForeignKey("case_documents.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    case_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     #: Dataset that owns ``origin_file``.  The source resolver uses it to find
     #: the dataset root, so a reference stays openable no matter how the
     #: dataset was organised on disk.

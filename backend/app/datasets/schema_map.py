@@ -49,6 +49,7 @@ ADDRESS = "ADDRESS"
 LOCATION = "LOCATION"
 ORGANIZATION = "ORGANIZATION"
 CASE = "CASE"
+FIR = "FIR"
 EVIDENCE = "EVIDENCE"
 DEVICE = "DEVICE"
 EMAIL = "EMAIL"
@@ -57,10 +58,11 @@ DOCUMENT = "DOCUMENT"
 OFFICER = "OFFICER"
 TRANSACTION = "TRANSACTION"
 CALL = "CALL"
+EVENT = "EVENT"
 
 ENTITY_TYPES: tuple[str, ...] = (
-    PERSON, PHONE, VEHICLE, ACCOUNT, ADDRESS, LOCATION, ORGANIZATION, CASE,
-    EVIDENCE, DEVICE, EMAIL, PROPERTY, DOCUMENT, OFFICER, TRANSACTION, CALL,
+    PERSON, PHONE, VEHICLE, ACCOUNT, ADDRESS, LOCATION, ORGANIZATION, CASE, FIR,
+    EVIDENCE, DEVICE, EMAIL, PROPERTY, DOCUMENT, OFFICER, TRANSACTION, CALL, EVENT,
 )
 
 #: How a canonical entity type maps onto a graph node label.  Types absent from
@@ -79,6 +81,7 @@ GRAPH_LABELS: dict[str, str] = {
     EMAIL: "Phone",
     EVIDENCE: "Event",
     DOCUMENT: "Event",
+    EVENT: "Event",
 }
 
 
@@ -91,7 +94,7 @@ GRAPH_LABELS: dict[str, str] = {
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     # --- identity ---------------------------------------------------------
     "PERSON.id": ("person_id", "personid", "individual_id", "subject_id", "party_id", "suspect_id", "cust_id", "customer_id", "citizen_id"),
-    "PERSON.name": ("full_name", "name", "person_name", "subject", "subject_name", "suspect", "suspect_name", "accused", "accused_name", "cust_name", "customer_name", "holder_name", "party_name", "individual", "person"),
+    "PERSON.name": ("full_name", "name", "person_name", "subject", "subject_name", "suspect", "suspect_name", "accused", "accused_name", "cust_name", "customer_name", "holder_name", "party_name", "individual", "person", "canonical_name", "canonicalname"),
     "PERSON.first_name": ("first_name", "firstname", "given_name", "fname"),
     "PERSON.last_name": ("last_name", "lastname", "surname", "family_name", "lname"),
     "PERSON.dob": ("dob", "date_of_birth", "birth_date", "birthdate", "dateofbirth"),
@@ -105,9 +108,10 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "criminal_status",
         "criminal_history",
         "conviction_status",
-        "criminal_record",
         "record_status",
     ),
+    "CRIMINAL_RECORD.id": ("criminal_record_id", "cr_id"),
+    "ALIAS.id": ("alias_id", "aliasid"),
     "PERSON.alias": ("alias", "aliases", "aka", "nickname", "surface_name", "known_as", "variant_name"),
     # --- telecom ----------------------------------------------------------
     "PHONE.id": ("phone_id", "phoneid", "msisdn_id", "sim_id", "number_id"),
@@ -159,24 +163,33 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "ADDRESS.state": ("state", "province", "region"),
     "ADDRESS.postal_code": ("postal_code", "pincode", "pin_code", "zip", "zipcode", "postcode"),
     "LOCATION.id": ("location_id", "locationid", "loc_id", "place_id"),
-    "LOCATION.name": ("location_name", "location", "place", "place_name", "site", "landmark"),
+    "LOCATION.name": ("location_name", "location", "place", "place_name", "site", "landmark", "name"),
     "LOCATION.type": ("location_type", "place_type"),
     "LOCATION.lat": ("latitude", "lat"),
     "LOCATION.lon": ("longitude", "lon", "lng", "long"),
     # --- organizations ----------------------------------------------------
     "ORGANIZATION.id": ("org_id", "organization_id", "organisation_id", "company_id", "entity_id"),
-    "ORGANIZATION.name": ("org_name", "organization", "organisation", "organization_name", "company", "company_name", "firm", "business_name", "employer"),
+    "ORGANIZATION.name": ("org_name", "organization", "organisation", "organization_name", "company", "company_name", "firm", "business_name", "employer", "name"),
     "ORGANIZATION.type": ("org_type", "organization_type", "business_type", "sector", "industry"),
     "ORGANIZATION.status": ("org_status", "company_status"),
     "ORGANIZATION.incorporated": ("incorporated", "incorporation_date", "registered_on", "date_of_incorporation"),
     # --- cases ------------------------------------------------------------
-    "CASE.id": ("case_id", "caseid", "crime_id", "fir_id"),
-    "CASE.number": ("case_number", "case_no", "fir_number", "fir_no", "crime_number", "cr_no"),
+    "CASE.id": ("case_id", "caseid", "crime_id"),
+    "CASE.number": ("case_number", "case_no", "crime_number", "cr_no"),
     "CASE.type": ("case_type", "crime_type", "offence", "offense", "offence_type", "nature_of_crime"),
     "CASE.opened": ("opened_date", "registered_date", "date_registered", "case_date", "reported_on", "date_opened", "incident_date"),
     "CASE.unit": ("police_unit", "police_station", "station", "unit", "investigating_unit", "ps"),
     "CASE.status": ("case_status", "investigation_status", "status_of_case"),
     "CASE.title": ("case_title", "title", "subject_of_case"),
+    # --- firs --------------------------------------------------------------
+    "FIR.id": ("fir_id", "firid"),
+    "FIR.number": ("fir_number", "fir_no", "fir_num"),
+    "FIR.date": ("registration_date", "fir_date"),
+    # --- events ------------------------------------------------------------
+    "EVENT.id": ("event_id", "eventid", "incident_id"),
+    "EVENT.type": ("event_type", "incident_type"),
+    "EVENT.time": ("event_time", "event_date", "occurred_at"),
+    "EVENT.summary": ("event_summary", "event_name", "event_title", "summary"),
     # --- evidence / documents --------------------------------------------
     "EVIDENCE.id": ("evidence_id", "exhibit_id", "item_id", "evidenceid"),
     "EVIDENCE.type": ("evidence_type", "exhibit_type", "item_type"),
@@ -207,7 +220,9 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "COMMON.relationship": ("relationship", "relation", "rel_type", "link_type", "edge_type"),
     "COMMON.source_ref": ("source_id", "from_id", "src_id", "subject_ref"),
     "COMMON.target_ref": ("target_id", "to_id", "dst_id", "object_ref"),
-    "COMMON.notes": ("notes", "summary", "comment", "observation", "details"),
+    "COMMON.source_type": ("from_type", "source_type", "src_type", "subject_type"),
+    "COMMON.target_type": ("to_type", "target_type", "dst_type", "object_type"),
+    "COMMON.notes": ("notes", "comment", "observation", "details"),
     "COMMON.record_id": ("record_id", "row_id", "serial", "sr_no", "s_no", "id"),
     # --- travel / sightings ----------------------------------------------
     "TRAVEL.id": ("travel_id", "trip_id", "journey_id"),
@@ -600,6 +615,10 @@ def classify_table(mapped: dict[str, str], columns: list[str]) -> tuple[str, str
         return ("EMPLOYMENT", PERSON, notes)
     if _any(mapped, "COMMON.relationship") and _has(mapped, "COMMON.source_ref", "COMMON.target_ref"):
         return ("RELATIONSHIP_EDGES", None, notes)
+    if _has(mapped, "EVENT.id") or (_has(mapped, "EVENT.time") and _has(mapped, "EVENT.type")):
+        return ("EVENT_TABLE", EVENT, notes)
+    if _has(mapped, "FIR.id") or _has(mapped, "FIR.number"):
+        return ("FIR_TABLE", FIR, notes)
     if _has(mapped, "CASE.id") and _has(mapped, "PERSON.id") and not _any(mapped, "CASE.type", "CASE.opened"):
         return ("CASE_ENTITIES", CASE, notes)
     if _has(mapped, "EVIDENCE.id"):
@@ -779,6 +798,33 @@ def map_table(
     mapped = {m.canonical: m.column for m in mappings if m.canonical}
     semantic_type, primary, classify_notes = classify_table(mapped, columns)
     notes.extend(classify_notes)
+
+    # Realign entity-generic fields (e.g. "name") to the table's primary entity
+    if primary == LOCATION:
+        for m in mappings:
+            if m.canonical == "PERSON.name":
+                m.canonical = "LOCATION.name"
+    elif primary == ORGANIZATION:
+        for m in mappings:
+            if m.canonical == "PERSON.name":
+                m.canonical = "ORGANIZATION.name"
+    elif primary == OFFICER:
+        for m in mappings:
+            if m.canonical == "PERSON.name":
+                m.canonical = "OFFICER.name"
+    elif primary == EVENT:
+        for m in mappings:
+            if m.canonical == "PERSON.name":
+                m.canonical = "EVENT.summary"
+    elif semantic_type == "NAME_VARIANTS":
+        for m in mappings:
+            c_lower = m.column.lower()
+            if c_lower in ("alias_id", "aliasid"):
+                m.canonical = "ALIAS.id"
+            elif c_lower in ("canonical_name", "canonicalname"):
+                m.canonical = "PERSON.name"
+            elif c_lower in ("alias", "nickname"):
+                m.canonical = "PERSON.alias"
 
     resolved = [m for m in mappings if m.canonical]
     coverage = len(resolved) / len(columns) if columns else 0.0
