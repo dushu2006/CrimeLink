@@ -44,10 +44,12 @@ import {
   type GraphSelection,
 } from "../components/investigator/FocusedEvidenceGraph";
 import { InvestigationTimeline } from "../components/investigator/InvestigationTimeline";
+import NetworkAnalysisPanel from "../components/investigator/NetworkAnalysisPanel";
 import {
   centralityNarrative,
   convergenceSentence,
   entityStanding,
+  evidenceConfidenceSentence,
   gapHeading,
   gapSentence,
   labelText,
@@ -60,6 +62,8 @@ import {
   patternSourceCount,
   patternTypeLabel,
   provenanceOfProse,
+  relationshipStrengthSentence,
+  relationshipWhy,
   scopeLabel,
   scopeSentence,
   selectionEntityKeys,
@@ -522,6 +526,9 @@ export default function InvestigatorWorkspace() {
         )}
       </section>
 
+      {/* ------------------------------------------------ NETWORK ANALYSIS (explicit trigger, 3 scopes) */}
+      <NetworkAnalysisPanel />
+
       {/* ------------------------------------------------ objective */}
       <section className="panel inv-objective" aria-labelledby="inv-objective-title">
         <div className="inv-objective-head">
@@ -911,7 +918,16 @@ export default function InvestigatorWorkspace() {
                       <strong>{relationship.title}</strong>
                     </div>
                     <p>{relationship.description}</p>
-                    {(relationship as any).why && <p className="muted"><strong>WHY:</strong> {(relationship as any).why}</p>}
+                    <p className="muted">
+                      <strong>WHY:</strong> {relationshipWhy(relationship)}
+                    </p>
+                    {(relationship.relationship_strength || relationship.evidence_strength) && (
+                      <p className="muted inv-relationship-meta">
+                        {relationshipStrengthSentence(relationship.relationship_strength)}
+                        {" · "}
+                        {evidenceConfidenceSentence(relationship.evidence_strength)}
+                      </p>
+                    )}
                     {relationship.path && relationship.path.nodes.length > 0 && (
                       <p className="muted">
                         Path: {relationship.path.nodes.join(" → ")}

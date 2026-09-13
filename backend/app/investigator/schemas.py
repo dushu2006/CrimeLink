@@ -241,6 +241,14 @@ class RelationshipFinding(BaseModel):
     analysis: ObservationBlock | None = None
     analytical_basis: AnalyticalBasis | None = None
     why: str | None = None
+    #: Observed relationship (STRONG/MODERATE/WEAK/INSUFFICIENT): how much
+    #: contact the records actually show. Kept separate from evidence
+    #: confidence on purpose — a pair can show MODERATE contact on HIGH
+    #: evidence, or STRONG contact on a single weak record.
+    relationship_strength: str | None = None
+    #: Evidentiary confidence band (HIGH/MODERATE/LOW/INSUFFICIENT) derived
+    #: from edge confidence (>=0.85 confirmed, >=0.65 corroborated, >=0.40
+    #: single-source, else weak). Never a guilt probability.
     evidence_strength: str | None = None
     investigative_relevance: str | None = None
 
@@ -283,6 +291,8 @@ class SuspiciousPattern(BaseModel):
     provenance: list[ProvenanceItem] = Field(default_factory=list)
     # New fields
     analytical_basis: AnalyticalBasis | None = None
+    #: Deterministic "why was this surfaced?" — the mechanism, never a verdict.
+    why: str | None = None
     evidence_convergence: EvidenceConvergenceAssessment | None = None
     evidence_strength: EvidenceStrengthAssessment | None = None
     investigative_relevance: InvestigativeRelevanceAssessment | None = None
@@ -299,6 +309,9 @@ class StructuredFinding(BaseModel):
     title: str
     finding_type: str
     objective: str = ""
+    #: Deterministic answer to "why was this surfaced?" — the mechanism, not
+    #: a verdict.
+    why: str = ""
     entities: list[ResolvedEntity] = Field(default_factory=list)
     analytical_basis: AnalyticalBasis | None = None
     relationships: list[RelationshipFinding] = Field(default_factory=list)
@@ -459,7 +472,7 @@ class ScopeSection(BaseModel):
     single case is in scope — never synthesised.
     """
 
-    mode: Literal["case", "master"]
+    mode: Literal["case", "master", "person"]
     label: str = "Master Network"
     dataset_id: str | None = None
     dataset_name: str | None = None

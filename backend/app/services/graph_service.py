@@ -47,6 +47,111 @@ def canonical_person(node: GraphNode) -> bool:
     return node.label in ("PERSON", "Person")
 
 
+#: Person-involving relations are kept in preference to entity-to-entity ones
+#: when a render budget forces a choice inside the neighbourhood walk.
+_PERSON_PRIORITY_RELS = frozenset(
+    {
+        "USES_PHONE",
+        "OWNS_VEHICLE",
+        "OWNS_ACCOUNT",
+        "CALLED",
+        "ASSOCIATE_OF",
+        "RELATIVE_OF",
+        "ARRESTED_WITH",
+        "NAMED_ACCOMPLICE_OF",
+        "MEMBER_OF",
+        "LOCATED_AT",
+        "ACCUSED_IN",
+        "PARTICIPATED_IN",
+        "TRANSFER_TO",
+    }
+)
+
+
+def _edge_identity(edge: Any) -> str:
+    return (
+        getattr(edge, "key", "")
+        or f"{edge.source_key}|{edge.rel_type}|{edge.target_key}"
+    )
+
+
+def _bfs_neighbourhood(
+    snapshot: Any,
+    root_key: str,
+    requested_depth: int,
+    node_budget: int | None = None,
+) -> dict[str, Any]:
+    """Breadth-first typed neighbourhood around ``root_key``.
+
+    Shared by the case-scoped and master-scoped person graphs so the two
+    surfaces can never disagree about how a person's network is walked.
+    Returns the raw parts both callers assemble into their own payload.
+    """
+    adjacency: dict[str, list[tuple[str, Any]]] = {}
+    for edge in snapshot.edges:
+        adjacency.setdefault(edge.source_key, []).append((edge.target_key, edge))
+        adjacency.setdefault(edge.target_key, []).append((edge.source_key, edge))
+
+    def edge_priority(edge) -> int:
+        return 0 if edge.rel_type in _PERSON_PRIORITY_RELS else 1
+
+    layer_of: dict[str, int] = {root_key: 0}
+    seen_edges: set[str] = set()
+    kept_edges: list[Any] = []
+    frontier: list[str] = [root_key]
+    truncated = False
+    max_depth_reached = 0
+    exhausted = False
+
+    for current_depth in range(1, requested_depth + 1):
+        next_frontier: list[str] = []
+        for node_key in sorted(frontier):
+            candidates = sorted(
+                adjacency.get(node_key, []),
+                key=lambda item: (edge_priority(item[1]), item[0]),
+            )
+            for neighbour, edge in candidates:
+                is_new_node = neighbour not in layer_of
+                if is_new_node and node_budget is not None and len(layer_of) >= node_budget:
+                    truncated = True
+                    continue
+                identity = _edge_identity(edge)
+                if identity not in seen_edges:
+                    seen_edges.add(identity)
+                    kept_edges.append(edge)
+                if is_new_node:
+                    layer_of[neighbour] = current_depth
+                    next_frontier.append(neighbour)
+        if next_frontier:
+            max_depth_reached = current_depth
+        frontier = next_frontier
+        if not frontier:
+            exhausted = True
+            break
+
+    keys = set(layer_of)
+    nodes = [snapshot.nodes[k] for k in keys if k in snapshot.nodes]
+    unique_edges: dict[str, Any] = {
+        _edge_identity(edge): edge
+        for edge in kept_edges
+        if edge.source_key in keys and edge.target_key in keys
+    }
+    layers: dict[str, int] = {}
+    for value in layer_of.values():
+        if value == 0:
+            continue
+        layers[str(value)] = layers.get(str(value), 0) + 1
+
+    return {
+        "nodes": nodes,
+        "edges": unique_edges,
+        "layers": layers,
+        "max_depth_reached": max_depth_reached,
+        "exhausted": exhausted,
+        "truncated": truncated,
+    }
+
+
 class GraphService:
     def __init__(self, container: Container | None = None, settings: Settings | None = None):
         self.container = container or get_container()
@@ -372,78 +477,13 @@ class GraphService:
         requested_depth = max(1, int(depth))
         node_budget = int(limit) if limit and int(limit) > 0 else None
 
-        adjacency: dict[str, list[tuple[str, Any]]] = {}
-        for edge in snapshot.edges:
-            adjacency.setdefault(edge.source_key, []).append((edge.target_key, edge))
-            adjacency.setdefault(edge.target_key, []).append((edge.source_key, edge))
-
-        def edge_priority(edge) -> int:
-            # Person-involving relations first when a budget forces a choice.
-            person_rels = {
-                "USES_PHONE", "OWNS_VEHICLE", "OWNS_ACCOUNT", "CALLED",
-                "ASSOCIATE_OF", "RELATIVE_OF", "ARRESTED_WITH",
-                "NAMED_ACCOMPLICE_OF", "MEMBER_OF", "LOCATED_AT",
-                "ACCUSED_IN", "PARTICIPATED_IN", "TRANSFER_TO",
-            }
-            return 0 if edge.rel_type in person_rels else 1
-
-        def edge_identity(edge) -> str:
-            return (
-                getattr(edge, "key", "")
-                or f"{edge.source_key}|{edge.rel_type}|{edge.target_key}"
-            )
-
-        # ``layer_of`` is the visited set *and* the BFS layer index: a node
-        # already in it is never expanded again, which is what makes cycles
-        # terminate.  ``seen_edges`` does the same job for edges.
-        layer_of: dict[str, int] = {person_key: 0}
-        seen_edges: set[str] = set()
-        kept_edges: list[Any] = []
-        frontier: list[str] = [person_key]
-        truncated = False
-        max_depth_reached = 0
-        exhausted = False
-
-        for current_depth in range(1, requested_depth + 1):
-            next_frontier: list[str] = []
-            for node_key in sorted(frontier):
-                candidates = sorted(
-                    adjacency.get(node_key, []),
-                    key=lambda item: (edge_priority(item[1]), item[0]),
-                )
-                for neighbour, edge in candidates:
-                    is_new_node = neighbour not in layer_of
-                    if is_new_node and node_budget is not None and len(layer_of) >= node_budget:
-                        truncated = True
-                        continue
-                    identity = edge_identity(edge)
-                    if identity not in seen_edges:
-                        seen_edges.add(identity)
-                        kept_edges.append(edge)
-                    if is_new_node:
-                        layer_of[neighbour] = current_depth
-                        next_frontier.append(neighbour)
-            if next_frontier:
-                max_depth_reached = current_depth
-            frontier = next_frontier
-            if not frontier:
-                # Nothing new is reachable: the component is fully explored.
-                exhausted = True
-                break
-
-        keys = set(layer_of)
-        nodes = [snapshot.nodes[k] for k in keys if k in snapshot.nodes]
-        unique_edges: dict[str, Any] = {
-            edge_identity(edge): edge
-            for edge in kept_edges
-            if edge.source_key in keys and edge.target_key in keys
-        }
-
-        layers: dict[str, int] = {}
-        for value in layer_of.values():
-            if value == 0:
-                continue
-            layers[str(value)] = layers.get(str(value), 0) + 1
+        walked = _bfs_neighbourhood(snapshot, person_key, requested_depth, node_budget)
+        nodes = walked["nodes"]
+        unique_edges = walked["edges"]
+        layers = walked["layers"]
+        max_depth_reached = walked["max_depth_reached"]
+        exhausted = walked["exhausted"]
+        truncated = walked["truncated"]
 
         by_label = dict(Counter(canonical_label(n.label) for n in nodes))
         by_rel = dict(Counter(e.rel_type for e in unique_edges.values()))
@@ -457,6 +497,111 @@ class GraphService:
             # True when traversal ran out of graph before it ran out of hops.
             "exhausted": exhausted,
             "truncated": truncated,
+            "node_limit": node_budget,
+            "layers": layers,
+            "counts": {
+                "nodes": len(nodes),
+                "edges": len(unique_edges),
+                "by_label": by_label,
+                "by_rel_type": by_rel,
+            },
+            "nodes": [_node_row(n) for n in nodes],
+            "edges": [_edge_row(e) for e in unique_edges.values()],
+        }
+
+    # ------------------------------------------- master person-centric views
+    async def master_person_targets(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        *,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        """Every person in the active dataset — the PERSON NETWORK selector.
+
+        Strictly active-dataset scoped (the same universe as the master graph)
+        so the person selector and the master canvas can never disagree about
+        who exists.
+        """
+        allowed = await self._strict_case_ids(session, scope)
+        case_ids = sorted(allowed)
+        if not case_ids:
+            return {"mode": "master", "case_ids": [], "total_persons": 0, "items": []}
+        snapshot = self.container.graph_store.multi_case_snapshot(
+            case_ids, include_inactive=False
+        )
+        degree: dict[str, int] = {}
+        for edge in snapshot.edges:
+            degree[edge.source_key] = degree.get(edge.source_key, 0) + 1
+            degree[edge.target_key] = degree.get(edge.target_key, 0) + 1
+        persons = [node for node in snapshot.nodes.values() if canonical_person(node)]
+        persons.sort(key=lambda n: (-degree.get(n.provenance_key, 0), n.name))
+        items = [
+            {
+                "provenance_key": node.provenance_key,
+                "name": node.name,
+                "aliases": list(node.properties.get("aliases") or []),
+                "connections": degree.get(node.provenance_key, 0),
+                "case_ids": list(node.properties.get("case_ids") or []),
+                "criminal_status": node.properties.get("criminal_status"),
+                "source_doc_ids": list(node.properties.get("source_doc_ids") or []),
+            }
+            for node in persons[:limit]
+        ]
+        return {"mode": "master", "case_ids": case_ids, "total_persons": len(persons), "items": items}
+
+    async def master_person_network(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        person_key: str,
+        *,
+        depth: int = DEFAULT_PERSON_NETWORK_DEPTH,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Person-centric graph across the **active dataset** (cross-case).
+
+        Unlike :meth:`person_centric_network` (which is scoped to one case),
+        this walk starts from the master snapshot, so a person's linked cases,
+        phones, accounts, vehicles, organisations and locations from *any*
+        active case are reachable.  The selected person remains the central
+        subject; entity types are preserved (a BANK_ACCOUNT is never rendered
+        or treated as a PERSON).
+        """
+        await self._assert_node_in_scope(session, scope, person_key)
+        allowed = await self._strict_case_ids(session, scope)
+        case_ids = sorted(allowed)
+        if not case_ids:
+            raise NotFoundError("That person is not part of the active dataset graph.")
+        snapshot = self.container.graph_store.multi_case_snapshot(
+            case_ids, include_inactive=False
+        )
+        if person_key not in snapshot.nodes:
+            raise NotFoundError("That person is not part of the active dataset graph.")
+        node = snapshot.nodes[person_key]
+        if not canonical_person(node):
+            raise NotFoundError("That node is not a person.")
+
+        requested_depth = max(1, int(depth))
+        node_budget = int(limit) if limit and int(limit) > 0 else None
+        walked = _bfs_neighbourhood(snapshot, person_key, requested_depth, node_budget)
+        nodes = walked["nodes"]
+        unique_edges = walked["edges"]
+        layers = walked["layers"]
+
+        by_label = dict(Counter(canonical_label(n.label) for n in nodes))
+        by_rel = dict(Counter(e.rel_type for e in unique_edges.values()))
+        person_case_ids = list(node.properties.get("case_ids") or [])
+        return {
+            "mode": "master",
+            "case_ids": case_ids,
+            "person_case_ids": person_case_ids,
+            "target": _node_row(node),
+            "depth": requested_depth,
+            "requested_depth": requested_depth,
+            "max_depth_reached": walked["max_depth_reached"],
+            "exhausted": walked["exhausted"],
+            "truncated": walked["truncated"],
             "node_limit": node_budget,
             "layers": layers,
             "counts": {

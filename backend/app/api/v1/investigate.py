@@ -8,7 +8,10 @@ INVESTIGATOR or ADMIN only; investigation calls are hash-chain audited.
 
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.datasets import registry
@@ -91,6 +94,90 @@ async def investigation_patterns(
         max_patterns=max_patterns,
         include_excluded=include_excluded,
     )
+
+
+class NetworkAnalysisRequest(BaseModel):
+    """Explicit network-analysis trigger over one of the three graph scopes."""
+
+    mode: Literal["master", "case", "person"] = "master"
+    case_id: str | None = Field(default=None, description="Required when mode=case.")
+    person_key: str | None = Field(default=None, description="Required when mode=person.")
+    max_patterns: int = Field(default=25, ge=1, le=100)
+    include_excluded: bool = True
+
+
+@router.post("/network-analysis")
+@audited(
+    AuditAction.INVESTIGATE,
+    target=lambda result, **kw: f"network-analysis:{kw.get('payload').mode}",
+    case_id=lambda result, **kw: kw.get("payload").case_id,
+    details=lambda result, **kw: {
+        "mode": kw.get("payload").mode,
+        "person_key": kw.get("payload").person_key,
+    },
+)
+async def start_network_analysis(
+    payload: NetworkAnalysisRequest,
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict[str, Any]:
+    """Start a long-running network analysis job (never auto-runs).
+
+    Returns a job id immediately; the client polls GET /investigate/jobs/{id}
+    or subscribes to the WebSocket. Deterministic graph/network results are
+    preserved even when the reasoning model is unavailable or times out.
+    """
+    from app.db.session import async_session
+    from app.investigator.network_analysis import analyze_network
+    from app.services.investigation_jobs import TERMINAL_STATUSES, start_investigation_job
+
+    captured_scope = scope
+    captured_principal = principal
+    captured = payload
+
+    async def work(reporter):
+        async with async_session() as bg_session:
+            result = await analyze_network(
+                bg_session,
+                captured_scope,
+                captured_principal,
+                mode=captured.mode,
+                case_id=captured.case_id,
+                person_key=captured.person_key,
+                max_patterns=captured.max_patterns,
+                include_excluded=captured.include_excluded,
+                reporter=reporter,
+            )
+            status = str(result.get("status", "COMPLETED"))
+            terminal_status = status if status in TERMINAL_STATUSES else "COMPLETED"
+            await reporter.update(
+                status=terminal_status,
+                stage="COMPLETED" if terminal_status == "COMPLETED" else status,
+                progress_pct=100 if terminal_status == "COMPLETED" else 90,
+                message=(
+                    "Network analysis completed"
+                    if terminal_status == "COMPLETED"
+                    else f"Deterministic network analysis preserved ({terminal_status})"
+                ),
+                result=result,
+            )
+            return result
+
+    row = await start_investigation_job(
+        dataset_id=None,
+        case_id=payload.case_id,
+        investigation_id=None,
+        question=f"Network analysis — {payload.mode.upper()} scope",
+        objective=(
+            "Graph metrics, community analysis, cross-case analysis, pattern "
+            "detection, evidence retrieval and findings for the selected scope."
+        ),
+        requested_by=getattr(principal, "id", None),
+        work=work,
+    )
+    return row
 
 
 @router.get("/sessions/{investigation_id}")

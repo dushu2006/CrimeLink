@@ -876,8 +876,28 @@ class Neo4jGraphStore:
         self, keep_key: str, absorb_key: str, actor_id: str, queue_id: str | None = None
     ) -> MergeResult:
         from app.db.base import utcnow
+        from app.domain.enums import canonical_label
 
         def _apply(tx):
+            # Entity-type safety: never merge across incompatible canonical
+            # types (PERSON vs LOCATION vs BANK_ACCOUNT vs PHONE …).  The
+            # embedded store enforces the same rule; both must refuse rather
+            # than let a fuzzy match collapse a city into a suspect.
+            label_row = tx.run(
+                "MATCH (keep {provenance_key: $keep}), (absorb {provenance_key: $absorb}) "
+                "RETURN labels(keep)[0] AS keep_label, labels(absorb)[0] AS absorb_label",
+                keep=keep_key,
+                absorb=absorb_key,
+            ).single()
+            if label_row is None:
+                raise KeyError("merge endpoints must exist")
+            if canonical_label(str(label_row["keep_label"] or "")) != canonical_label(
+                str(label_row["absorb_label"] or "")
+            ):
+                raise ValueError(
+                    "Refusing to merge entities of different types: "
+                    f"{label_row['keep_label']} != {label_row['absorb_label']}."
+                )
             out = tx.run(
                 "MATCH (a {provenance_key: $absorb})-[r]-(other) "
                 "RETURN startNode(r).provenance_key AS start, endNode(r).provenance_key AS end, "

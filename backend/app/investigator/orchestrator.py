@@ -113,6 +113,9 @@ class InvestigationInputs:
     case_title: str | None = None
     #: What the dataset manifest says about files that produced no evidence.
     import_report: ImportReport = field(default_factory=ImportReport)
+    #: PERSON NETWORK scope: the central subject and its display name.
+    person_key: str | None = None
+    person_name: str | None = None
 
 
 def _carry_rejected_hypotheses(hypotheses: list[Hypothesis], thread: Any | None) -> None:
@@ -231,7 +234,7 @@ async def _load_import_report(session: AsyncSession, dataset_id: str) -> ImportR
 
 
 async def load_inputs(
-    session: AsyncSession, scope, case_id: str | None
+    session: AsyncSession, scope, case_id: str | None, *, compute_analytics: bool = True
 ) -> InvestigationInputs:
     """Scope the question to the active dataset (mandatory) and load once."""
     dataset = await registry.active_dataset(session)
@@ -290,27 +293,30 @@ async def load_inputs(
     import_report = await _load_import_report(session, dataset.id)
 
     centrality = None
-    try:
-        centrality = compute_centrality(snapshot)
-    except Exception:
-        centrality = None
+    engine_findings: list = []
+    analytics_findings: list = []
     centrality_dict = None
-    if centrality is not None:
-        centrality_dict = {
-            key: {
-                "betweenness": float(getattr(centrality, "betweenness", {}).get(key, 0.0)),
-                "degree": float(getattr(centrality, "degree", {}).get(key, 0.0)),
+    if compute_analytics:
+        try:
+            centrality = compute_centrality(snapshot)
+        except Exception:
+            centrality = None
+        if centrality is not None:
+            centrality_dict = {
+                key: {
+                    "betweenness": float(getattr(centrality, "betweenness", {}).get(key, 0.0)),
+                    "degree": float(getattr(centrality, "degree", {}).get(key, 0.0)),
+                }
+                for key in (snapshot.nodes or {})
             }
-            for key in (snapshot.nodes or {})
-        }
-    try:
-        engine_findings = PatternEngine().detect_scheduled(snapshot, centrality=centrality)
-    except Exception:
-        engine_findings = []
-    try:
-        analytics_findings = generate_findings(snapshot, centrality_dict)
-    except Exception:
-        analytics_findings = []
+        try:
+            engine_findings = PatternEngine().detect_scheduled(snapshot, centrality=centrality)
+        except Exception:
+            engine_findings = []
+        try:
+            analytics_findings = generate_findings(snapshot, centrality_dict)
+        except Exception:
+            analytics_findings = []
 
     pending_aliases: list[PendingAlias] = []
     seen_proposals: set[tuple[str, str]] = set()
@@ -416,6 +422,8 @@ def scope_label(inputs: InvestigationInputs) -> str:
     """The human reading of the scope, agreed by every surface."""
     if inputs.mode == "case":
         return f"Case {inputs.case_number or inputs.case_id or 'unknown'}"
+    if inputs.mode == "person":
+        return f"Person {inputs.person_name or inputs.person_key or 'unknown'}"
     return "Master Network"
 
 
@@ -1044,6 +1052,7 @@ async def investigate(
                 title=pat.title,
                 finding_type=pat.kind,
                 objective=turn_objective,
+                why=pat.why or "",
                 entities=[e for e in resolved if e.canonical_id in (pat.entity_keys or [])][:3],
                 analytical_basis=pat.analytical_basis or AnalyticalBasis(),
                 relationships=[r for r in relationships if set(r.entities) & set(pat.entities)][:3],
@@ -2018,6 +2027,7 @@ async def investigate_with_reporter(
                     title=pat.title,
                     finding_type=pat.kind,
                     objective=turn_objective,
+                    why=pat.why or "",
                     entities=[e for e in det["resolved"] if e.canonical_id in (pat.entity_keys or [])][:3],
                     analytical_basis=pat.analytical_basis,
                     relationships=[r for r in relationships if set(r.entities) & set(pat.entities)][:3],

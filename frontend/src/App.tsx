@@ -5,6 +5,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import Login from "./pages/Login";
 import Cases from "./pages/Cases";
 import CaseDetail from "./pages/CaseDetail";
+import GraphPage from "./pages/GraphPage";
 import InvestigatorWorkspace from "./pages/InvestigatorWorkspace";
 import Review from "./pages/Review";
 import Admin from "./pages/Admin";
@@ -57,6 +58,7 @@ export default function App() {
           <Route index element={<Navigate to="/cases" replace />} />
           <Route path="/cases" element={<Cases />} />
           <Route path="/cases/:caseId" element={<CaseDetail />} />
+          <Route path="/cases/:caseId/graph" element={<GraphPage />} />
           {/* Investigation Analysis is now global master workspace for the active dataset,
               not per-case. Deprecated case-scoped graph and AI investigation routes removed. */}
           <Route path="/investigate" element={<InvestigatorWorkspace />} />

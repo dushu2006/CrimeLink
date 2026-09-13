@@ -885,10 +885,24 @@ class EmbeddedGraphStore:
         merge — the worst failure mode in this system — can be undone exactly.
         """
         from app.db.base import utcnow
+        from app.domain.enums import canonical_label
 
         with self._lock:
             if not self._graph.has_node(keep_key) or not self._graph.has_node(absorb_key):
                 raise KeyError("merge endpoints must exist")
+            # Entity-type safety (PRD 9.2): two records are only ever merged
+            # across *one* canonical type.  A PERSON and a LOCATION (or a
+            # BANK_ACCOUNT and a PHONE) can look similar to a fuzzy matcher, but
+            # collapsing them is the exact failure mode that turns a city into a
+            # suspect — so the store refuses it outright, leaving the pair for a
+            # human to resolve rather than silently mistyping either side.
+            keep_label = canonical_label(self._graph.nodes[keep_key].get(_LABEL, ""))
+            absorb_label = canonical_label(self._graph.nodes[absorb_key].get(_LABEL, ""))
+            if keep_label != absorb_label:
+                raise ValueError(
+                    "Refusing to merge entities of different types: "
+                    f"{keep_label} != {absorb_label}."
+                )
             pre_merge: list[dict[str, Any]] = []
             for u, v, k, data in list(self._graph.out_edges(absorb_key, keys=True, data=True)):
                 pre_merge.append(

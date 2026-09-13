@@ -147,6 +147,46 @@ async def master_analytics(
     return await GraphService().master_centrality(session, scope)
 
 
+@router.get("/master/persons")
+async def master_persons(
+    limit: int = Query(500, ge=1, le=2000),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Every person in the active dataset — the PERSON NETWORK selector."""
+    return await GraphService().master_person_targets(session, scope, limit=limit)
+
+
+@router.get("/master/person/{person_key}/network")
+async def master_person_network(
+    person_key: str,
+    depth: int = Query(
+        3, ge=1, description="Hop depth outward from the person (no upper bound)."
+    ),
+    limit: int | None = Query(None, ge=1, description="Optional node budget."),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Person-centric graph spanning the whole active dataset (cross-case)."""
+    payload = await GraphService().master_person_network(
+        session, scope, person_key, depth=depth, limit=limit
+    )
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource=person_key,
+        details={
+            "kind": "master_person_network",
+            "nodes": len(payload["nodes"]),
+            "edges": len(payload["edges"]),
+        },
+    )
+    await recorder.flush()
+    return payload
+
+
 @router.get("/cases/{case_id}")
 async def case_graph(
     case_id: str,
