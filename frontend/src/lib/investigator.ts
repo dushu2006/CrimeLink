@@ -180,12 +180,13 @@ export function provenanceText(pointer: ProvenanceItem | null | undefined): stri
  *
  * A document opens its own page; a row opens the source file at that row; a
  * dataset-level record opens the dataset's file manifest; a graph edge opens the
- * evidence graph; a computed metric opens the analytics surface. Anything the
- * console cannot open is returned as `reference`, which the caller renders as a
- * labelled reference — never as a `/documents/...` link that would dead-end.
+ * master investigation workspace (global); a computed metric opens the same
+ * master workspace. Anything the console cannot open is returned as `reference`,
+ * which the caller renders as a labelled reference — never as a `/documents/...`
+ * link that would dead-end.
  *
- * `caseId` is the case in scope when there is one, because the graph and
- * analytics surfaces are case-scoped.
+ * Every evidence reference is clickable to the existing source/document viewer,
+ * same mechanism everywhere (per requirement).
  */
 export type ProvenanceTarget =
   | { kind: "document"; to: string }
@@ -197,12 +198,10 @@ export type ProvenanceTarget =
 
 export function provenanceTarget(
   pointer: ProvenanceItem | null | undefined,
-  caseId?: string | null,
+  _caseId?: string | null,
 ): ProvenanceTarget {
   if (!pointer) return { kind: "reference", to: null };
   if (pointer.kind === "document") {
-    // A document pointer without an id cannot be opened; saying so is better
-    // than linking to a URL that 404s.
     return pointer.doc_id
       ? { kind: "document", to: `/documents/${pointer.doc_id}` }
       : { kind: "reference", to: null };
@@ -218,14 +217,10 @@ export function provenanceTarget(
   }
   if (pointer.kind === "dataset") return { kind: "dataset", to: "/sources" };
   if (pointer.kind === "graph_edge") {
-    return caseId
-      ? { kind: "graph", to: `/cases/${caseId}/graph` }
-      : { kind: "reference", to: null };
+    return { kind: "graph", to: "/investigate" };
   }
   if (pointer.kind === "metric") {
-    return caseId
-      ? { kind: "analytics", to: `/cases/${caseId}/investigation` }
-      : { kind: "reference", to: null };
+    return { kind: "analytics", to: "/investigate" };
   }
   return { kind: "reference", to: null };
 }
@@ -359,8 +354,6 @@ export function centralityNarrative(pattern: SuspiciousPattern | null | undefine
   if (!pattern) return [];
   const notes = pattern.strength_factors?.notes ?? [];
   let text = pattern.explanation ?? "";
-  // The detector explanations already avoid accusation; surface the metric
-  // sentence plus any factor notes as the "why" behind the highlight.
   const sentences = text
     .split(/(?<=\.)\s+/)
     .map((sentence) => sentence.trim())
@@ -440,10 +433,6 @@ export function timelinePhase(
 
 /**
  * Drop events that happen after a reference moment.
- *
- * The reasoning layer must never use later evidence to explain an earlier
- * event; when the workspace pins an incident, later records are excluded from
- * the "around the incident" reading rather than quietly included.
  */
 export function timelineUpTo(
   entries: TimelineEntry[] | null | undefined,
@@ -481,9 +470,6 @@ export function gapHeading(gap: DataGap | null | undefined): string {
 
 /**
  * A gap phrased as missing evidence, never as a negative finding.
- *
- * "No CDR records in scope" is the only thing a missing source supports;
- * "they did not communicate" is a conclusion the data cannot reach.
  */
 export function gapSentence(gap: DataGap): string {
   const description = String(gap.description ?? "").trim();
@@ -546,9 +532,6 @@ export function modelNarrated(assessment: AssessmentSection | null | undefined):
 
 /**
  * The honest line about where the prose came from.
- *
- * The workspace must never present model text as if it were deterministic
- * analysis, and must never hide that the deterministic analysis ran anyway.
  */
 export function provenanceOfProse(assessment: AssessmentSection | null | undefined): string {
   const model = assessment?.model;
@@ -606,11 +589,6 @@ export function patternScopeSentence(pattern: SuspiciousPattern | null | undefin
 
 /**
  * Count of openable sources behind a pattern.
- *
- * A pointer is openable when it names an ingested document or a row inside a
- * source file. Graph edges, computed metrics and dataset-level records are
- * references, not files, so they are shown as such and never counted here —
- * reporting them as sources would dress up a reference as a record.
  */
 export function patternSourceCount(pattern: SuspiciousPattern | null | undefined): number {
   if (!pattern) return 0;
@@ -628,10 +606,6 @@ export function patternSourceCount(pattern: SuspiciousPattern | null | undefined
 
 /**
  * Question prompts derived from what was actually detected.
- *
- * Nothing here is dataset-specific: prompts are composed from the entities,
- * pattern types and entity kinds present in the current answer/scan, so a
- * freshly imported dataset produces its own prompts with no code change.
  */
 export function suggestedQuestions(
   patterns: SuspiciousPattern[] | null | undefined,
@@ -679,6 +653,7 @@ export function suggestedQuestions(
  * Keeps the seed entities plus the nodes directly attached to them and drops
  * everything else — the point of the focused view is that it shows the
  * finding's own evidence, not the whole neighbourhood the question loaded.
+ * This is a real subgraph with WHY: WHY each node is here is its connection to a seed.
  */
 export function subgraphFor(
   graph: { nodes?: { key: string; label: string; name: string; focus?: boolean }[]; edges?: { source: string; target: string; rel_type: string }[]; truncated?: boolean } | null | undefined,

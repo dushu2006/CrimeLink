@@ -113,6 +113,33 @@ async def visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> s
     return set(rows)
 
 
+async def active_dataset_case_ids(session: AsyncSession, scope: JurisdictionScope) -> set[str]:
+    """The id set STRICTLY for the active dataset — master graph universe.
+
+    Unlike :func:`visible_case_ids`, this excludes NULL-dataset rows. The master
+    graph, master analytics, and master investigation are defined as the active
+    dataset's own cases/entities/relationships. Including legacy NULL rows would
+    make /datasets/stats (52 cases) disagree with /graph/master (62 case_ids).
+
+    Jurisdiction filtering still applies, so an officer only sees cases they are
+    entitled to within the active dataset.
+    """
+    active = await registry.active_dataset_id(session)
+    if active is None:
+        return set()
+    if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
+        return set()
+
+    rows = (
+        await session.execute(
+            select(Case.id)
+            .where(scope.case_filter())
+            .where(await registry.strict_active_filter(session, Case))
+        )
+    ).scalars()
+    return set(rows)
+
+
 async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref: str) -> Case:
     """Resolve a case reference to a live, visible case row.
 

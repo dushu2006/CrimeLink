@@ -77,6 +77,7 @@ def explain_node(
         "rank_total": len(centrality.betweenness),
         "community": community,
         "community_size": len(centrality.community_members.get(community, [])) if community is not None else 0,
+        "disclaimer": "HIGH GRAPH CENTRALITY DOES NOT MEAN CRIMINAL — metrics measure network structure, not criminality. Degree, betweenness, PageRank, community membership are analytical signals, NOT legal determinations.",
         "explanation": {
             "summary": summary,
             "bridging_paths": bridging_paths,
@@ -86,8 +87,9 @@ def explain_node(
             "method": (
                 "Betweenness, PageRank and degree computed on the case subgraph with "
                 "edge weights equal to each relationship's confidence; communities "
-                "detected with Louvain modularity."
+                "detected with Louvain modularity. Metrics measure network structure, not criminality."
             ),
+            "disclaimer": "Centrality metrics are analytical signals for investigation prioritization, NOT determinations of criminal involvement.",
         },
     }
 

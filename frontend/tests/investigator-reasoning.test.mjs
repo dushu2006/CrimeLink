@@ -790,13 +790,14 @@ test("a pointer opens the surface that owns it, not a document page", () => {
     kind: "dataset",
     to: "/sources",
   });
+  // After architecture change, Investigation Analysis is global master — graph/metrics open /investigate
   assert.deepEqual(LIB.provenanceTarget(bare({ kind: "graph_edge" }), "c1"), {
     kind: "graph",
-    to: "/cases/c1/graph",
+    to: "/investigate",
   });
   assert.deepEqual(LIB.provenanceTarget(bare({ kind: "metric" }), "c1"), {
     kind: "analytics",
-    to: "/cases/c1/investigation",
+    to: "/investigate",
   });
   // A pointer that names a file opens the file, whatever else it carries: the
   // row is the most specific thing behind the claim.
@@ -827,9 +828,9 @@ test("a non-document pointer is never routed to a document URL", () => {
     kind: "reference",
     to: null,
   });
-  // A graph edge or metric with no case in scope is a reference, not a guess.
-  assert.equal(LIB.provenanceTarget(bare({ kind: "graph_edge" }), null).kind, "reference");
-  assert.equal(LIB.provenanceTarget(bare({ kind: "metric" }), "").kind, "reference");
+  // After architecture change, master graph is global — graph_edge/metric remain openable even without case
+  assert.equal(LIB.provenanceTarget(bare({ kind: "graph_edge" }), null).kind, "graph");
+  assert.equal(LIB.provenanceTarget(bare({ kind: "metric" }), "").kind, "analytics");
   assert.equal(LIB.provenanceTarget(null).kind, "reference");
 });
 

@@ -1080,6 +1080,8 @@ def _max_ts(a: Any, b: Any) -> Any:
 def _cytoscape_node(pk: str, node: GraphNode) -> dict[str, Any]:
     props = dict(node.properties)
     confidence = float(props.get("confidence", 1.0) or 1.0)
+    criminal_status = props.get("criminal_status")
+    is_criminal = bool(criminal_status) and str(criminal_status).strip().lower() not in {"", "none", "unknown", "null"}
     return {
         "data": {
             "id": pk,
@@ -1091,6 +1093,8 @@ def _cytoscape_node(pk: str, node: GraphNode) -> dict[str, Any]:
             "is_active": bool(props.get("is_active", True)),
             "risk_flags": list(props.get("risk_flags") or []),
             "aliases": list(props.get("aliases") or []),
+            "criminal_status": criminal_status if criminal_status else None,
+            "is_criminal": is_criminal,
             **{
                 k: v
                 for k, v in props.items()

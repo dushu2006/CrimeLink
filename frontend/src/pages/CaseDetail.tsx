@@ -271,22 +271,15 @@ export default function CaseDetail() {
               </div>
             </div>
             <div className="row-actions">
-              {/* Analysis first: it is where an investigator forms a view;
-                  the stage workflow below it explains how the case got here. */}
-              <Link className="btn btn-primary" to={`/cases/${caseId}/investigate`}>
-                {t("inv.title")}
-              </Link>
-              <Link className="btn btn-secondary" to={`/cases/${caseId}/investigation`}>
-                {t("investigation.workspaceLink")}
-              </Link>
-              <Link className="btn btn-secondary" to={`/cases/${caseId}/graph`}>
-                {t("case.openGraph")}
-              </Link>
+              {/* Investigation Analysis is now global master workspace — no per-case graph navigation */}
               <Link className="btn btn-secondary" to={`/cases/${caseId}/review`}>
                 {t("case.review")}
                 {caseRow.pending_review_count > 0 && (
                   <span className="pill pill-warn">{caseRow.pending_review_count}</span>
                 )}
+              </Link>
+              <Link className="btn btn-secondary" to="/investigate">
+                Master Investigation
               </Link>
               <button
                 className="btn btn-secondary"
@@ -301,7 +294,6 @@ export default function CaseDetail() {
             </div>
           </header>
 
-          {/* Slim stat chips row */}
           <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)", flexWrap: "wrap" }}>
             <span className="chip">
               <span className="chip-label">Documents:</span>
@@ -331,7 +323,6 @@ export default function CaseDetail() {
         </div>
       )}
 
-      {/* --- Document Upload --- */}
       <section className="panel">
         <h2>{t("case.upload")}</h2>
         <form className="form-row" onSubmit={upload}>
@@ -360,7 +351,6 @@ export default function CaseDetail() {
         </p>
       </section>
 
-      {/* --- Ask AI Panel --- */}
       <section className="panel">
         <h2>Ask AI about this case</h2>
         <p className="hint">
@@ -491,9 +481,9 @@ export default function CaseDetail() {
         )}
       </section>
 
-      {/* --- Documents (Plain High-Density Table) --- */}
       <section className="panel">
-        <h2>{t("case.documents")}</h2>
+        <h2>{t("case.documents")} — click to open evidence</h2>
+        <p className="hint">Every document opens with the same SourceViewer used by graph analytics and investigation findings. Same viewer everywhere.</p>
         {!docs && <Spinner />}
         {docs && docs.length === 0 && <Empty />}
         {docs && docs.length > 0 && (
@@ -514,7 +504,11 @@ export default function CaseDetail() {
                 const job = jobs[doc.id];
                 return (
                   <tr key={doc.id}>
-                    <td>{doc.filename}</td>
+                    <td>
+                      <Link to={`/documents/${doc.id}`} style={{ fontWeight: 600, textDecoration: "underline" }}>
+                        {doc.filename}
+                      </Link>
+                    </td>
                     <td>{doc.document_type}</td>
                     <td>{doc.language ?? "—"}</td>
                     <td>
@@ -548,7 +542,6 @@ export default function CaseDetail() {
         )}
       </section>
 
-      {/* --- Timeline (Plain High-Density Table) --- */}
       <section className="panel">
         <h2>{t("case.timeline")}</h2>
         {!timeline && <Spinner />}

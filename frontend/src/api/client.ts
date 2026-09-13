@@ -1433,6 +1433,12 @@ export interface ResolvedEntity {
   entity_keys: string[];
   /** Echoed from the dataset; the investigator layer never infers this. */
   criminal_status: string | null;
+  legal_status?: string | null;
+  entity_type?: string | null;
+  network_role?: string | null;
+  case_ids?: string[];
+  investigative_relevance?: any;
+  analytical_basis?: any;
   resolved: boolean;
   ambiguity_note: string | null;
 }
@@ -1641,6 +1647,14 @@ export interface InvestigatorResponse {
   provenance: ProvenanceItem[];
   memory: MemorySection | null;
   timing_ms: Record<string, number>;
+  structured_findings?: any[];
+  analytical_basis?: any;
+  investigative_relevance?: any;
+  evidence_strength?: any;
+  evidence_convergence?: any;
+  silent_intermediaries?: any[];
+  data_quality?: any[];
+  validation_notes?: string[];
 }
 
 export interface InvestigatePayload {
@@ -1724,4 +1738,61 @@ export function investigationSession(
   investigationId: string,
 ): Promise<InvestigationSessionPayload> {
   return api(`/investigate/sessions/${encodeURIComponent(investigationId)}`);
+}
+
+export interface InvestigationJob {
+  id: string;
+  dataset_id: string | null;
+  case_id: string | null;
+  investigation_id: string | null;
+  question: string;
+  objective: string | null;
+  status: string;
+  stage: string;
+  progress_pct: number;
+  message: string;
+  steps: { stage: string; message: string; at: string; status: string }[];
+  result: { response?: InvestigatorResponse; status?: string; [k: string]: any };
+  error: string | null;
+  requested_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  finished_at: string | null;
+  terminal: boolean;
+}
+
+export function startInvestigationJob(payload: InvestigatePayload): Promise<InvestigationJob> {
+  return api("/investigate/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question: payload.question,
+      case_id: payload.case_id ?? null,
+      investigation_id: payload.investigation_id ?? null,
+      objective: payload.objective ?? null,
+      max_patterns: payload.max_patterns ?? 25,
+      include_excluded: payload.include_excluded ?? true,
+    }),
+  });
+}
+
+export function getInvestigationJob(jobId: string): Promise<InvestigationJob> {
+  return api(`/investigate/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function getInvestigationJobWsUrl(jobId: string): string {
+  const token = localStorage.getItem("crimelink.access") || "";
+  const base = `/api/v1/jobs/ws/investigation/${encodeURIComponent(jobId)}`;
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.host;
+  return `${proto}://${host}${base}?token=${encodeURIComponent(token)}`;
+}
+
+export function getInvestigationJobWsUrlAlt(jobId: string): string {
+  // Alternative route under /investigate/jobs/ws/job/
+  const token = localStorage.getItem("crimelink.access") || "";
+  const base = `/api/v1/investigate/jobs/ws/job/${encodeURIComponent(jobId)}`;
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.host;
+  return `${proto}://${host}${base}?token=${encodeURIComponent(token)}`;
 }

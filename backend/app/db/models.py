@@ -815,3 +815,39 @@ class DatasetJob(Base):
         DateTime(), default=utcnow, onupdate=utcnow, nullable=False
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+
+class InvestigationJob(Base):
+    """Long-running investigative reasoning job with explicit stage tracking.
+
+    Mirrors DatasetJob's honest progress model: every stage is persisted before
+    being published, so polling and WebSocket agree, and a browser refresh can
+    recover the true state.
+
+    Stages: QUEUED, PREPARING, ANALYZING_GRAPH, DETECTING_PATTERNS,
+    RETRIEVING_EVIDENCE, SEARCHING_CONTRADICTIONS, REASONING, VALIDATING,
+    GENERATING_EXPLANATION, COMPLETED plus failure states AI_UNAVAILABLE,
+    AI_TIMEOUT, AI_INVALID_RESPONSE, DATA_ERROR, GRAPH_ERROR, INTERNAL_ERROR.
+    """
+
+    __tablename__ = "investigation_jobs"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    case_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    investigation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    objective: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="QUEUED")
+    stage: Mapped[str] = mapped_column(String(48), nullable=False, default="QUEUED")
+    progress_pct: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    steps: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(), default=utcnow, onupdate=utcnow, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)

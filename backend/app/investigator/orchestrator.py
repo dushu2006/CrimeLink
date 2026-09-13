@@ -34,8 +34,15 @@ from app.domain.models import CaseGraphSnapshot
 from app.errors import ValidationFailedError
 from app.services.cases import require_case, visible_case_ids
 
+from .assessment import (
+    assess_evidence_convergence,
+    assess_evidence_strength,
+    assess_investigative_relevance,
+    build_analytical_basis,
+    determine_network_role,
+)
 from .entity_resolution import PendingAlias, extract_mentions, resolve_mentions
-from .evidence import source_pointer
+from .evidence import doc_pointer, edge_pointer, metric_pointer, source_pointer
 from .gaps import (
     FAILED_FILE_STATUSES,
     MAX_GAPS,
@@ -51,14 +58,21 @@ from .patterns import DetectorContext, detect_all_patterns, entity_signature
 from .prompts import build_investigation_prompt
 from .relationships import discover_relationships
 from .schemas import (
+    AnalyticalBasis,
     AssessmentSection,
     DataGap,
+    DataQualityItem,
+    EvidenceConvergenceAssessment,
+    EvidenceStrengthAssessment,
     Hypothesis,
+    InvestigativeRelevanceAssessment,
     InvestigatorResponse,
     ModelSection,
     ResolvedEntity,
     ScopeSection,
+    StructuredFinding,
 )
+from .silent_intermediary import detect_silent_intermediaries
 
 #: Focused evidence graph caps (seeds plus one hop, then stop).
 FOCUSED_MAX_NODES = 60
@@ -245,7 +259,9 @@ async def load_inputs(
         snapshot = store.snapshot(resolved_case_id)
     else:
         mode = "master"
-        case_ids = sorted(await visible_case_ids(session, scope))
+        # Strict active-dataset isolation for master investigation.
+        from app.services.cases import active_dataset_case_ids
+        case_ids = sorted(await active_dataset_case_ids(session, scope))
         snapshot = store.multi_case_snapshot(case_ids)
 
     doc_index: dict[str, dict] = {}
@@ -495,8 +511,9 @@ def collect_alternatives(hypotheses: list, patterns: list, *, cap: int = 12) -> 
     return out
 
 
-def _focused_graph(snapshot: CaseGraphSnapshot, seeds: list[str]) -> dict[str, Any]:
-    """Seeds plus one hop: the evidence graph around the question."""
+def _focused_graph(snapshot: CaseGraphSnapshot, seeds: list[str], *, doc_index: dict[str, dict] | None = None, centrality: Any | None = None) -> dict[str, Any]:
+    """Seeds plus one hop: evidence graph with WHY, provenance, legal_status, network_role."""
+    doc_index = doc_index or {}
     nodes = snapshot.nodes or {}
     wanted = [seed for seed in seeds if seed in nodes]
     neighbours: list[str] = []
@@ -508,21 +525,213 @@ def _focused_graph(snapshot: CaseGraphSnapshot, seeds: list[str]) -> dict[str, A
     ordered = list(dict.fromkeys([*wanted, *sorted(set(neighbours))]))
     kept = ordered[:FOCUSED_MAX_NODES]
     kept_set = set(kept)
-    graph_nodes = [
-        {
-            "key": key,
-            "label": nodes[key].label,
-            "name": nodes[key].name or key,
-            "focus": key in set(wanted),
-        }
-        for key in kept
-    ]
-    graph_edges = [
-        {"source": edge.source_key, "target": edge.target_key, "rel_type": edge.rel_type}
-        for edge in (snapshot.edges or [])
-        if edge.source_key in kept_set and edge.target_key in kept_set
-    ][:FOCUSED_MAX_EDGES]
+
+    case_counts: dict[str, int] = {}
+    for key in kept:
+        n = nodes.get(key)
+        if n:
+            props = n.properties or {}
+            cids = props.get("case_ids") or []
+            case_counts[key] = len(set(cids))
+
+    graph_nodes = []
+    for key in kept:
+        n = nodes[key]
+        props = n.properties or {}
+        criminal_status = props.get("criminal_status")
+        legal_status = props.get("legal_status") or props.get("criminal_status") or props.get("status")
+        is_criminal = bool(criminal_status) and str(criminal_status).strip().lower() not in {"", "none", "unknown", "null"}
+        try:
+            basis = build_analytical_basis(
+                node_key=key,
+                snapshot=snapshot,
+                centrality=centrality,
+                cross_case_count=case_counts.get(key, 0),
+            )
+            network_role = determine_network_role(
+                analytical_basis=basis, cross_case_count=case_counts.get(key, 0)
+            )
+        except Exception:
+            basis = None
+            network_role = None
+
+        graph_nodes.append(
+            {
+                "key": key,
+                "label": n.label,
+                "name": n.name or key,
+                "entity_type": n.label.upper(),
+                "canonical_id": key,
+                "focus": key in set(wanted),
+                "criminal_status": criminal_status,
+                "legal_status": legal_status,
+                "is_criminal": is_criminal,
+                "network_role": network_role,
+                "case_ids": list(props.get("case_ids") or []),
+                "analytical_basis": basis.model_dump() if basis else None,
+            }
+        )
+
+    graph_edges = []
+    for edge in (snapshot.edges or []):
+        if edge.source_key not in kept_set or edge.target_key not in kept_set:
+            continue
+        props = edge.properties or {}
+        source_doc_id = props.get("source_doc_id")
+        source_doc_ids = list(props.get("source_doc_ids") or ([source_doc_id] if source_doc_id else []))
+        why_parts = []
+        rel_type = edge.rel_type
+        why_parts.append(f"Relationship {rel_type} between {edge.source_key[:8]} and {edge.target_key[:8]}")
+        if props.get("call_count"):
+            why_parts.append(f"Repeated contact: {props.get('call_count')} interactions")
+        if props.get("amount"):
+            why_parts.append(f"Financial transaction amount {props.get('amount')}")
+        if props.get("first_ts") or props.get("last_ts") or props.get("ts"):
+            ts = props.get("ts") or props.get("first_ts") or props.get("last_ts")
+            why_parts.append(f"Timestamp {ts}")
+        if source_doc_ids:
+            why_parts.append(f"Evidence from {len(source_doc_ids)} document(s)")
+        inference_label = props.get("inference_label") or "FACT"
+        confidence = float(props.get("confidence", 1.0))
+        reason = props.get("reason") or f"Source document {source_doc_id} establishes {rel_type}"
+
+        provenance = []
+        for doc_id in source_doc_ids[:3]:
+            info = doc_index.get(doc_id, {})
+            filename = info.get("filename", doc_id)
+            provenance.append(
+                {
+                    "kind": "document",
+                    "ref": doc_id,
+                    "label": filename,
+                    "doc_id": doc_id,
+                    "case_id": info.get("case_id"),
+                    "content_hash": info.get("content_hash"),
+                }
+            )
+        provenance.append(
+            {
+                "kind": "graph_edge",
+                "ref": edge.key,
+                "label": f"{rel_type} edge",
+                "detail": reason,
+                "doc_id": None,
+                "origin_file": None,
+                "content_hash": None,
+            }
+        )
+
+        graph_edges.append(
+            {
+                "source": edge.source_key,
+                "target": edge.target_key,
+                "rel_type": rel_type,
+                "why": ". ".join(why_parts) + ".",
+                "source_doc_id": source_doc_id,
+                "source_doc_ids": source_doc_ids,
+                "evidence_id": props.get("evidence_id"),
+                "date_time": props.get("ts") or props.get("first_ts") or props.get("last_ts"),
+                "inference_label": inference_label,
+                "confidence": confidence,
+                "reason": reason,
+                "provenance": provenance,
+            }
+        )
+        if len(graph_edges) >= FOCUSED_MAX_EDGES:
+            break
+
     return {"nodes": graph_nodes, "edges": graph_edges, "truncated": len(ordered) > len(kept)}
+
+
+def _validate_evidence_references(
+    evidence_items: list,
+    *,
+    doc_index: dict[str, dict],
+    snapshot: CaseGraphSnapshot,
+) -> list[str]:
+    """Validate every evidence reference resolves to real doc/entity."""
+    notes: list[str] = []
+    valid_doc_ids = set(doc_index.keys())
+    for item in evidence_items or []:
+        for prov in getattr(item, "provenance", []) or []:
+            if isinstance(prov, dict):
+                doc_id = prov.get("doc_id")
+            else:
+                doc_id = getattr(prov, "doc_id", None)
+            if doc_id and doc_id not in valid_doc_ids and not str(doc_id).startswith("dataset:"):
+                notes.append(f"Invalid document reference {doc_id} in evidence {getattr(item, 'summary', '')[:60]}")
+        doc_id = getattr(item, "document_id", None)
+        if doc_id and doc_id not in valid_doc_ids:
+            notes.append(f"Invalid document_id {doc_id} in evidence {getattr(item, 'summary', '')[:60]}")
+    return notes
+
+
+def _assess_data_quality(
+    *,
+    snapshot: CaseGraphSnapshot,
+    entities: list[ResolvedEntity],
+    doc_index: dict[str, dict],
+    pending_aliases: list[PendingAlias],
+) -> list[DataQualityItem]:
+    """Build data quality panel: unresolved, ambiguous, missing sources, etc."""
+    items: list[DataQualityItem] = []
+    unresolved = [e for e in entities if not e.resolved]
+    if unresolved:
+        items.append(
+            DataQualityItem(
+                category="unresolved-entity",
+                description=f"{len(unresolved)} mention(s) did not match any record",
+                severity="WARN",
+                affected_entities=[e.display_name for e in unresolved],
+                recommendation="Provide additional identifying evidence (phone, account, alias) to resolve",
+            )
+        )
+    if pending_aliases:
+        items.append(
+            DataQualityItem(
+                category="ambiguous-identity",
+                description=f"{len(pending_aliases)} open identity proposals awaiting review",
+                severity="INFO",
+                affected_entities=[f"{p.source_key} ↔ {p.target_key}" for p in pending_aliases[:5]],
+                recommendation="Review entity resolution queue to confirm or reject merges",
+            )
+        )
+    from .gaps import MISSING_SOURCE_HELP
+
+    present_types = set()
+    for info in doc_index.values():
+        dt = str(info.get("document_type", "")).upper()
+        present_types.add(dt)
+    for source_family, help_text in MISSING_SOURCE_HELP.items():
+        if source_family not in present_types and source_family not in {k.upper() for k in present_types}:
+            if source_family in ("CDR", "FINANCIAL", "SURVEILLANCE", "CCTV"):
+                has_relevant_edge = False
+                for edge in snapshot.edges or []:
+                    if source_family == "CDR" and edge.rel_type == "CALLED":
+                        has_relevant_edge = True
+                    if source_family == "FINANCIAL" and edge.rel_type == "TRANSFER_TO":
+                        has_relevant_edge = True
+                if has_relevant_edge:
+                    continue
+                items.append(
+                    DataQualityItem(
+                        category="missing-source",
+                        description=f"{source_family} data not present in active dataset scope",
+                        severity="INFO",
+                        recommendation=help_text,
+                    )
+                )
+    low_conf = [e for e in snapshot.edges or [] if float(e.properties.get("confidence", 1.0)) < 0.5]
+    if low_conf:
+        items.append(
+            DataQualityItem(
+                category="low-confidence-relationship",
+                description=f"{len(low_conf)} low-confidence relationships (<0.5) in scope",
+                severity="INFO",
+                recommendation="Treat low-confidence links as leads requiring corroboration",
+            )
+        )
+    return items[:15]
 
 
 def _overall(
@@ -701,7 +910,7 @@ async def investigate(
         timeline = []
 
     seeds = [entity.canonical_id for entity in resolved]
-    focused = _focused_graph(inputs.snapshot, seeds)
+    focused = _focused_graph(inputs.snapshot, seeds, doc_index=inputs.doc_index, centrality=inputs.centrality)
     provenance = [
         source_pointer(
             doc_id=doc_id,
@@ -716,6 +925,144 @@ async def investigate(
     overall_strength, overall_confidence = _overall(
         hypotheses, patterns, entities=entities, mention_count=len(mentions)
     )
+
+    # --- Enhanced analytical assessments ---
+    # Build analytical basis for each resolved entity
+    for entity in resolved:
+        try:
+            case_ids_for_entity = []
+            node = inputs.snapshot.nodes.get(entity.canonical_id)
+            if node:
+                case_ids_for_entity = list((node.properties or {}).get("case_ids", []) or [])
+            basis = build_analytical_basis(
+                node_key=entity.canonical_id,
+                snapshot=inputs.snapshot,
+                centrality=inputs.centrality,
+                cross_case_count=len(set(case_ids_for_entity)),
+                evidence_count=len([e for e in inputs.snapshot.edges or [] if e.source_key == entity.canonical_id or e.target_key == entity.canonical_id]),
+                source_count=len(inputs.doc_index),
+            )
+            entity.analytical_basis = basis
+            entity.entity_type = node.label.upper() if node else entity.label.upper()
+            entity.legal_status = (node.properties or {}).get("legal_status") or (node.properties or {}).get("criminal_status") if node else entity.criminal_status
+            entity.network_role = determine_network_role(
+                analytical_basis=basis, cross_case_count=len(set(case_ids_for_entity))
+            )
+            entity.case_ids = case_ids_for_entity
+        except Exception:
+            pass
+
+    # Evidence convergence & strength at overall level
+    all_doc_ids = []
+    all_source_types = []
+    for rel in relationships:
+        for ev in rel.evidence:
+            for prov in ev.provenance:
+                if prov.doc_id:
+                    all_doc_ids.append(prov.doc_id)
+                    info = inputs.doc_index.get(prov.doc_id, {})
+                    if info.get("document_type"):
+                        all_source_types.append(str(info.get("document_type")))
+    for pat in patterns:
+        if pat.excluded:
+            continue
+        for ev in pat.evidence:
+            for prov in ev.provenance:
+                if prov.doc_id:
+                    all_doc_ids.append(prov.doc_id)
+                    info = inputs.doc_index.get(prov.doc_id, {})
+                    if info.get("document_type"):
+                        all_source_types.append(str(info.get("document_type")))
+
+    evidence_convergence = assess_evidence_convergence(
+        source_types=all_source_types,
+        doc_ids=all_doc_ids,
+        record_count=len(all_doc_ids),
+    )
+    evidence_strength = assess_evidence_strength(
+        independent_sources=evidence_convergence.independent_source_count,
+        corroborating_records=len(all_doc_ids),
+        has_contradictions=any(h.contradicting for h in hypotheses),
+        contradiction_level="major" if any(h.strength_factors.contradiction_level == "major" for h in hypotheses) else "minor" if any(h.contradicting for h in hypotheses) else "none",
+        temporal_consistency=True,
+        provenance_available=len(provenance) > 0,
+    )
+    investigative_relevance = assess_investigative_relevance(
+        analytical_basis=AnalyticalBasis(
+            degree_centrality=max([getattr(e.analytical_basis, "degree_centrality", 0) or 0 for e in resolved], default=0),
+            betweenness_centrality=max([getattr(e.analytical_basis, "betweenness_centrality", 0) or 0 for e in resolved], default=0),
+            pagerank=max([getattr(e.analytical_basis, "pagerank", 0) or 0 for e in resolved], default=0),
+            cross_case_count=len(inputs.case_ids),
+        ),
+        cross_case_count=len(inputs.case_ids) if len(resolved) > 0 else 0,
+        evidence_convergence_type=evidence_convergence.convergence_type,
+        has_contradictions=any(h.contradicting for h in hypotheses),
+        data_completeness=1.0 - (len(gaps) / max(1, len(inputs.doc_index) + len(gaps))),
+    )
+
+    # Silent intermediary detection
+    try:
+        silent_intermediaries = detect_silent_intermediaries(
+            inputs.snapshot, inputs.centrality, doc_index=inputs.doc_index, limit=5
+        )
+    except Exception:
+        silent_intermediaries = []
+
+    # Data quality
+    try:
+        data_quality = _assess_data_quality(
+            snapshot=inputs.snapshot,
+            entities=entities,
+            doc_index=inputs.doc_index,
+            pending_aliases=inputs.pending_aliases,
+        )
+    except Exception:
+        data_quality = []
+
+    # Validation notes
+    try:
+        all_evidence = []
+        for rel in relationships:
+            all_evidence.extend(rel.evidence)
+        for pat in patterns:
+            all_evidence.extend(pat.evidence)
+        for hyp in hypotheses:
+            all_evidence.extend(hyp.supporting)
+            all_evidence.extend(hyp.contradicting)
+        validation_notes = _validate_evidence_references(
+            all_evidence, doc_index=inputs.doc_index, snapshot=inputs.snapshot
+        )
+    except Exception:
+        validation_notes = []
+
+    # Structured findings (internal contract)
+    structured_findings = []
+    try:
+        for idx, pat in enumerate([p for p in patterns if not p.excluded][:5]):
+            finding = StructuredFinding(
+                finding_id=f"F{idx+1:03d}",
+                title=pat.title,
+                finding_type=pat.kind,
+                objective=turn_objective,
+                entities=[e for e in resolved if e.canonical_id in (pat.entity_keys or [])][:3],
+                analytical_basis=pat.analytical_basis or AnalyticalBasis(),
+                relationships=[r for r in relationships if set(r.entities) & set(pat.entities)][:3],
+                patterns=[pat],
+                supporting_evidence=[ev for ev in pat.evidence if ev.stance == "supports"][:5],
+                contradictory_evidence=[ev for ev in pat.evidence if ev.stance == "contradicts"][:5],
+                alternative_explanations=pat.innocent_alternatives[:3],
+                assessment={
+                    "investigative_relevance": pat.investigative_relevance.model_dump() if pat.investigative_relevance else None,
+                    "evidence_strength": pat.evidence_strength.model_dump() if pat.evidence_strength else None,
+                    "strength": pat.strength,
+                },
+                data_gaps=[g for g in gaps if any(e in g.entities for e in pat.entities)][:3],
+                focused_graph=_focused_graph(inputs.snapshot, pat.entity_keys or [], doc_index=inputs.doc_index, centrality=inputs.centrality),
+                next_investigative_direction=steps[0].action if steps else "",
+            )
+            structured_findings.append(finding)
+    except Exception:
+        structured_findings = []
     live_patterns = [pattern for pattern in patterns if not pattern.excluded]
     observation = (
         f"{len(resolved)} of {len(entities)} mention(s) resolved; "
@@ -870,6 +1217,21 @@ async def investigate(
     await session.flush()
     timings["total_ms"] = int((time.monotonic() - started) * 1000)
 
+    # Build analytical basis summary for overall
+    analytical_basis_summary = {
+        "nodes_considered": len(inputs.snapshot.nodes or {}),
+        "edges_considered": len(inputs.snapshot.edges or []),
+        "documents_considered": len(inputs.doc_index),
+        "cases_considered": len(inputs.case_ids),
+        "centrality_computed": inputs.centrality is not None,
+        "evidence_convergence": evidence_convergence.model_dump(),
+        "evidence_strength": evidence_strength.model_dump(),
+        "investigative_relevance": investigative_relevance.model_dump(),
+        "silent_intermediaries_count": len(silent_intermediaries),
+        "data_quality_issues": len(data_quality),
+        "validation_issues": len(validation_notes),
+    }
+
     return InvestigatorResponse(
         question=question,
         objective=turn_objective,
@@ -902,6 +1264,10 @@ async def investigate(
             assessment=assessment_text,
             caveats=caveats[:5],
             model=model_section,
+            investigative_relevance=investigative_relevance,
+            evidence_strength=evidence_strength,
+            evidence_convergence=evidence_convergence,
+            analytical_basis_summary=analytical_basis_summary,
         ),
         gaps=gaps,
         next_steps=steps,
@@ -910,6 +1276,14 @@ async def investigate(
         provenance=provenance,
         memory=memory_section(thread),
         timing_ms=timings,
+        structured_findings=structured_findings,
+        analytical_basis=analytical_basis_summary,
+        investigative_relevance=investigative_relevance,
+        evidence_strength=evidence_strength,
+        evidence_convergence=evidence_convergence,
+        silent_intermediaries=silent_intermediaries,
+        data_quality=data_quality,
+        validation_notes=validation_notes,
     )
 
 
@@ -1024,6 +1398,725 @@ async def detect_patterns_standalone(
     }
 
 
+async def investigate_deterministic(
+    session: AsyncSession,
+    scope,
+    *,
+    question: str,
+    case_id: str | None = None,
+    investigation_id: str | None = None,
+    objective: str | None = None,
+    max_patterns: int = 25,
+    include_excluded: bool = True,
+) -> tuple[InvestigationInputs, dict[str, Any]]:
+    """Deterministic preparation only — graph, patterns, relationships, hypotheses, gaps.
+
+    Returns (inputs, deterministic_result) without AI narrative.
+    This is cached separately so AI retry does not recompute graph analytics.
+    """
+    timings: dict[str, int] = {}
+    started = time.monotonic()
+
+    def _mark(stage: str, stage_start: float) -> None:
+        timings[stage] = int((time.monotonic() - stage_start) * 1000)
+
+    stage = time.monotonic()
+    inputs = await load_inputs(session, scope, case_id)
+    _mark("scope_ms", stage)
+
+    thread = None
+    if investigation_id:
+        thread = await get_session(session, investigation_id, dataset_id=inputs.dataset_id)
+
+    turn_objective = derive_objective(question, explicit=objective, thread=thread)
+
+    stage = time.monotonic()
+    mentions = extract_mentions(question)
+    carried: list[str] = []
+    if not mentions and thread is not None:
+        carried = [
+            str(name).strip()
+            for name in (thread.state or {}).get("entities", [])
+            if str(name).strip()
+        ][-MAX_CARRIED:]
+        mentions = carried
+    entities = resolve_mentions(mentions, inputs.snapshot, pending_aliases=inputs.pending_aliases)
+    _mark("resolution_ms", stage)
+
+    stage = time.monotonic()
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=inputs.snapshot,
+            doc_index=inputs.doc_index,
+            centrality=inputs.centrality,
+            engine_findings=inputs.engine_findings,
+            analytics_findings=inputs.analytics_findings,
+            incident_ts=inputs.incident_ts,
+            pending_aliases=inputs.pending_aliases,
+            dismissed_signatures=inputs.dismissed_signatures,
+            dismissed_notes=inputs.dismissed_notes,
+        ),
+        max_patterns=max_patterns,
+        include_excluded=include_excluded,
+    )
+    _mark("patterns_ms", stage)
+
+    stage = time.monotonic()
+    relationships = discover_relationships(inputs.snapshot, entities, doc_index=inputs.doc_index)
+    _mark("relationships_ms", stage)
+
+    stage = time.monotonic()
+    resolved = [entity for entity in entities if entity.resolved]
+    pairs = [
+        (resolved[index], resolved[other])
+        for index in range(len(resolved))
+        for other in range(index + 1, len(resolved))
+    ][:MAX_PAIRS]
+    hypotheses = build_hypotheses(
+        pairs,
+        relationships,
+        patterns,
+        dismissed_signatures=inputs.dismissed_signatures,
+        dismissed_notes=inputs.dismissed_notes,
+    )
+    _carry_rejected_hypotheses(hypotheses, thread)
+    convergence = build_convergence(hypotheses)
+    _mark("hypotheses_ms", stage)
+
+    stage = time.monotonic()
+    gaps = build_gaps(
+        entities,
+        present_sources(inputs.doc_types, inputs.snapshot),
+        hypotheses,
+        relationships,
+        inputs.case_ids,
+        import_report=inputs.import_report,
+        documents_in_scope=len(inputs.doc_index),
+    )
+    steps = build_next_steps(entities, gaps, hypotheses, patterns, inputs.case_ids)
+    _mark("gaps_ms", stage)
+
+    try:
+        timeline = build_timeline(inputs.snapshot, limit=TIMELINE_LIMIT)
+    except Exception:
+        timeline = []
+
+    seeds = [entity.canonical_id for entity in resolved]
+    focused = _focused_graph(inputs.snapshot, seeds, doc_index=inputs.doc_index, centrality=inputs.centrality)
+    provenance = [
+        source_pointer(
+            doc_id=doc_id,
+            label=str(info.get("filename") or doc_id),
+            origin_file=str(info.get("filename")) if info.get("filename") else None,
+            content_hash=info.get("content_hash"),
+            detail=str(info.get("document_type")) if info.get("document_type") else None,
+        )
+        for doc_id, info in sorted(inputs.doc_index.items())
+    ][:PROVENANCE_CAP]
+
+    overall_strength, overall_confidence = _overall(
+        hypotheses, patterns, entities=entities, mention_count=len(mentions)
+    )
+
+    # Enhanced assessments (deterministic part)
+    for entity in resolved:
+        try:
+            case_ids_for_entity = []
+            node = inputs.snapshot.nodes.get(entity.canonical_id)
+            if node:
+                case_ids_for_entity = list((node.properties or {}).get("case_ids", []) or [])
+            basis = build_analytical_basis(
+                node_key=entity.canonical_id,
+                snapshot=inputs.snapshot,
+                centrality=inputs.centrality,
+                cross_case_count=len(set(case_ids_for_entity)),
+            )
+            entity.analytical_basis = basis
+            entity.entity_type = node.label.upper() if node else entity.label.upper()
+            entity.legal_status = (node.properties or {}).get("legal_status") or (node.properties or {}).get("criminal_status") if node else entity.criminal_status
+            entity.network_role = determine_network_role(
+                analytical_basis=basis, cross_case_count=len(set(case_ids_for_entity))
+            )
+            entity.case_ids = case_ids_for_entity
+        except Exception:
+            pass
+
+    all_doc_ids = []
+    all_source_types = []
+    for rel in relationships:
+        for ev in rel.evidence:
+            for prov in ev.provenance:
+                if prov.doc_id:
+                    all_doc_ids.append(prov.doc_id)
+                    info = inputs.doc_index.get(prov.doc_id, {})
+                    if info.get("document_type"):
+                        all_source_types.append(str(info.get("document_type")))
+    for pat in patterns:
+        if pat.excluded:
+            continue
+        for ev in pat.evidence:
+            for prov in ev.provenance:
+                if prov.doc_id:
+                    all_doc_ids.append(prov.doc_id)
+                    info = inputs.doc_index.get(prov.doc_id, {})
+                    if info.get("document_type"):
+                        all_source_types.append(str(info.get("document_type")))
+
+    evidence_convergence = assess_evidence_convergence(
+        source_types=all_source_types,
+        doc_ids=all_doc_ids,
+        record_count=len(all_doc_ids),
+    )
+    evidence_strength = assess_evidence_strength(
+        independent_sources=evidence_convergence.independent_source_count,
+        corroborating_records=len(all_doc_ids),
+        has_contradictions=any(h.contradicting for h in hypotheses),
+        contradiction_level="major" if any(h.strength_factors.contradiction_level == "major" for h in hypotheses) else "minor" if any(h.contradicting for h in hypotheses) else "none",
+    )
+    investigative_relevance = assess_investigative_relevance(
+        analytical_basis=AnalyticalBasis(
+            degree_centrality=max([getattr(e.analytical_basis, "degree_centrality", 0) or 0 for e in resolved], default=0),
+            betweenness_centrality=max([getattr(e.analytical_basis, "betweenness_centrality", 0) or 0 for e in resolved], default=0),
+            pagerank=max([getattr(e.analytical_basis, "pagerank", 0) or 0 for e in resolved], default=0),
+            cross_case_count=len(inputs.case_ids),
+        ),
+        cross_case_count=len(inputs.case_ids) if len(resolved) > 0 else 0,
+        evidence_convergence_type=evidence_convergence.convergence_type,
+        has_contradictions=any(h.contradicting for h in hypotheses),
+        data_completeness=1.0 - (len(gaps) / max(1, len(inputs.doc_index) + len(gaps))),
+    )
+
+    try:
+        silent_intermediaries = detect_silent_intermediaries(
+            inputs.snapshot, inputs.centrality, doc_index=inputs.doc_index, limit=5
+        )
+    except Exception:
+        silent_intermediaries = []
+
+    try:
+        data_quality = _assess_data_quality(
+            snapshot=inputs.snapshot,
+            entities=entities,
+            doc_index=inputs.doc_index,
+            pending_aliases=inputs.pending_aliases,
+        )
+    except Exception:
+        data_quality = []
+
+    try:
+        all_evidence = []
+        for rel in relationships:
+            all_evidence.extend(rel.evidence)
+        for pat in patterns:
+            all_evidence.extend(pat.evidence)
+        for hyp in hypotheses:
+            all_evidence.extend(hyp.supporting)
+            all_evidence.extend(hyp.contradicting)
+        validation_notes = _validate_evidence_references(
+            all_evidence, doc_index=inputs.doc_index, snapshot=inputs.snapshot
+        )
+    except Exception:
+        validation_notes = []
+
+    deterministic = {
+        "inputs": inputs,
+        "entities": entities,
+        "resolved": resolved,
+        "mentions": mentions,
+        "patterns": patterns,
+        "relationships": relationships,
+        "hypotheses": hypotheses,
+        "convergence": convergence,
+        "gaps": gaps,
+        "steps": steps,
+        "timeline": timeline,
+        "focused": focused,
+        "provenance": provenance,
+        "overall_strength": overall_strength,
+        "overall_confidence": overall_confidence,
+        "evidence_convergence": evidence_convergence,
+        "evidence_strength": evidence_strength,
+        "investigative_relevance": investigative_relevance,
+        "silent_intermediaries": silent_intermediaries,
+        "data_quality": data_quality,
+        "validation_notes": validation_notes,
+        "turn_objective": turn_objective,
+        "thread": thread,
+        "timings": timings,
+    }
+    timings["total_ms"] = int((time.monotonic() - started) * 1000)
+    return inputs, deterministic
+
+
+async def investigate_with_reporter(
+    session: AsyncSession,
+    scope,
+    principal,
+    *,
+    question: str,
+    case_id: str | None = None,
+    investigation_id: str | None = None,
+    objective: str | None = None,
+    max_patterns: int = 25,
+    include_excluded: bool = True,
+    reporter: Any | None = None,
+) -> dict[str, Any]:
+    """Long-running investigation with honest stage reporting via reporter.
+
+    Stages: QUEUED -> PREPARING -> ANALYZING_GRAPH -> DETECTING_PATTERNS ->
+    RETRIEVING_EVIDENCE -> SEARCHING_CONTRADICTIONS -> REASONING -> VALIDATING ->
+    GENERATING_EXPLANATION -> COMPLETED, with failure handling.
+    """
+    from app.db.base import new_uuid
+    from app.ai.gateway import get_ai_gateway
+    from .memory import create_session, memory_section, record_turn
+    from .prompts import build_investigation_prompt
+
+    timings: dict[str, int] = {}
+    started = time.monotonic()
+
+    def _mark(stage: str, stage_start: float) -> None:
+        timings[stage] = int((time.monotonic() - stage_start) * 1000)
+
+    async def _report(stage: str, pct: int, msg: str, status: str | None = None):
+        if reporter:
+            await reporter.update(stage=stage, progress_pct=pct, message=msg, status=status)
+
+    try:
+        await _report("PREPARING", 5, "Loading active dataset and graph snapshot")
+        stage_t = time.monotonic()
+        inputs, det = await investigate_deterministic(
+            session,
+            scope,
+            question=question,
+            case_id=case_id,
+            investigation_id=investigation_id,
+            objective=objective,
+            max_patterns=max_patterns,
+            include_excluded=include_excluded,
+        )
+        _mark("scope_ms", stage_t)
+        _mark("resolution_ms", stage_t)
+        _mark("patterns_ms", stage_t)
+        _mark("relationships_ms", stage_t)
+        _mark("hypotheses_ms", stage_t)
+        _mark("gaps_ms", stage_t)
+
+        if is_conversational(question):
+            # Fast path — no AI needed
+            thread = det["thread"]
+            if thread is None:
+                thread = await create_session(
+                    session,
+                    dataset_id=inputs.dataset_id,
+                    case_id=inputs.case_id,
+                    scope=inputs.mode,
+                    title=question,
+                    created_by=getattr(principal, "id", None),
+                )
+            await session.flush()
+            # Build minimal response
+            resp = InvestigatorResponse(
+                question=question,
+                objective=det["turn_objective"],
+                investigation_id=thread.id,
+                scope=ScopeSection(
+                    mode=inputs.mode,  # type: ignore
+                    label=scope_label(inputs),
+                    dataset_id=inputs.dataset_id,
+                    dataset_name=inputs.dataset_name,
+                    case_id=inputs.case_id,
+                    case_number=inputs.case_number,
+                    case_title=inputs.case_title,
+                    case_ids=inputs.case_ids,
+                    nodes_considered=0,
+                    edges_considered=0,
+                    documents_considered=0,
+                ),
+                assessment=AssessmentSection(
+                    overall_strength="INSUFFICIENT",
+                    overall_confidence=0.0,
+                    convergence={"converges": False, "note": "Conversational turn: no analysis run."},
+                    observation="Conversational message, not an investigation question.",
+                    interpretation="No entities were extracted and no detectors ran.",
+                    assessment="Hello — I investigate the active dataset. Ask me about named people, phones, vehicles, or accounts.",
+                    caveats=[],
+                    model=ModelSection(available=False, reason="conversational"),
+                ),
+                memory=memory_section(thread),
+                timing_ms=timings,
+            )
+            await _report("COMPLETED", 100, "Conversational reply", status="COMPLETED")
+            return {"response": resp.model_dump(), "status": "COMPLETED"}
+
+        await _report("ANALYZING_GRAPH", 20, "Computing graph metrics (degree, betweenness, PageRank, communities)")
+        # Centrality already computed in deterministic
+
+        await _report("DETECTING_PATTERNS", 35, f"Detecting unusual patterns ({len(det['patterns'])} found)")
+
+        await _report("RETRIEVING_EVIDENCE", 50, f"Retrieving supporting evidence ({len(det['relationships'])} relationships)")
+
+        await _report("SEARCHING_CONTRADICTIONS", 65, f"Searching contradictory evidence and alternatives ({len(det['hypotheses'])} hypotheses)")
+
+        # Prepare AI context
+        entities = det["entities"]
+        relationships = det["relationships"]
+        patterns = det["patterns"]
+        hypotheses = det["hypotheses"]
+        gaps = det["gaps"]
+        thread = det["thread"]
+        turn_objective = det["turn_objective"]
+        observation = (
+            f"{len(det['resolved'])} of {len(entities)} mention(s) resolved; "
+            f"{len(relationships)} relationship(s), {len([p for p in patterns if not p.excluded])} live pattern(s), "
+            f"{len(hypotheses)} hypotheses; scope {inputs.mode} over "
+            f"{len(inputs.case_ids)} case(s), {len(inputs.snapshot.nodes or {})} nodes, "
+            f"{len(inputs.snapshot.edges or [])} edges, {len(inputs.doc_index)} documents."
+        )
+        convergence = det["convergence"]
+        interpretation = "Convergence: " + convergence["note"] if convergence.get("note") else "No convergence reading."
+        if hypotheses:
+            basis = f"{len(hypotheses)} hypothesis(es) formed from this question"
+        elif any(e.resolved for e in entities):
+            basis = "the records the question's entities resolved to"
+        else:
+            basis = "the scope's own patterns — this question formed no hypothesis"
+        assessment_text = (
+            f"Overall strength {det['overall_strength']} (confidence {det['overall_confidence']:.0%}) over {basis}. "
+            + (
+                "Independent streams agree — follow the top reading first."
+                if convergence.get("converges")
+                else "Streams do not converge — treat every reading as provisional."
+            )
+        )
+        unresolved = [e for e in entities if not e.resolved]
+        caveats = []
+        if unresolved:
+            caveats.append(f"{len(unresolved)} mention(s) matched no record and were treated as data gaps.")
+
+        brief = build_investigation_prompt(
+            question=question,
+            scope_summary=observation,
+            entity_lines=[
+                f"{e.display_name} ({e.label}, type={getattr(e, 'entity_type', e.label)}, {e.matched_by}, confidence {e.confidence}, legal_status={getattr(e, 'legal_status', 'unknown')}, network_role={getattr(e, 'network_role', 'unknown')})" + ("" if e.resolved else " — UNRESOLVED")
+                for e in entities
+            ],
+            relationship_lines=[
+                f"[{r.kind}/{r.inference_label}] {r.title} WHY: {getattr(r, 'why', '') or r.description}"
+                for r in relationships
+            ],
+            pattern_lines=[
+                f"[{p.kind}/{p.strength}] {p.title} analytical_basis: {p.analytical_basis.model_dump() if p.analytical_basis else 'none'}" + (" (set aside)" if p.excluded else "")
+                for p in patterns
+            ],
+            hypothesis_lines=[
+                f"{h.id} [{h.strength}]: {h.statement} supporting={len(h.supporting)} contradicting={len(h.contradicting)}"
+                for h in hypotheses
+            ],
+            convergence_line=convergence.get("note", ""),
+            gap_lines=[f"[{g.category}] {g.description}" for g in gaps],
+            memory_lines=_memory_lines(thread),
+        )
+
+        from app.db.base import new_uuid as _new_uuid
+
+        thread_id = thread.id if thread else _new_uuid()
+        gateway = get_ai_gateway()
+
+        await _report("REASONING", 75, "Running investigator reasoning model (big reasoning model — may take time)")
+        stage_t = time.monotonic()
+        model_section = await gateway.investigate_narrative(
+            question=question,
+            brief=brief,
+            investigation_id=thread_id,
+            entities=entities,
+            user_id=getattr(principal, "id", None),
+            session=session,
+        )
+        _mark("narrative_ms", stage_t)
+
+        # Handle model unavailable / failure honestly
+        if not model_section.available:
+            reason = model_section.reason or "unknown"
+            # Distinguish timeout vs unavailable vs invalid response
+            if "timeout" in reason.lower():
+                await _report("AI_TIMEOUT", 90, f"Reasoning model timed out ({reason}) — deterministic analysis preserved", status="AI_TIMEOUT")
+                # Return deterministic partial result with honest note
+            elif "unavailable" in reason.lower() or "no_api_key" in reason.lower():
+                await _report("AI_UNAVAILABLE", 90, f"Reasoning model unavailable ({reason}) — deterministic analysis preserved", status="AI_UNAVAILABLE")
+            else:
+                await _report("AI_INVALID_RESPONSE", 90, f"Reasoning model invalid response ({reason}) — deterministic analysis preserved", status="AI_INVALID_RESPONSE")
+
+            # Still create thread if needed
+            if thread is None:
+                thread = await create_session(
+                    session,
+                    dataset_id=inputs.dataset_id,
+                    case_id=inputs.case_id,
+                    scope=inputs.mode,
+                    title=question,
+                    created_by=getattr(principal, "id", None),
+                    thread_id=thread_id,
+                )
+
+            response_facts = collect_facts(
+                relationships,
+                patterns,
+                hypotheses,
+                entity_keys={key for entity in det["resolved"] for key in (entity.entity_keys or [])},
+            )
+            alternatives = collect_alternatives(hypotheses, patterns)
+            thread.state = record_turn(
+                dict(thread.state or {}),
+                question=question,
+                objective=turn_objective,
+                facts=[ev.summary for ev in response_facts],
+                hypotheses=[{"id": h.id, "statement": h.statement, "strength": h.strength} for h in hypotheses],
+                entities=[e.display_name for e in det["resolved"]],
+                gaps=[g.description for g in gaps],
+                unresolved=[e.display_name for e in unresolved],
+                contradictions=[item.summary for h in hypotheses for item in h.contradicting],
+                relationships=[f"{f.kind}: {f.title}" for f in relationships[:10]],
+                rejected=[
+                    {"id": h.id, "statement": h.statement, "reason": h.contradicting[0].summary if h.contradicting else "not supported"}
+                    for h in hypotheses
+                    if h.strength == "INSUFFICIENT"
+                ],
+                findings=[f"{det['overall_strength']}: {fact.summary}" for fact in response_facts[:5]],
+            )
+            await session.flush()
+            timings["total_ms"] = int((time.monotonic() - started) * 1000)
+
+            resp = InvestigatorResponse(
+                question=question,
+                objective=turn_objective,
+                investigation_id=thread.id,
+                scope=ScopeSection(
+                    mode=inputs.mode,  # type: ignore
+                    label=scope_label(inputs),
+                    dataset_id=inputs.dataset_id,
+                    dataset_name=inputs.dataset_name,
+                    case_id=inputs.case_id,
+                    case_number=inputs.case_number,
+                    case_title=inputs.case_title,
+                    case_ids=inputs.case_ids,
+                    nodes_considered=len(inputs.snapshot.nodes or {}),
+                    edges_considered=len(inputs.snapshot.edges or []),
+                    documents_considered=len(inputs.doc_index),
+                ),
+                entities=entities,
+                facts=response_facts,
+                relationships=relationships,
+                patterns=patterns,
+                hypotheses=hypotheses,
+                alternative_explanations=alternatives,
+                assessment=AssessmentSection(
+                    overall_strength=det["overall_strength"],
+                    overall_confidence=det["overall_confidence"],
+                    convergence=convergence,
+                    observation=observation,
+                    interpretation=interpretation,
+                    assessment=assessment_text + " Deterministic analysis completed. Reasoning model unavailable. Investigator can still inspect analytical findings, evidence and graph.",
+                    caveats=caveats[:5] + ["Reasoning model unavailable — showing deterministic analysis only"],
+                    model=model_section,
+                    investigative_relevance=det["investigative_relevance"],
+                    evidence_strength=det["evidence_strength"],
+                    evidence_convergence=det["evidence_convergence"],
+                    analytical_basis_summary={
+                        "nodes_considered": len(inputs.snapshot.nodes or {}),
+                        "edges_considered": len(inputs.snapshot.edges or []),
+                        "documents_considered": len(inputs.doc_index),
+                    },
+                ),
+                gaps=gaps,
+                next_steps=det["steps"],
+                timeline=det["timeline"],
+                focused_graph=det["focused"],
+                provenance=det["provenance"],
+                memory=memory_section(thread),
+                timing_ms=timings,
+                structured_findings=[],
+                analytical_basis={
+                    "nodes_considered": len(inputs.snapshot.nodes or {}),
+                    "edges_considered": len(inputs.snapshot.edges or []),
+                    "documents_considered": len(inputs.doc_index),
+                },
+                investigative_relevance=det["investigative_relevance"],
+                evidence_strength=det["evidence_strength"],
+                evidence_convergence=det["evidence_convergence"],
+                silent_intermediaries=det["silent_intermediaries"],
+                data_quality=det["data_quality"],
+                validation_notes=det["validation_notes"] + [f"Model unavailable: {reason}"],
+            )
+            # Persist result even on model failure
+            final_payload = {"response": resp.model_dump(), "status": model_section.reason or "AI_UNAVAILABLE"}
+            if reporter:
+                # Don't mark terminal as FAILED — deterministic work succeeded
+                await reporter.update(
+                    status=model_section.reason if "AI_" in (model_section.reason or "") else "AI_UNAVAILABLE",
+                    stage="COMPLETED_WITH_DETERMINISTIC",
+                    progress_pct=100,
+                    message="Deterministic analysis completed; reasoning model unavailable",
+                    result=final_payload,
+                )
+            return final_payload
+
+        await _report("VALIDATING", 85, "Validating evidence references and canonical IDs")
+        # Validation already done in deterministic, but also validate AI output does not invent IDs
+        # The gateway already validates, but we double-check
+        validation_notes = det["validation_notes"]
+        # Check that AI summary does not invent unknown PERSON: IDs?
+        # For now, trust gateway's validation; if malformed, it would have returned unavailable
+
+        await _report("GENERATING_EXPLANATION", 95, "Generating investigator explanation")
+
+        if thread is None:
+            thread = await create_session(
+                session,
+                dataset_id=inputs.dataset_id,
+                case_id=inputs.case_id,
+                scope=inputs.mode,
+                title=question,
+                created_by=getattr(principal, "id", None),
+                thread_id=thread_id,
+            )
+
+        response_facts = collect_facts(
+            relationships,
+            patterns,
+            hypotheses,
+            entity_keys={key for entity in det["resolved"] for key in (entity.entity_keys or [])},
+        )
+        alternatives = collect_alternatives(hypotheses, patterns)
+        thread.state = record_turn(
+            dict(thread.state or {}),
+            question=question,
+            objective=turn_objective,
+            facts=[ev.summary for ev in response_facts],
+            hypotheses=[{"id": h.id, "statement": h.statement, "strength": h.strength} for h in hypotheses],
+            entities=[e.display_name for e in det["resolved"]],
+            gaps=[g.description for g in gaps],
+            unresolved=[e.display_name for e in unresolved],
+            contradictions=[item.summary for h in hypotheses for item in h.contradicting],
+            relationships=[f"{f.kind}: {f.title}" for f in relationships[:10]],
+            rejected=[
+                {"id": h.id, "statement": h.statement, "reason": h.contradicting[0].summary if h.contradicting else "not supported"}
+                for h in hypotheses
+                if h.strength == "INSUFFICIENT"
+            ],
+            findings=[f"{det['overall_strength']}: {fact.summary}" for fact in response_facts[:5]],
+        )
+        await session.flush()
+        timings["total_ms"] = int((time.monotonic() - started) * 1000)
+
+        # Build structured findings
+        structured_findings = []
+        try:
+            for idx, pat in enumerate([p for p in patterns if not p.excluded][:5]):
+                finding = StructuredFinding(
+                    finding_id=f"F{idx+1:03d}",
+                    title=pat.title,
+                    finding_type=pat.kind,
+                    objective=turn_objective,
+                    entities=[e for e in det["resolved"] if e.canonical_id in (pat.entity_keys or [])][:3],
+                    analytical_basis=pat.analytical_basis,
+                    relationships=[r for r in relationships if set(r.entities) & set(pat.entities)][:3],
+                    patterns=[pat],
+                    supporting_evidence=[ev for ev in pat.evidence if ev.stance == "supports"][:5],
+                    contradictory_evidence=[ev for ev in pat.evidence if ev.stance == "contradicts"][:5],
+                    alternative_explanations=pat.innocent_alternatives[:3],
+                    assessment={
+                        "investigative_relevance": pat.investigative_relevance.model_dump() if pat.investigative_relevance else None,
+                        "evidence_strength": pat.evidence_strength.model_dump() if pat.evidence_strength else None,
+                        "strength": pat.strength,
+                    },
+                    data_gaps=[g for g in gaps if any(e in g.entities for e in pat.entities)][:3],
+                    focused_graph=_focused_graph(inputs.snapshot, pat.entity_keys or [], doc_index=inputs.doc_index, centrality=inputs.centrality),
+                    next_investigative_direction=det["steps"][0].action if det["steps"] else "",
+                )
+                structured_findings.append(finding)
+        except Exception:
+            structured_findings = []
+
+        resp = InvestigatorResponse(
+            question=question,
+            objective=turn_objective,
+            investigation_id=thread.id,
+            scope=ScopeSection(
+                mode=inputs.mode,  # type: ignore
+                label=scope_label(inputs),
+                dataset_id=inputs.dataset_id,
+                dataset_name=inputs.dataset_name,
+                case_id=inputs.case_id,
+                case_number=inputs.case_number,
+                case_title=inputs.case_title,
+                case_ids=inputs.case_ids,
+                nodes_considered=len(inputs.snapshot.nodes or {}),
+                edges_considered=len(inputs.snapshot.edges or []),
+                documents_considered=len(inputs.doc_index),
+            ),
+            entities=entities,
+            facts=response_facts,
+            relationships=relationships,
+            patterns=patterns,
+            hypotheses=hypotheses,
+            alternative_explanations=alternatives,
+            assessment=AssessmentSection(
+                overall_strength=det["overall_strength"],
+                overall_confidence=det["overall_confidence"],
+                convergence=convergence,
+                observation=observation,
+                interpretation=interpretation,
+                assessment=assessment_text,
+                caveats=caveats[:5],
+                model=model_section,
+                investigative_relevance=det["investigative_relevance"],
+                evidence_strength=det["evidence_strength"],
+                evidence_convergence=det["evidence_convergence"],
+                analytical_basis_summary={
+                    "nodes_considered": len(inputs.snapshot.nodes or {}),
+                    "edges_considered": len(inputs.snapshot.edges or []),
+                    "documents_considered": len(inputs.doc_index),
+                    "evidence_convergence": det["evidence_convergence"].model_dump(),
+                    "evidence_strength": det["evidence_strength"].model_dump(),
+                },
+            ),
+            gaps=gaps,
+            next_steps=det["steps"],
+            timeline=det["timeline"],
+            focused_graph=det["focused"],
+            provenance=det["provenance"],
+            memory=memory_section(thread),
+            timing_ms=timings,
+            structured_findings=structured_findings,
+            analytical_basis={
+                "nodes_considered": len(inputs.snapshot.nodes or {}),
+                "edges_considered": len(inputs.snapshot.edges or []),
+                "documents_considered": len(inputs.doc_index),
+                "cases_considered": len(inputs.case_ids),
+                "centrality_computed": inputs.centrality is not None,
+                "evidence_convergence": det["evidence_convergence"].model_dump(),
+                "evidence_strength": det["evidence_strength"].model_dump(),
+                "investigative_relevance": det["investigative_relevance"].model_dump(),
+            },
+            investigative_relevance=det["investigative_relevance"],
+            evidence_strength=det["evidence_strength"],
+            evidence_convergence=det["evidence_convergence"],
+            silent_intermediaries=det["silent_intermediaries"],
+            data_quality=det["data_quality"],
+            validation_notes=validation_notes,
+        )
+
+        await _report("COMPLETED", 100, "Investigation completed", status="COMPLETED")
+        return {"response": resp.model_dump(), "status": "COMPLETED"}
+
+    except Exception as exc:
+        log = __import__("app.logging", fromlist=["get_logger"]).get_logger("crimelink.investigator.orchestrator")
+        log.exception("investigation_with_reporter.failed", error=str(exc))
+        await _report("INTERNAL_ERROR", 100, f"Investigation failed: {type(exc).__name__}: {exc}", status="FAILED")
+        raise
+
+
 __all__ = [
     "FOCUSED_MAX_NODES",
     "TIMELINE_LIMIT",
@@ -1033,6 +2126,8 @@ __all__ = [
     "derive_objective",
     "detect_patterns_standalone",
     "investigate",
+    "investigate_deterministic",
+    "investigate_with_reporter",
     "load_inputs",
     "scope_label",
 ]

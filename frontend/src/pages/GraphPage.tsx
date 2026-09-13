@@ -281,6 +281,8 @@ export default function GraphPage() {
         label: node.label,
         confidence: node.confidence,
         is_target: node.provenance_key === visible.targetKey,
+        is_criminal: (node as any).is_criminal || !!(node as any).criminal_status,
+        criminal_status: (node as any).criminal_status || null,
       },
     }));
     const nameOf = (key: string) =>
@@ -320,8 +322,12 @@ export default function GraphPage() {
         {
           selector: "node",
           style: {
+            shape: (ele: cytoscape.NodeSingular) =>
+              ele.data("is_criminal") ? "star" : "ellipse",
             "background-color": (ele: cytoscape.NodeSingular) =>
-              LABEL_COLOR[String(ele.data("label"))] ?? "#1D4ED8",
+              ele.data("is_criminal")
+                ? "#DC2626"
+                : LABEL_COLOR[String(ele.data("label"))] ?? "#1D4ED8",
             label: (ele: cytoscape.NodeSingular) => {
               const name = String(ele.data("name") ?? "");
               return name.length > 22 ? `${name.slice(0, 21)}…` : name;
@@ -346,11 +352,17 @@ export default function GraphPage() {
                 : (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
                 (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
             "border-width": (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 4 : 1,
+              ele.data("is_target") ? 4 : ele.data("is_criminal") ? 3 : 1,
             "border-style": "solid",
             "border-color": (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? "#B45309" : "#E2E8F0",
+              ele.data("is_target") ? "#B45309" : ele.data("is_criminal") ? "#991B1B" : "#E2E8F0",
             "overlay-padding": 4,
+          },
+        },
+        {
+          selector: "node[is_criminal]",
+          style: {
+            shape: "star",
           },
         },
         {

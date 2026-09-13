@@ -5,8 +5,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import Login from "./pages/Login";
 import Cases from "./pages/Cases";
 import CaseDetail from "./pages/CaseDetail";
-import GraphPage from "./pages/GraphPage";
-import InvestigationPage from "./pages/InvestigationPage";
 import InvestigatorWorkspace from "./pages/InvestigatorWorkspace";
 import Review from "./pages/Review";
 import Admin from "./pages/Admin";
@@ -32,10 +30,6 @@ export default function App() {
    * that every page's in-memory state is reset and all data is re-fetched
    * from the new dataset — no individual page needs to know that a swap
    * happened.
-   *
-   * ``crimelink:dataset-changed`` is dispatched by ``datasetChanged()`` in
-   * ``client.ts``, which DatasetConsole calls after a completed import or an
-   * explicit activation.
    */
   const [datasetVersion, setDatasetVersion] = useState(0);
   useEffect(() => {
@@ -63,11 +57,8 @@ export default function App() {
           <Route index element={<Navigate to="/cases" replace />} />
           <Route path="/cases" element={<Cases />} />
           <Route path="/cases/:caseId" element={<CaseDetail />} />
-          <Route path="/cases/:caseId/graph" element={<GraphPage />} />
-          <Route path="/cases/:caseId/investigation" element={<InvestigationPage />} />
-          {/* The evidence-driven reasoning workspace: case scope, or the
-              master network when opened from the cross-case analysis. */}
-          <Route path="/cases/:caseId/investigate" element={<InvestigatorWorkspace />} />
+          {/* Investigation Analysis is now global master workspace for the active dataset,
+              not per-case. Deprecated case-scoped graph and AI investigation routes removed. */}
           <Route path="/investigate" element={<InvestigatorWorkspace />} />
           <Route path="/cases/:caseId/review" element={<Review />} />
           <Route path="/review" element={<Review />} />
@@ -81,7 +72,6 @@ export default function App() {
           <Route path="/relationships" element={<Relationships />} />
           <Route path="/sources" element={<SourceBrowser />} />
 
-          {/* Administration sections are routes, not local tab state. */}
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin/:section" element={<Admin />} />
 
@@ -91,4 +81,3 @@ export default function App() {
     </ErrorBoundary>
   );
 }
-
