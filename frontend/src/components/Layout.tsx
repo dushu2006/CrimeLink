@@ -20,39 +20,23 @@ export default function Layout() {
   // Quick search input state
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Remember active case ID from URL or sessionStorage
-  const activeCaseId = useMemo(() => {
-    const match = location.pathname.match(/^\/cases\/([^/]+)/);
-    if (match) {
-      sessionStorage.setItem("crimelink:last_case_id", match[1]);
-      return match[1];
-    }
-    return sessionStorage.getItem("crimelink:last_case_id");
-  }, [location.pathname]);
-
-  // Derive context breadcrumb title
+  // Derive context breadcrumb title — no sessionStorage fallback: Investigation Analysis is dataset-wide.
   const contextInfo = useMemo(() => {
     const path = location.pathname;
     if (path.startsWith("/cases")) {
-      if (path.includes("/graph")) {
-        return { section: "Investigation Graph", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Network Visualizer", badge: "Live Topology" };
-      }
-      if (path.includes("/investigation")) {
-        return { section: "AI Reasoning", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Analysis Gateway", badge: "Audited Model" };
-      }
       if (path.includes("/investigate")) {
-        return { section: "Investigation Analysis", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Evidence Scan", badge: "Pattern Detectors" };
+        return { section: "Investigation Analysis", detail: "Master Network — Active Dataset", badge: "Master Scope" };
       }
       if (path.includes("/review")) {
-        return { section: "HITL Review", detail: activeCaseId ? `Case #${activeCaseId.slice(0, 8)}` : "Human-in-the-Loop", badge: "Action Req." };
+        return { section: "HITL Review", detail: "Human-in-the-Loop", badge: "Action Req." };
       }
-      if (activeCaseId && path.endsWith(activeCaseId)) {
-        return { section: "Case Dossier", detail: `Case #${activeCaseId.slice(0, 8)}`, badge: "Active Case" };
+      if (path.match(/^\/cases\/[^/]+$/)) {
+        return { section: "Case Dossier", detail: "Case Detail", badge: "Active Case" };
       }
-      return { section: "Cases Registry", detail: "Active Criminal Files", badge: "24 Open" };
+      return { section: "Cases Registry", detail: "Active Criminal Files", badge: "Cases" };
     }
     if (path.startsWith("/investigate")) {
-      return { section: "Investigation Analysis", detail: "Cross-Case Patterns", badge: "Master Scope" };
+      return { section: "Investigation Analysis", detail: "Master Network — Active Dataset", badge: "Master Scope" };
     }
     if (path.startsWith("/entities")) {
       return { section: "Entity Directory", detail: "Persons, Accounts & Vehicles", badge: "Biometrics & PII" };
@@ -73,7 +57,7 @@ export default function Layout() {
       return { section: "Administration", detail: "System Configuration & Datasets", badge: "Admin Control" };
     }
     return { section: "CrimeLink Console", detail: "Law Enforcement Intelligence", badge: "Operational" };
-  }, [location.pathname, activeCaseId]);
+  }, [location.pathname]);
 
   useEffect(() => {
     return watchActiveDataset((id) => {
@@ -104,21 +88,17 @@ export default function Layout() {
   // User initials for avatar
   const userInitials = useMemo(() => {
     if (!session?.full_name) return "OF";
-    const parts = session.full_name.trim().split(/\s+/);
+    const parts = session.full_name.trim().split(/\\s+/);
     if (parts.length >= 2) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
     return parts[0].slice(0, 2).toUpperCase();
   }, [session]);
 
-  // Mutually exclusive active route determination for sidebar navigation
+  // Active route determination — no Investigation Graph or AI Investigation duplicates
   const currentPath = location.pathname;
-  const isGraphActive = currentPath.includes("/graph");
-  const isAiActive = currentPath.includes("/investigation");
   const isAnalysisActive = currentPath.includes("/investigate");
   const isReviewActive = currentPath.startsWith("/review") || currentPath.includes("/review");
   const isCasesActive =
     (currentPath === "/cases" || currentPath.startsWith("/cases/")) &&
-    !isGraphActive &&
-    !isAiActive &&
     !isAnalysisActive &&
     !isReviewActive;
   const isEntitiesActive = currentPath.startsWith("/entities");
@@ -129,18 +109,12 @@ export default function Layout() {
 
   return (
     <div className="stitch-shell">
-      {/* -------------------------------------------------------------
-          LEFT TACTICAL NAVIGATION SIDEBAR (Stitch w-64)
-          ------------------------------------------------------------- */}
       <aside className="stitch-sidebar">
-        {/* Brand Header */}
         <div className="sidebar-brand">
           <CrimeLinkLogo className="sidebar-logo-svg" showSubtitle={true} />
         </div>
 
-        {/* Navigation Sections */}
         <div className="sidebar-nav-scroll">
-          {/* Group 1: Operations */}
           <div className="nav-section">
             <div className="nav-section-title">{t("nav.sectionOperations", lang)}</div>
             <nav className="nav-links-col">
@@ -152,15 +126,6 @@ export default function Layout() {
                 <span className="material-symbols-outlined nav-icon">folder_open</span>
                 <span className="nav-label">{t("nav.cases", lang)}</span>
                 <span className="nav-pill">{t("cases.title", lang)}</span>
-              </Link>
-
-              <Link
-                to={activeCaseId ? `/cases/${activeCaseId}/graph` : "/cases"}
-                className={`sidebar-link ${isGraphActive ? "active" : ""}`}
-                aria-current={isGraphActive ? "page" : undefined}
-              >
-                <span className="material-symbols-outlined nav-icon">hub</span>
-                <span className="nav-label">{t("nav.graph", lang)}</span>
               </Link>
 
               <Link
@@ -192,25 +157,12 @@ export default function Layout() {
             </nav>
           </div>
 
-          {/* Group 2: Intelligence & HITL */}
           <div className="nav-section">
             <div className="nav-section-title">{t("nav.sectionIntelligence", lang)}</div>
             <nav className="nav-links-col">
+              {/* Single entry for Investigation Analysis — global master workspace for active dataset */}
               <Link
-                to={activeCaseId ? `/cases/${activeCaseId}/investigation` : "/cases"}
-                className={`sidebar-link ${isAiActive ? "active" : ""}`}
-                aria-current={isAiActive ? "page" : undefined}
-              >
-                <span className="material-symbols-outlined nav-icon">psychology</span>
-                <span className="nav-label">{t("nav.ai", lang)}</span>
-                <span className="nav-pill nav-pill-primary">AI</span>
-              </Link>
-
-              {/* The evidence-driven reasoning workspace — a different surface
-                  from the stage workflow above: that one shows how the case was
-                  processed, this one shows what the evidence supports. */}
-              <Link
-                to={activeCaseId ? `/cases/${activeCaseId}/investigate` : "/investigate"}
+                to="/investigate"
                 className={`sidebar-link ${isAnalysisActive ? "active" : ""}`}
                 aria-current={isAnalysisActive ? "page" : undefined}
               >
@@ -219,7 +171,7 @@ export default function Layout() {
               </Link>
 
               <Link
-                to={activeCaseId ? `/cases/${activeCaseId}/review` : "/review"}
+                to="/review"
                 className={`sidebar-link ${isReviewActive ? "active" : ""}`}
                 aria-current={isReviewActive ? "page" : undefined}
               >
@@ -239,7 +191,6 @@ export default function Layout() {
             </nav>
           </div>
 
-          {/* Group 3: Governance */}
           {session?.role === "ADMIN" && (
             <div className="nav-section">
               <div className="nav-section-title">{t("nav.sectionGovernance", lang)}</div>
@@ -257,7 +208,6 @@ export default function Layout() {
           )}
         </div>
 
-        {/* Sidebar Security Footer */}
         <div className="sidebar-security-footer">
           <div className="session-status-row">
             <span className="status-live-dot" />
@@ -270,13 +220,8 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* -------------------------------------------------------------
-          MAIN APPLICATION AREA (OFFSET BY SIDEBAR)
-          ------------------------------------------------------------- */}
       <div className="stitch-main-wrap">
-        {/* Pinned Executive Header */}
         <header className="stitch-executive-header">
-          {/* Active Context Breadcrumbs */}
           <div className="header-context-crumbs">
             <div className="crumb-section">
               <span className="material-symbols-outlined crumb-folder-icon">folder_open</span>
@@ -290,9 +235,7 @@ export default function Layout() {
             </span>
           </div>
 
-          {/* Search, Language, Profile & Actions */}
           <div className="header-actions-row">
-            {/* Quick Search */}
             <form onSubmit={handleSearchSubmit} className="header-search-form">
               <span className="material-symbols-outlined header-search-icon">search</span>
               <input
@@ -307,7 +250,6 @@ export default function Layout() {
 
             <div className="header-divider-v" />
 
-            {/* Language Switcher (EN, HI, TE, TA) */}
             <div className="header-lang-switch">
               {(["en", "hi", "te", "ta"] as const).map((code) => (
                 <button
@@ -321,12 +263,9 @@ export default function Layout() {
               ))}
             </div>
 
-            {/* Officer Profile Card */}
             {session && (
               <div className="officer-profile-card">
-                <div className="officer-avatar-circle">
-                  {userInitials}
-                </div>
+                <div className="officer-avatar-circle">{userInitials}</div>
                 <div className="officer-info-col">
                   <span className="officer-name-text">{session.full_name}</span>
                   <span className="officer-role-text">
@@ -336,7 +275,6 @@ export default function Layout() {
               </div>
             )}
 
-            {/* Sign Out Button */}
             <button
               type="button"
               className="header-signout-btn"
@@ -348,37 +286,31 @@ export default function Layout() {
           </div>
         </header>
 
-        {/* Development Environment Notice Banner */}
         <div className="stitch-env-banner" role="status">
           <span className="material-symbols-outlined banner-info-icon">info</span>
           <span>{t("env.banner", lang)}</span>
         </div>
 
-        {/* Dataset replaced alert */}
         {datasetNotice && (
           <div className="stitch-dataset-alert" role="status">
             <span>{datasetNotice}</span>
-            <button
-              className="btn-dismiss-alert"
-              onClick={dismissNotice}
-              type="button"
-            >
+            <button className="btn-dismiss-alert" onClick={dismissNotice} type="button">
               Dismiss
             </button>
           </div>
         )}
 
-        {/* Content Viewport */}
         <main className="stitch-content-container">
           <ErrorBoundary key={`${location.pathname}:${datasetEpoch}`}>
             <Outlet />
           </ErrorBoundary>
         </main>
 
-        {/* Console Evidentiary Footer */}
         <footer className="stitch-console-footer">
           <div className="footer-inner">
-            <span>{t("footer.platformTitle", lang)} · {t("footer.evidenceBacked", lang)}</span>
+            <span>
+              {t("footer.platformTitle", lang)} · {t("footer.evidenceBacked", lang)}
+            </span>
             <span className="footer-dot">•</span>
             <span>{t("footer.auditLog", lang)}</span>
             <span className="footer-dot">•</span>

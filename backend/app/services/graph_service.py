@@ -54,15 +54,27 @@ class GraphService:
 
     # ------------------------------------------------------------- scoping
     async def _allowed_case_ids(self, session: AsyncSession, scope: JurisdictionScope) -> set[str]:
-        """Jurisdiction-scoped AND active-dataset-scoped.
+        """Jurisdiction-scoped AND active-dataset-scoped (includes hand-created NULL rows).
 
         Search and node-scope assertions range over exactly this set, so a
         replaced dataset is invisible to the whole graph surface at once --
-        not just to the pages that remembered to filter.
+        not just to the pages that remembered to filter. This is used for case
+        listing and general search where hand-created cases should stay visible.
         """
         from app.services.cases import visible_case_ids
 
         return await visible_case_ids(session, scope)
+
+    async def _strict_case_ids(self, session: AsyncSession, scope: JurisdictionScope) -> set[str]:
+        """Jurisdiction-scoped AND strictly active-dataset-scoped (excludes NULL).
+
+        Used for master graph, master analytics, and master investigation where
+        the active dataset is the analysis universe. Including NULL legacy rows
+        would make /datasets/stats disagree with /graph/master.
+        """
+        from app.services.cases import active_dataset_case_ids
+
+        return await active_dataset_case_ids(session, scope)
 
     async def _assert_node_in_scope(
         self, session: AsyncSession, scope: JurisdictionScope, key: str
@@ -578,6 +590,179 @@ class GraphService:
         promoted = self.container.injector.promote_staging(sorted(owned))
         return {"requested": len(keys), "promoted": promoted}
 
+    # --------------------------------------------------- master network
+    def _master_centrality(self, case_ids: list[str], dataset_id: str | None = None) -> CentralityResult:
+        store = self.container.graph_store
+        version = getattr(store, "version", lambda: 0)()
+        # Cache key must include dataset_id to prevent cross-dataset reuse.
+        ds_part = dataset_id or "no-ds"
+        cache_key = (f"__master__:{ds_part}:" + ",".join(sorted(case_ids)), version)
+        cached = _centrality_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        snapshot = store.multi_case_snapshot(case_ids, include_inactive=False)
+        result = compute_centrality(snapshot, self.settings)
+        if len(_centrality_cache) >= _CACHE_LIMIT:
+            _centrality_cache.clear()
+        _centrality_cache[cache_key] = result
+        return result
+
+    async def master_graph(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        *,
+        include_staging: bool = False,
+        limit: int = 3000,
+        labels: list[str] | None = None,
+        rel_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        # Strict active-dataset isolation: master graph is the active dataset universe.
+        from app.datasets import registry
+
+        active_id = await registry.active_dataset_id(session)
+        allowed = await self._strict_case_ids(session, scope)
+        if not allowed:
+            return {
+                "mode": "master",
+                "case_ids": [],
+                "include_staging": include_staging,
+                "truncated": False,
+                "filters": {"labels": labels or [], "rel_types": rel_types or []},
+                "counts": {"nodes": 0, "edges": 0, "by_label": {}, "by_rel_type": {}},
+                "nodes": [],
+                "edges": [],
+            }
+        case_ids = sorted(allowed)
+        snapshot = self.container.graph_store.multi_case_snapshot(
+            case_ids, include_inactive=False
+        )
+        if labels:
+            wanted = {canonical_label(l) for l in labels}
+            nodes = [n for n in snapshot.nodes.values() if canonical_label(n.label) in wanted]
+        else:
+            nodes = list(snapshot.nodes.values())
+        edges = list(snapshot.edges)
+        if rel_types:
+            wanted_rels = {r.upper() for r in rel_types}
+            edges = [e for e in edges if e.rel_type.upper() in wanted_rels]
+        keep = {n.provenance_key for n in nodes}
+        edges = [e for e in edges if e.source_key in keep and e.target_key in keep]
+        truncated = False
+        if len(nodes) > limit:
+            nodes = nodes[:limit]
+            keep = {n.provenance_key for n in nodes}
+            edges = [e for e in edges if e.source_key in keep and e.target_key in keep]
+            truncated = True
+        return {
+            "mode": "master",
+            "case_ids": case_ids,
+            "include_staging": include_staging,
+            "truncated": truncated,
+            "filters": {"labels": labels or [], "rel_types": rel_types or []},
+            "counts": {
+                "nodes": len(nodes),
+                "edges": len(edges),
+                "by_label": dict(Counter(canonical_label(n.label) for n in nodes)),
+                "by_rel_type": dict(Counter(e.rel_type for e in edges)),
+            },
+            "nodes": [_node_row(n) for n in nodes],
+            "edges": [_edge_row(e) for e in edges],
+        }
+
+    async def master_influencers(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        limit: int = 25,
+        metric: str = "betweenness",
+    ) -> dict[str, Any]:
+        from app.datasets import registry
+
+        active_id = await registry.active_dataset_id(session)
+        allowed = await self._strict_case_ids(session, scope)
+        case_ids = sorted(allowed)
+        if not case_ids:
+            return {"mode": "master", "case_ids": [], "metric": metric, "items": [], "count": 0}
+        centrality = self._master_centrality(case_ids, dataset_id=active_id)
+        scores = getattr(centrality, metric, None)
+        if not isinstance(scores, dict) or not scores:
+            scores = centrality.betweenness
+        ordered = sorted(scores.items(), key=lambda kv: -kv[1])[:limit]
+        snapshot = self.container.graph_store.multi_case_snapshot(case_ids, include_inactive=False)
+        out = []
+        for rank, (key, score) in enumerate(ordered, start=1):
+            node = snapshot.nodes.get(key)
+            out.append(
+                {
+                    "rank": rank,
+                    "provenance_key": key,
+                    "name": node.name if node else key[:8],
+                    "label": node.label if node else "Person",
+                    "metric": metric,
+                    "score": round(float(score), 6),
+                    "betweenness": round(float(centrality.betweenness.get(key, 0.0)), 6),
+                    "pagerank": round(float(centrality.pagerank.get(key, 0.0)), 6),
+                    "degree": int(centrality.degree.get(key, 0)),
+                    "community": centrality.communities.get(key),
+                    "percentile": round(percentile_rank(scores, key), 4),
+                    "criminal_status": (node.properties.get("criminal_status") if node else None),
+                    "is_criminal": bool(
+                        node
+                        and node.properties.get("criminal_status")
+                        and str(node.properties.get("criminal_status")).strip().lower()
+                        not in {"", "none", "unknown", "null"}
+                    ),
+                    "case_ids": list(node.properties.get("case_ids") or []) if node else [],
+                }
+            )
+        return {
+            "mode": "master",
+            "case_ids": case_ids,
+            "metric": metric,
+            "items": out,
+            "count": len(out),
+            "total_nodes": centrality.node_count,
+            "total_edges": centrality.edge_count,
+            "communities": len(centrality.community_members),
+        }
+
+    async def master_centrality(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+    ) -> dict[str, Any]:
+        from app.datasets import registry
+
+        active_id = await registry.active_dataset_id(session)
+        allowed = await self._strict_case_ids(session, scope)
+        case_ids = sorted(allowed)
+        if not case_ids:
+            return {
+                "mode": "master",
+                "case_ids": [],
+                "nodes": 0,
+                "edges": 0,
+                "metrics": {},
+            }
+        centrality = self._master_centrality(case_ids, dataset_id=active_id)
+        return {
+            "mode": "master",
+            "case_ids": case_ids,
+            "nodes": centrality.node_count,
+            "edges": centrality.edge_count,
+            "engine": centrality.engine,
+            "metrics": {
+                "betweenness": {k: round(float(v), 6) for k, v in list(centrality.betweenness.items())[:100]},
+                "pagerank": {k: round(float(v), 6) for k, v in list(centrality.pagerank.items())[:100]},
+                "degree": dict(list(centrality.degree.items())[:100]),
+            },
+            "communities": len(centrality.community_members),
+            "community_members": {
+                str(k): v[:20] for k, v in list(centrality.community_members.items())[:20]
+            },
+        }
+
     # ---------------------------------------------------------------- stats
     def stats(self) -> dict[str, Any]:
         return self.container.graph_store.stats()
@@ -607,20 +792,26 @@ def _evidence_pointer(properties: dict[str, Any]) -> dict[str, Any] | None:
 def _node_row(node: GraphNode) -> dict[str, Any]:
     from app.domain.enums import canonical_label
 
+    props = node.properties or {}
+    criminal_status = props.get("criminal_status")
+    # Source-derived criminal status: non-empty string means confirmed.
+    is_criminal = bool(criminal_status) and str(criminal_status).strip().lower() not in {"", "none", "unknown", "null"}
     return {
         "provenance_key": node.provenance_key,
         "label": canonical_label(node.label),
         "name": node.name,
-        "confidence": float(node.properties.get("confidence", 1.0) or 1.0),
-        "case_ids": list(node.properties.get("case_ids") or []),
-        "source_doc_ids": list(node.properties.get("source_doc_ids") or []),
-        "aliases": list(node.properties.get("aliases") or []),
-        "staging": bool(node.properties.get("staging", False)),
-        "is_active": bool(node.properties.get("is_active", True)),
-        "evidence": _evidence_pointer(node.properties),
+        "confidence": float(props.get("confidence", 1.0) or 1.0),
+        "case_ids": list(props.get("case_ids") or []),
+        "source_doc_ids": list(props.get("source_doc_ids") or []),
+        "aliases": list(props.get("aliases") or []),
+        "staging": bool(props.get("staging", False)),
+        "is_active": bool(props.get("is_active", True)),
+        "criminal_status": criminal_status if criminal_status else None,
+        "is_criminal": is_criminal,
+        "evidence": _evidence_pointer(props),
         "properties": {
             k: v
-            for k, v in node.properties.items()
+            for k, v in props.items()
             if k
             not in {
                 "case_ids",

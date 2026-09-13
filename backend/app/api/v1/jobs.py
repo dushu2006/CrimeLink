@@ -142,6 +142,76 @@ async def dataset_job_stream(websocket: WebSocket, job_id: str) -> None:
             pass
 
 
+@router.websocket("/jobs/ws/investigation/{job_id}")
+async def investigation_job_stream(websocket: WebSocket, job_id: str) -> None:
+    """Live progress for one investigation job (honest stages, no fake progress).
+
+    Same contract as dataset jobs: snapshot first, then live events,
+    closes 1000 on terminal, 4401/4404 on auth/not-found.
+    Preserves deterministic work even when AI unavailable.
+    """
+    from app.security.tokens import decode_access_token
+
+    await websocket.accept()
+
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401)
+        return
+    try:
+        payload = decode_access_token(token)
+    except Exception:  # noqa: BLE001
+        await websocket.close(code=4401)
+        return
+
+    try:
+        await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                _authorize_job_websocket(str(payload.get("sub"))), _get_auth_loop()
+            )
+        )
+    except _WSNotAuthenticated:
+        await websocket.close(code=4401)
+        return
+    except Exception:  # noqa: BLE001
+        await websocket.close(code=1011)
+        return
+
+    from app.services import investigation_jobs
+
+    current = await investigation_jobs.get_investigation_job(job_id)
+    if current is None:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.send_text(
+        json.dumps({"type": "job_snapshot", "job_id": job_id, **current}, default=str)
+    )
+    if current.get("terminal"):
+        await websocket.close(code=1000)
+        return
+
+    container = get_container()
+    try:
+        async for message in container.event_bus.subscribe(
+            investigation_jobs.job_channel(job_id)
+        ):
+            try:
+                await websocket.send_text(json.dumps(message, default=str))
+            except (WebSocketDisconnect, RuntimeError):
+                break
+            if message.get("terminal") or message.get("type") == "investigation_finished":
+                await websocket.close(code=1000)
+                break
+    except asyncio.CancelledError:  # pragma: no cover
+        raise
+    except Exception:  # noqa: BLE001
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # pragma: no cover
+            pass
+
+
 @router.websocket("/jobs/ws/{case_id}")
 async def job_stream(websocket: WebSocket, case_id: str) -> None:
     """Push per-document pipeline stage progress to the UI.

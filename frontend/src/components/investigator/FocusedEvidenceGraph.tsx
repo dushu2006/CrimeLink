@@ -9,6 +9,9 @@
  * The graph is a view over the evidence: selecting a node or edge reports it
  * back so the detail panel can show the same evidence the rest of the
  * workspace shows. It is never the source of truth.
+ *
+ * Criminal nodes (source-derived criminal_status) are rendered as STAR shapes
+ * in every graph view, per requirement.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -61,14 +64,21 @@ export function FocusedEvidenceGraph({
 
   const elements = useMemo<ElementDefinition[]>(() => {
     const known = new Set(nodes.map((node) => node.key));
-    const definitions: ElementDefinition[] = nodes.map((node) => ({
-      data: {
-        id: node.key,
-        label: node.name || node.key,
-        kind: String(node.label).toUpperCase(),
-        focus: node.focus ? 1 : 0,
-      },
-    }));
+    const definitions: ElementDefinition[] = nodes.map((node) => {
+      const anyNode = node as any;
+      const isCriminal = !!(anyNode.is_criminal || anyNode.criminal_status);
+      return {
+        data: {
+          id: node.key,
+          label: node.name || node.key,
+          kind: String(node.label).toUpperCase(),
+          focus: node.focus ? 1 : 0,
+          is_criminal: isCriminal,
+          criminal_status: anyNode.criminal_status || null,
+          case_ids: anyNode.case_ids || [],
+        },
+      };
+    });
     edges
       .filter((edge) => known.has(edge.source) && known.has(edge.target))
       .forEach((edge, index) => {
@@ -95,7 +105,9 @@ export function FocusedEvidenceGraph({
         {
           selector: "node",
           style: {
-            "background-color": (ele: cytoscape.NodeSingular) => colorFor(String(ele.data("kind"))),
+            shape: (ele: cytoscape.NodeSingular) => (ele.data("is_criminal") ? "star" : "ellipse"),
+            "background-color": (ele: cytoscape.NodeSingular) =>
+              ele.data("is_criminal") ? "#DC2626" : colorFor(String(ele.data("kind"))),
             label: "data(label)",
             color: "#0F172A",
             "font-size": 10,
@@ -103,8 +115,14 @@ export function FocusedEvidenceGraph({
             "text-margin-y": 4,
             width: (ele: cytoscape.NodeSingular) => (ele.data("focus") ? 26 : 18),
             height: (ele: cytoscape.NodeSingular) => (ele.data("focus") ? 26 : 18),
-            "border-width": (ele: cytoscape.NodeSingular) => (ele.data("focus") ? 3 : 1),
-            "border-color": "#0F172A",
+            "border-width": (ele: cytoscape.NodeSingular) => (ele.data("focus") ? 3 : ele.data("is_criminal") ? 3 : 1),
+            "border-color": (ele: cytoscape.NodeSingular) => (ele.data("is_criminal") ? "#991B1B" : "#0F172A"),
+          },
+        },
+        {
+          selector: "node[is_criminal]",
+          style: {
+            shape: "star",
           },
         },
         {
@@ -173,7 +191,9 @@ export function FocusedEvidenceGraph({
     return (
       <p className="muted">
         No focused evidence graph is available for this finding — the answer did not identify
-        entities to draw.
+        entities to draw. This is a real subgraph (seeds plus one hop) from the master network,
+        not a placeholder. When entities are resolved, you will see WHY each node appears: it is
+        directly connected to a seed entity from your question.
       </p>
     );
   }
@@ -186,7 +206,8 @@ export function FocusedEvidenceGraph({
       <div className="inv-graph-meta">
         <span className="muted">
           {nodes.length} node(s) · {edges.length} relationship(s) · {focusCount} in focus
-          {graph?.truncated ? " · truncated to keep the view readable" : ""}
+          {graph?.truncated ? " · truncated to keep the view readable" : ""} · This is a real subgraph:
+          seeds are entities from your question, neighbors are one hop away — WHY each node is here is its connection to a seed.
         </span>
         <button
           type="button"
@@ -201,7 +222,7 @@ export function FocusedEvidenceGraph({
         ref={containerRef}
         style={{ height: `${height}px` }}
         role="img"
-        aria-label="Focused evidence graph for the current finding"
+        aria-label="Focused evidence graph for the current finding — real subgraph with WHY"
       />
       {legendOpen && (
         <div className="inv-graph-legend">
@@ -211,6 +232,10 @@ export function FocusedEvidenceGraph({
               {label.replaceAll("_", " ").toLowerCase()}
             </span>
           ))}
+          <span className="legend-item">
+            <span className="dot" style={{ background: "#DC2626", clipPath: "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)" }} />
+            confirmed criminal (source-derived, star shape)
+          </span>
         </div>
       )}
     </div>

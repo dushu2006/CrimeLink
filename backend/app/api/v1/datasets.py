@@ -100,6 +100,38 @@ async def get_active_dataset(
     return {"active": registry.dataset_row(dataset, stats)}
 
 
+@router.get("/stats")
+async def get_active_dataset_stats(
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Real counts for the active dataset — cases, documents, entities, relationships."""
+    dataset = await registry.active_dataset(session)
+    if dataset is None:
+        return {
+            "dataset_id": None,
+            "dataset_name": None,
+            "cases": 0,
+            "documents": 0,
+            "entities": 0,
+            "relationships": 0,
+            "files": 0,
+        }
+    stats = await registry.dataset_stats(session, dataset.id)
+    return {
+        "dataset_id": dataset.id,
+        "dataset_name": dataset.name,
+        "cases": stats.get("cases", 0),
+        "documents": stats.get("documents", 0),
+        "entities": stats.get("entities", 0),
+        "relationships": stats.get("relationships", 0),
+        "files": stats.get("files", 0),
+        "entities_by_type": stats.get("entities_by_type", {}),
+        "relationships_by_type": stats.get("relationships_by_type", {}),
+        "files_by_status": stats.get("files_by_status", {}),
+    }
+
+
 # NOTE: registered before "/{dataset_id}" on purpose. FastAPI matches routes in
 # declaration order, so a literal segment must be declared ahead of the
 # parameterised one it would otherwise be swallowed by — "/datasets/jobs/abc"

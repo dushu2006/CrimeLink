@@ -390,6 +390,8 @@ class EmbeddedGraphStore:
         return payload
 
     def _cytoscape_node(self, pk: str, data: dict[str, Any]) -> dict[str, Any]:
+        criminal_status = data.get("criminal_status")
+        is_criminal = bool(criminal_status) and str(criminal_status).strip().lower() not in {"", "none", "unknown", "null"}
         return {
             "data": {
                 "id": pk,
@@ -409,6 +411,8 @@ class EmbeddedGraphStore:
                 "is_active": bool(data.get("is_active", True)),
                 "risk_flags": list(data.get("risk_flags") or []),
                 "aliases": list(data.get("aliases") or []),
+                "criminal_status": criminal_status if criminal_status else None,
+                "is_criminal": is_criminal,
                 **{
                     k: v
                     for k, v in data.items()

@@ -167,6 +167,26 @@ async def visibility_filter(session: AsyncSession, model: Any):
     return or_(column.is_(None), column == active)
 
 
+async def strict_active_filter(session: AsyncSession, model: Any):
+    """A WHERE clause restricting *model* rows STRICTLY to the active dataset.
+
+    Unlike :func:`visibility_filter`, this does NOT include NULL-dataset rows.
+    It is used for the master graph and master analytics, where the active
+    dataset is defined as the analysis universe. Including hand-created or
+    legacy NULL rows would silently pollute the master network with unrelated
+    cases that are not part of the active dataset's 52/132/523/414 counts.
+
+    When no dataset is active, no row matches — the master graph is empty.
+    """
+    active = await active_dataset_id(session)
+    column = model.dataset_id
+    if active is None:
+        # No active dataset → master graph empty, not NULL rows.
+        # Using a false condition rather than NULL check.
+        return column.is_(None) & column.is_not(None)  # always false
+    return column == active
+
+
 def belongs_to_active(row: Any, active_dataset_id_value: str | None) -> bool:
     """Whether a single already-loaded row is visible under the active dataset."""
     owner = getattr(row, "dataset_id", None)

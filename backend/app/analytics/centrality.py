@@ -42,6 +42,7 @@ BETWEENNESS_K = 120
 class CentralityResult:
     case_id: str
     degree: dict[str, float] = field(default_factory=dict)
+    weighted_degree: dict[str, float] = field(default_factory=dict)
     in_degree: dict[str, float] = field(default_factory=dict)
     out_degree: dict[str, float] = field(default_factory=dict)
     betweenness: dict[str, float] = field(default_factory=dict)
@@ -140,6 +141,16 @@ def compute_centrality(
     result.out_degree = {n: float(d) for n, d in graph.out_degree()}
     result.degree = {
         n: result.in_degree.get(n, 0.0) + result.out_degree.get(n, 0.0) for n in graph.nodes()
+    }
+    # Weighted degree = sum of incident edge weights (confidence-weighted)
+    weighted_in = {}
+    weighted_out = {}
+    for u, v, data in graph.edges(data=True):
+        w = float(data.get("weight", 1.0))
+        weighted_out[u] = weighted_out.get(u, 0.0) + w
+        weighted_in[v] = weighted_in.get(v, 0.0) + w
+    result.weighted_degree = {
+        n: weighted_in.get(n, 0.0) + weighted_out.get(n, 0.0) for n in graph.nodes()
     }
 
     undirected = graph.to_undirected()

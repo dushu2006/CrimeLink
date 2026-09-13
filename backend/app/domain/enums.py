@@ -66,6 +66,14 @@ class EntityType(str, Enum):
     ORGANIZATION = "Organization"
     BANK_ACCOUNT = "BankAccount"
     EVENT = "Event"
+    CASE = "Case"
+    FIR = "FIR"
+    DOCUMENT = "Document"
+    TRANSACTION = "Transaction"
+    SOCIAL_ACCOUNT = "SocialAccount"
+    EVIDENCE = "Evidence"
+    BANK = "Bank"
+    ACCOUNT = "Account"
 
 
 class MatchBasis(str, Enum):
@@ -160,6 +168,66 @@ class Language(str, Enum):
     UNKNOWN = "unknown"
 
 
+class LegalStatus(str, Enum):
+    """Source-derived legal/procedural status — never inferred from graph metrics."""
+
+    VICTIM = "VICTIM"
+    WITNESS = "WITNESS"
+    COMPLAINANT = "COMPLAINANT"
+    PERSON_OF_INTEREST = "PERSON_OF_INTEREST"
+    SUSPECT = "SUSPECT"
+    ACCUSED = "ACCUSED"
+    ARRESTED = "ARRESTED"
+    UNDER_INVESTIGATION = "UNDER_INVESTIGATION"
+    CHARGED = "CHARGED"
+    CONVICTED = "CONVICTED"
+    ACQUITTED = "ACQUITTED"
+    RELEASED_ON_BAIL = "RELEASED_ON_BAIL"
+    DISCHARGED = "DISCHARGED"
+    UNKNOWN = "UNKNOWN"
+    NOT_ESTABLISHED = "NOT_ESTABLISHED"
+
+
+class NetworkRole(str, Enum):
+    """Analytical network role — structural, not legal."""
+
+    HUB = "HUB"
+    CONNECTOR = "CONNECTOR"
+    BRIDGE = "BRIDGE"
+    COMMUNITY_BRIDGE = "COMMUNITY_BRIDGE"
+    COMMUNICATION_INTERMEDIARY_CANDIDATE = "COMMUNICATION_INTERMEDIARY_CANDIDATE"
+    FINANCIAL_INTERMEDIARY_CANDIDATE = "FINANCIAL_INTERMEDIARY_CANDIDATE"
+    CROSS_CASE_BRIDGE = "CROSS_CASE_BRIDGE"
+    PERIPHERAL = "PERIPHERAL"
+    INFORMATION_FLOW_INTERMEDIARY_CANDIDATE = "INFORMATION_FLOW_INTERMEDIARY_CANDIDATE"
+    POTENTIAL_NETWORK_INTERMEDIARY = "POTENTIAL_NETWORK_INTERMEDIARY"
+    UNKNOWN = "UNKNOWN"
+
+
+class InvestigativeRelevance(str, Enum):
+    """Why an investigator may want to inspect — never probability of guilt."""
+
+    LOW = "LOW"
+    MODERATE = "MODERATE"
+    HIGH = "HIGH"
+    CRITICAL_REVIEW = "CRITICAL_REVIEW"
+
+
+class EvidenceStrength(str, Enum):
+    WEAK = "WEAK"
+    MODERATE = "MODERATE"
+    STRONG = "STRONG"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
+class EvidenceConvergence(str, Enum):
+    SINGLE_SOURCE = "SINGLE_SOURCE"
+    MULTI_RECORD = "MULTI_RECORD"
+    MULTI_SOURCE = "MULTI_SOURCE"
+    INDEPENDENT_SOURCE_CONVERGENCE = "INDEPENDENT_SOURCE_CONVERGENCE"
+    NONE = "NONE"
+
+
 # ---------------------------------------------------------------------------
 # Graph vocabulary
 # ---------------------------------------------------------------------------
@@ -179,6 +247,13 @@ CANONICAL_LABELS: dict[str, str] = {
     "BankAccount": "BANK_ACCOUNT",
     "Event": "EVENT",
     "Case": "CASE",
+    "FIR": "FIR",
+    "Document": "DOCUMENT",
+    "Transaction": "TRANSACTION",
+    "SocialAccount": "SOCIAL_ACCOUNT",
+    "Evidence": "EVIDENCE",
+    "Bank": "BANK",
+    "Account": "ACCOUNT",
 }
 
 

@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     investigate,
+    investigate_jobs,
     investigation,
     access,
     admin,
@@ -53,5 +54,6 @@ api_router.include_router(datasets.router)
 api_router.include_router(ai.router)
 api_router.include_router(investigation.router)
 api_router.include_router(investigate.router)
+api_router.include_router(investigate_jobs.router)
 
 __all__ = ["api_router"]

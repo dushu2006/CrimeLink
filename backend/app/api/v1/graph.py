@@ -92,6 +92,61 @@ async def node(
     return _node_row(resolved)
 
 
+@router.get("/master")
+async def master_graph(
+    include_staging: bool = Query(False),
+    limit: int = Query(3000, ge=1, le=10000),
+    labels: str | None = Query(None, description="Comma-separated entity types"),
+    rel_types: str | None = Query(None, description="Comma-separated relationship types"),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Master network graph: entire active dataset.
+
+    Dataset-scoped AND jurisdiction-scoped via GraphService._allowed_case_ids,
+    so replacing the dataset replaces the graph.
+    """
+    label_list = [l.strip().upper() for l in (labels or "").split(",") if l.strip()]
+    rel_list = [r.strip().upper() for r in (rel_types or "").split(",") if r.strip()]
+    payload = await GraphService().master_graph(
+        session,
+        scope,
+        include_staging=include_staging,
+        limit=limit,
+        labels=label_list or None,
+        rel_types=rel_list or None,
+    )
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource="master",
+        details={"kind": "master_graph", "nodes": len(payload["nodes"]), "edges": len(payload["edges"])},
+    )
+    await recorder.flush()
+    return payload
+
+
+@router.get("/master/centrality")
+async def master_centrality(
+    metric: str = Query("betweenness", pattern="^(betweenness|pagerank|degree|eigenvector)$"),
+    limit: int = Query(25, ge=1, le=200),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await GraphService().master_influencers(session, scope, limit=limit, metric=metric)
+
+
+@router.get("/master/analytics")
+async def master_analytics(
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await GraphService().master_centrality(session, scope)
+
+
 @router.get("/cases/{case_id}")
 async def case_graph(
     case_id: str,
