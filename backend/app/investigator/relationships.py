@@ -195,6 +195,62 @@ def _analysis(observation: str, interpretation: str, assessment: str) -> Observa
     )
 
 
+#: Evidence-confidence bands, from the platform's edge-confidence semantics.
+#: Confidence describes how well the records support the observation — it is
+#: never a probability of guilt, and it is kept separate from relationship
+#: strength (how much contact the records actually show).
+_CONFIDENCE_BANDS: tuple[tuple[float, str], ...] = (
+    (0.85, "HIGH"),
+    (0.65, "MODERATE"),
+    (0.40, "LOW"),
+)
+
+
+def _strength_meta(edges: list, docs: set[str]) -> tuple[str, str]:
+    """Return ``(relationship_strength, evidence_confidence)`` — two dimensions.
+
+    Relationship strength is about the observed relationship (record count,
+    distinct documents, relationship kinds).  Evidence confidence is about how
+    strongly the available records support that observation (edge confidence).
+    The pair is deliberately not collapsed into one score.
+    """
+    if not edges:
+        return ("INSUFFICIENT", "INSUFFICIENT")
+    kinds = {edge.rel_type for edge in edges}
+    if len(docs) >= 3 or (len(kinds) >= 2 and len(docs) >= 2):
+        relationship = "STRONG"
+    elif len(edges) >= 2 or len(docs) >= 2:
+        relationship = "MODERATE"
+    else:
+        relationship = "WEAK"
+    peak = max(
+        (float(getattr(edge, "confidence", 1.0) or 1.0) for edge in edges), default=0.0
+    )
+    confidence = "INSUFFICIENT"
+    for threshold, band in _CONFIDENCE_BANDS:
+        if peak >= threshold:
+            confidence = band
+            break
+    return relationship, confidence
+
+
+_WHY_PREFIX = "Surfaced because "
+
+
+def _why_for(kind: str, entities: list[str]) -> str:
+    """Deterministic "why was this relationship surfaced?" per discovery kind."""
+    pair = " and ".join(entities)
+    return {
+        "direct": f"{_WHY_PREFIX}the records in scope directly link {pair}.",
+        "repeated": f"{_WHY_PREFIX}{pair} recur together across multiple documents.",
+        "temporal": f"{_WHY_PREFIX}{pair} are joined by a chronologically valid path.",
+        "cross_case": f"{_WHY_PREFIX}the link between {pair} spans disjoint case sets.",
+        "suspicious": f"{_WHY_PREFIX}communication and financial records coincide on {pair}.",
+        "indirect": f"{_WHY_PREFIX}{pair} are connected by a short path through other entities.",
+        "coincidental": f"{_WHY_PREFIX}the only records between {pair} are weak or benign — flagged, not weighted.",
+    }.get(kind, f"{_WHY_PREFIX}the relationship engine matched this pair in scope.")
+
+
 def discover_relationships(
     snapshot: CaseGraphSnapshot,
     resolved: list[ResolvedEntity],
@@ -231,6 +287,9 @@ def discover_relationships(
                         edges, doc_index, f"{first_name} is directly linked to {second_name}."
                     ),
                     inference_label=FACT,
+                    why=_why_for("direct", [first_name, second_name]),
+                    relationship_strength=_strength_meta(edges, docs)[0],
+                    evidence_strength=_strength_meta(edges, docs)[1],
                     analysis=_analysis(
                         f"{len(edges)} record(s) join the pair: {', '.join(sorted(rels))}.",
                         "A direct record means documented contact, not proven coordination.",
@@ -249,6 +308,9 @@ def discover_relationships(
                             edges, doc_index, f"Repeated co-occurrence in {len(docs)} documents."
                         ),
                         inference_label=LEAD,
+                        why=_why_for("repeated", [first_name, second_name]),
+                        relationship_strength=_strength_meta(edges, docs)[0],
+                        evidence_strength=_strength_meta(edges, docs)[1],
                         analysis=_analysis(
                             f"Co-occurrence spans {len(docs)} documents.",
                             "Repetition across sources is the start of corroboration.",
@@ -267,6 +329,9 @@ def discover_relationships(
                             edges, doc_index, "Calls and transfers coincide on this pair."
                         ),
                         inference_label=LEAD,
+                        why=_why_for("suspicious", [first_name, second_name]),
+                        relationship_strength=_strength_meta(edges, docs)[0],
+                        evidence_strength=_strength_meta(edges, docs)[1],
                         analysis=_analysis(
                             "Both CALLED and TRANSFER_TO edges join the pair.",
                             "Coinciding contact and money movement is the classic shape worth a look.",
@@ -278,6 +343,7 @@ def discover_relationships(
             for path in _bfs_paths(adjacency, first, second):
                 via = [names.get(key, key) for key in path[1:-1]]
                 path_edges = _edges_along(snapshot, path)
+                rel_strength, ev_conf = _strength_meta(path_edges, _edge_docs(path_edges))
                 findings.append(
                     RelationshipFinding(
                         kind="indirect",
@@ -291,6 +357,9 @@ def discover_relationships(
                             label=LEAD,
                         ),
                         inference_label=LEAD,
+                        why=_why_for("indirect", [first_name, second_name]),
+                        relationship_strength=rel_strength,
+                        evidence_strength=ev_conf,
                         path=RelationshipPath(
                             nodes=[names.get(key, key) for key in path],
                             edges=[edge.key for edge in path_edges if getattr(edge, "key", "")],
@@ -314,6 +383,7 @@ def discover_relationships(
             path_keys = [str(key) for key in best.get("provenance_keys", [])]
             nodes = [names.get(str(key), str(key)) for key in best.get("nodes", best.get("path", []))]
             path_edges = _edges_along(snapshot, path_keys, best.get("edge_keys"))
+            rel_strength, ev_conf = _strength_meta(path_edges, _edge_docs(path_edges))
             findings.append(
                 RelationshipFinding(
                     kind="temporal",
@@ -327,6 +397,9 @@ def discover_relationships(
                         label=LEAD,
                     ),
                     inference_label=LEAD,
+                    why=_why_for("temporal", [first_name, second_name]),
+                    relationship_strength=rel_strength,
+                    evidence_strength=ev_conf,
                     path=RelationshipPath(
                         nodes=nodes,
                         edges=[edge.key for edge in path_edges if getattr(edge, "key", "")],
@@ -355,6 +428,9 @@ def discover_relationships(
                     if edges
                     else [make_evidence("record", "Endpoints attributed to disjoint cases.", label=LEAD)],
                     inference_label=LEAD,
+                    why=_why_for("cross_case", [first_name, second_name]),
+                    relationship_strength=_strength_meta(edges, docs)[0],
+                    evidence_strength=_strength_meta(edges, docs)[1],
                     analysis=_analysis(
                         "Case attribution on the two endpoints does not overlap.",
                         "Spanning links are how separate cases share a network.",
@@ -374,6 +450,9 @@ def discover_relationships(
                         edges, doc_index, "Single low-confidence social link.", stance="context"
                     ),
                     inference_label=COINCIDENCE,
+                    why=_why_for("coincidental", [first_name, second_name]),
+                    relationship_strength=_strength_meta(edges, docs)[0],
+                    evidence_strength=_strength_meta(edges, docs)[1],
                     analysis=_analysis(
                         "Exactly one record joins the pair, and it is low-confidence.",
                         "Online adjacency without more is coincidence until shown otherwise.",
@@ -393,6 +472,9 @@ def discover_relationships(
                         edges, doc_index, f"{benign.capitalize()}-only contact.", stance="context"
                     ),
                     inference_label=COINCIDENCE,
+                    why=_why_for("coincidental", [first_name, second_name]),
+                    relationship_strength=_strength_meta(edges, docs)[0],
+                    evidence_strength=_strength_meta(edges, docs)[1],
                     analysis=_analysis(
                         f"All records are {benign}-only.",
                         f"{benign.capitalize()} contact explains itself.",

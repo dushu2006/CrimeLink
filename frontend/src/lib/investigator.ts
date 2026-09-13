@@ -20,6 +20,7 @@
  */
 
 import type {
+  AnalyticalBasis,
   AssessmentSection,
   DataGap,
   EvidenceItem,
@@ -369,6 +370,7 @@ export function scopeLabel(scope: ScopeSection | null | undefined): string {
   if (!scope) return "Scope unknown";
   if (scope.label) return scope.label;
   if (scope.mode === "case") return `Case ${scope.case_number ?? scope.case_id ?? "unknown"}`;
+  if (scope.mode === "person") return "Person Network";
   return "Master Network";
 }
 
@@ -449,6 +451,134 @@ export function timelineUpTo(
     if (Number.isNaN(at)) return true;
     return at <= ref;
   });
+}
+
+/* ------------------------------------------------------------------------- */
+/* Analytical basis & interpretation boundary                                */
+/* ------------------------------------------------------------------------- */
+
+/** One rendered analytical-basis line: what was measured, its value, and why. */
+export interface BasisLine {
+  metric: string;
+  value: string;
+  why: string;
+}
+
+const BASIS_METRIC_NAMES: Record<string, string> = {
+  degree_centrality: "Degree centrality",
+  weighted_degree: "Weighted degree",
+  betweenness_centrality: "Betweenness centrality",
+  pagerank: "PageRank",
+  cross_case_count: "Cases connected",
+  community_size: "Community size",
+  relationship_count: "Relationships",
+  evidence_count: "Evidence records",
+  source_count: "Independent source categories",
+};
+
+/**
+ * The analytical basis as metric/value/interpretation lines, **only** for the
+ * metrics the backend actually computed — absent metrics are never shown, and
+ * a value without an explanation is never rendered as a bare number.
+ */
+export function analyticalBasisLines(basis: AnalyticalBasis | null | undefined): BasisLine[] {
+  if (!basis) return [];
+  const explanations = basis.explanations ?? {};
+  const lines: BasisLine[] = [];
+  const push = (metric: string, value: string, why?: string) => {
+    lines.push({
+      metric: BASIS_METRIC_NAMES[metric] ?? metric.replaceAll("_", " "),
+      value,
+      why: why || explanations[metric] || "A structural measure of the network.",
+    });
+  };
+  if (basis.betweenness_centrality != null) {
+    push("betweenness_centrality", String(basis.betweenness_centrality));
+  }
+  if (basis.weighted_degree != null) push("weighted_degree", String(basis.weighted_degree));
+  if (basis.pagerank != null) push("pagerank", String(basis.pagerank));
+  if (basis.degree_centrality != null) push("degree_centrality", String(basis.degree_centrality));
+  if (basis.cross_case_count != null) push("cross_case_count", String(basis.cross_case_count));
+  if (basis.bridge_info && Number(basis.bridge_info.bridge_count ?? 0) > 0) {
+    push(
+      "community_size",
+      String(basis.bridge_info.bridge_count),
+      `Bridges ${basis.bridge_info.bridge_count} communit(ies): sits between otherwise separated network regions.`,
+    );
+  } else if (basis.community_size != null) {
+    push("community_size", String(basis.community_size));
+  }
+  if (basis.relationship_count != null) push("relationship_count", String(basis.relationship_count));
+  if (basis.evidence_count != null) push("evidence_count", String(basis.evidence_count));
+  if (basis.source_count != null) push("source_count", String(basis.source_count));
+  return lines;
+}
+
+/**
+ * The neutral interpretation boundary — the caveat(s) that actually apply to
+ * this finding, never a flood of generic warnings.
+ */
+export function interpretationBoundaries(pattern: SuspiciousPattern | null | undefined): string[] {
+  if (!pattern) return [];
+  const boundaries: string[] = [];
+  if (pattern.analytical_basis?.betweenness_centrality != null || pattern.analytical_basis?.pagerank != null) {
+    boundaries.push("Network metrics indicate structural importance, not criminality.");
+  }
+  const kind = String(pattern.kind ?? "").toUpperCase();
+  if (kind === "COLOCATION") {
+    boundaries.push("Co-location does not establish association.");
+  }
+  if (kind === "FINANCIAL_FLOW") {
+    boundaries.push("A financial relationship does not by itself establish illicit purpose.");
+  }
+  if (kind === "COMMUNICATION_ANOMALY") {
+    boundaries.push("A communication record does not establish criminal intent.");
+  }
+  return boundaries;
+}
+
+/** Why a relationship finding was surfaced, with a deterministic fallback. */
+export function relationshipWhy(
+  relationship: { why?: string | null; kind: string } | null | undefined,
+): string {
+  if (relationship?.why) return relationship.why;
+  return `Surfaced because the records in scope produced a ${relationship?.kind ?? "relationship"} reading.`;
+}
+
+/** Relationship strength in words — about the *observed relationship*. */
+export function relationshipStrengthSentence(
+  strength: string | null | undefined,
+): string {
+  switch (String(strength ?? "").toUpperCase()) {
+    case "STRONG":
+      return "Observed relationship: substantial (multiple records or documents).";
+    case "MODERATE":
+      return "Observed relationship: moderate.";
+    case "WEAK":
+      return "Observed relationship: minimal (a single record).";
+    case "INSUFFICIENT":
+      return "Observed relationship: nothing direct on record.";
+    default:
+      return "Observed relationship: not reported.";
+  }
+}
+
+/** Evidence confidence in words — about *how well the records support* the observation. */
+export function evidenceConfidenceSentence(
+  confidence: string | null | undefined,
+): string {
+  switch (String(confidence ?? "").toUpperCase()) {
+    case "HIGH":
+      return "Evidence confidence: high (confirmed records).";
+    case "MODERATE":
+      return "Evidence confidence: moderate (corroborated records).";
+    case "LOW":
+      return "Evidence confidence: low (single-source records).";
+    case "INSUFFICIENT":
+      return "Evidence confidence: insufficient.";
+    default:
+      return "Evidence confidence: not reported.";
+  }
 }
 
 /* ------------------------------------------------------------------------- */

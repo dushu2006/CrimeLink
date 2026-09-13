@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
 import {
@@ -108,10 +108,15 @@ interface VisibleGraph {
 
 export default function GraphPage() {
   const { caseId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
 
-  const [mode, setMode] = useState<GraphMode>("person");
+  // INVESTIGATE CASE lands on the full case master graph; plain navigation
+  // keeps the person graph as the starting point.
+  const initialMode =
+    searchParams.get("mode") === "master" ? "master" : "person";
+  const [mode, setMode] = useState<GraphMode>(initialMode);
 
   // ---- person graph state ----
   const [persons, setPersons] = useState<PersonTarget[] | null>(null);

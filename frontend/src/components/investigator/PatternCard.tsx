@@ -16,7 +16,9 @@ import type { SuspiciousPattern } from "../../api/client";
 import { Badge } from "../Status";
 import {
   PATTERN_SIGNAL_NOTE,
+  analyticalBasisLines,
   describeStrengthFactors,
+  interpretationBoundaries,
   labelText,
   patternHasChallenge,
   patternScopeSentence,
@@ -75,11 +77,101 @@ export function PatternCard({
         </p>
       )}
 
+      {pattern.why && (
+        <p className="inv-pattern-why muted">
+          <strong>WHY surfaced:</strong> {pattern.why}
+        </p>
+      )}
+
       {patternScopeSentence(pattern) && (
         <p className="inv-pattern-scope muted">{patternScopeSentence(pattern)}</p>
       )}
 
       <p className="inv-signal-note">{PATTERN_SIGNAL_NOTE}</p>
+
+      {!pattern.excluded && pattern.analytical_basis && (
+        <details className="technical-details">
+          <summary className="technical-details-toggle">View analytical basis — method used</summary>
+          <div className="technical-details-content">
+            {(() => {
+              const lines = analyticalBasisLines(pattern.analytical_basis);
+              if (lines.length === 0) {
+                return (
+                  <p className="muted">
+                    No structural metric was computed for this finding — it was surfaced by its
+                    detector rule alone.
+                  </p>
+                );
+              }
+              return (
+                <>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Method used</th>
+                        <th>Value</th>
+                        <th>Why it mattered</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lines.map((line) => (
+                        <tr key={line.metric}>
+                          <td>{line.metric}</td>
+                          <td>{line.value}</td>
+                          <td className="muted">{line.why}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {pattern.analytical_basis?.metrics &&
+                    (pattern.analytical_basis.metrics as Record<string, unknown>).entity_metrics && (
+                      <p className="muted inv-entity-keys">
+                        Per-entity values are in the metric detail above; only the metrics actually
+                        computed for this finding's entities are shown.
+                      </p>
+                    )}
+                </>
+              );
+            })()}
+            {(pattern.investigative_relevance || pattern.evidence_strength) && (
+              <ul className="kv" style={{ marginTop: "var(--space-2)" }}>
+                {pattern.investigative_relevance && (
+                  <li>
+                    <dt>Investigative relevance</dt>
+                    <dd>
+                      {pattern.investigative_relevance.relevance} —{" "}
+                      {pattern.investigative_relevance.explanation}
+                    </dd>
+                  </li>
+                )}
+                {pattern.evidence_strength && (
+                  <li>
+                    <dt>Evidence strength</dt>
+                    <dd>
+                      {pattern.evidence_strength.strength} — {pattern.evidence_strength.explanation}
+                    </dd>
+                  </li>
+                )}
+                {pattern.evidence_convergence && (
+                  <li>
+                    <dt>Evidence convergence</dt>
+                    <dd>
+                      {pattern.evidence_convergence.convergence_type} ·{" "}
+                      {pattern.evidence_convergence.independent_source_count} independent source
+                      categor(ies)
+                    </dd>
+                  </li>
+                )}
+              </ul>
+            )}
+            {interpretationBoundaries(pattern).length > 0 && (
+              <p className="inv-boundary-note">
+                {interpretationBoundaries(pattern).join(" ")}
+              </p>
+            )}
+          </div>
+        </details>
+      )}
 
       <div className="inv-strength">
         <p>{strengthSentence(pattern.strength)}</p>

@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { api } from "../api/client";
 import SourceViewer, { SourceReference, SourceTarget } from "./SourceViewer";
 
 /** Evidence pointer as carried on a graph node or edge. */
@@ -123,6 +124,95 @@ export function EvidencePointerLink({
       }}
       footer={footer}
     />
+  );
+}
+
+/**
+ * Open an ingested *document* (by doc id) inside the same SourceViewer modal.
+ *
+ * A provenance pointer of kind "document" carries a doc_id rather than a file
+ * path.  To keep the viewer consistent — every piece of evidence opens in the
+ * same in-page overlay, never navigating away — the document's origin file is
+ * resolved from the document endpoint and then shown exactly like any other
+ * source.  If the origin cannot be resolved, the button stays honest (it does
+ * not dead-end as a fake document link).
+ */
+export function DocumentFileLink({
+  docId,
+  originFile,
+  row,
+  lineStart,
+  lineEnd,
+  label,
+}: {
+  docId: string;
+  originFile?: string | null;
+  row?: number | null;
+  lineStart?: number | null;
+  lineEnd?: number | null;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [resolvedPath, setResolvedPath] = useState<string | null>(originFile ?? null);
+  const [resolving, setResolving] = useState(false);
+  const [resolved, setResolved] = useState<boolean>(Boolean(originFile));
+
+  const openViewer = () => {
+    setOpen(true);
+    if (resolvedPath) return;
+    if (resolving || resolved) return;
+    setResolving(true);
+    api<{ origin?: { file: string } | null; relative_path?: string | null }>(
+      `/explore/documents/${encodeURIComponent(docId)}`,
+    )
+      .then((detail) => {
+        const path = detail?.origin?.file || detail?.relative_path || null;
+        setResolvedPath(path);
+        setResolved(true);
+      })
+      .catch(() => {
+        setResolved(true);
+      })
+      .finally(() => setResolving(false));
+  };
+
+  const target: SourceTarget | null = resolvedPath
+    ? {
+        kind: "file",
+        path: resolvedPath,
+        row: row ?? undefined,
+        lineStart: lineStart ?? undefined,
+        lineEnd: lineEnd ?? undefined,
+      }
+    : null;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="evidence-link"
+        onClick={openViewer}
+        title={label ?? "Open document in the source viewer"}
+      >
+        <span className="evidence-icon" aria-hidden="true" />
+        <span>{label ?? "document"}</span>
+        {row ? <span className="evidence-pos">row {row}</span> : null}
+      </button>
+      {open && target && (
+        <SourceViewer
+          target={target}
+          subtitle={resolvedPath ?? undefined}
+          onClose={() => setOpen(false)}
+        />
+      )}
+      {open && !target && (
+        <p className="muted" style={{ marginTop: "var(--space-1)" }}>
+          {resolved
+            ? "This document has no openable origin file in the active dataset — it can be reviewed from its document page."
+            : "Resolving document…"}
+        </p>
+      )}
+    </>
   );
 }
 

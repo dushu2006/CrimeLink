@@ -982,6 +982,135 @@ def detect_social_only_exclusions(ctx: DetectorContext) -> list[SuspiciousPatter
     return found
 
 
+def _enrich_pattern(ctx: DetectorContext, pattern: SuspiciousPattern) -> SuspiciousPattern:
+    """Attach the per-finding analytical basis, WHY, relevance and strength.
+
+    A pattern is a *signal*, and the investigator must be able to see which
+    structural measures actually caused the detector to surface it.  This runs
+    centrally in :func:`detect_all_patterns` so both the question orchestrator
+    and the explicit network analysis share one auditable rule — and only the
+    metrics that were genuinely computed for the finding's entities are
+    reported.  Excluded (set-aside) patterns are deliberately not enriched:
+    their answer is "examined and set aside", not "surfaced".
+    """
+    from .assessment import (
+        METRIC_EXPLANATIONS,
+        assess_evidence_convergence,
+        assess_evidence_strength,
+        assess_investigative_relevance,
+        build_analytical_basis,
+    )
+
+    centrality = ctx.centrality
+    snapshot = ctx.snapshot
+    nodes = snapshot.nodes or {}
+
+    keys = [key for key in (pattern.entity_keys or []) if key in nodes]
+    if not keys:
+        return pattern
+
+    betweenness = dict(getattr(centrality, "betweenness", {}) or {})
+    degree = dict(getattr(centrality, "degree", {}) or {})
+    pagerank = dict(getattr(centrality, "pagerank", {}) or {})
+    weighted = dict(getattr(centrality, "weighted_degree", {}) or {})
+
+    # Anchor on the involved entity with the highest betweenness: that is the
+    # entity whose structural position most plausibly caused the detector to
+    # fire, and the basis is built from its own computed metrics.
+    anchor = max(keys, key=lambda key: float(betweenness.get(key, 0.0)))
+    anchor_node = nodes[anchor]
+    anchor_cross_case = len(set((anchor_node.properties or {}).get("case_ids") or []))
+    basis = build_analytical_basis(
+        node_key=anchor,
+        snapshot=snapshot,
+        centrality=centrality,
+        cross_case_count=anchor_cross_case,
+        evidence_count=sum(
+            1
+            for edge in snapshot.edges or []
+            if edge.source_key == anchor or edge.target_key == anchor
+        ),
+    )
+
+    # The finding as a whole may involve several entities: record the peak
+    # metric across all of them, and the per-entity values, so the basis only
+    # ever contains metrics that were actually computed.
+    basis.metrics = {
+        "entity_metrics": {
+            key: {
+                "betweenness": round(float(betweenness.get(key, 0.0)), 6),
+                "degree": round(float(degree.get(key, 0.0)), 6),
+                "weighted_degree": round(float(weighted.get(key, 0.0)), 6),
+                "pagerank": round(float(pagerank.get(key, 0.0)), 6),
+            }
+            for key in keys
+        }
+    }
+    basis.cross_case_count = max(
+        len(set((nodes[key].properties or {}).get("case_ids") or [])) for key in keys
+    )
+    basis.explanations.update(
+        {
+            "betweenness_centrality": METRIC_EXPLANATIONS["betweenness_centrality"],
+            "weighted_degree": METRIC_EXPLANATIONS["weighted_degree"],
+            "pagerank": METRIC_EXPLANATIONS["pagerank"],
+            "cross_case_count": METRIC_EXPLANATIONS["cross_case_count"],
+        }
+    )
+
+    why_parts: list[str] = []
+    if basis.betweenness_centrality is not None:
+        why_parts.append(f"elevated betweenness centrality ({basis.betweenness_centrality:.2f})")
+    if basis.cross_case_count:
+        why_parts.append(f"cross-case presence in {basis.cross_case_count} case(s)")
+    if basis.bridge_info and basis.bridge_info.get("bridge_count"):
+        why_parts.append(f"bridging {basis.bridge_info.get('bridge_count')} communit(ies)")
+    if basis.degree_centrality is not None:
+        why_parts.append(f"degree centrality {basis.degree_centrality:.2f}")
+    if basis.weighted_degree is not None:
+        why_parts.append(f"weighted degree {basis.weighted_degree}")
+    if basis.pagerank is not None:
+        why_parts.append(f"PageRank {basis.pagerank}")
+    if not why_parts:
+        why_parts.append("it matched the deterministic detector's own rule")
+    pattern.analytical_basis = basis
+    pattern.pattern_type = pattern.kind
+    pattern.why = f"{pattern.title} was surfaced because {', '.join(why_parts)}."
+
+    # Evidence convergence / strength / relevance, from the pattern's own
+    # evidence — never from records it does not cite.
+    doc_ids: list[str] = []
+    source_types: list[str] = []
+    for item in pattern.evidence:
+        for pointer in item.provenance:
+            if pointer.doc_id:
+                doc_ids.append(pointer.doc_id)
+                info = ctx.doc_index.get(pointer.doc_id, {})
+                if info.get("document_type"):
+                    source_types.append(str(info.get("document_type")))
+    convergence = assess_evidence_convergence(
+        source_types=source_types, doc_ids=doc_ids, record_count=len(doc_ids)
+    )
+    strength = assess_evidence_strength(
+        independent_sources=convergence.independent_source_count,
+        corroborating_records=len(doc_ids),
+        has_contradictions=bool(pattern.contradictions_considered),
+        contradiction_level=(
+            "major" if pattern.contradictions_considered else "none"
+        ),
+    )
+    relevance = assess_investigative_relevance(
+        analytical_basis=basis,
+        cross_case_count=basis.cross_case_count or 0,
+        evidence_convergence_type=convergence.convergence_type,
+        has_contradictions=bool(pattern.contradictions_considered),
+    )
+    pattern.evidence_convergence = convergence
+    pattern.evidence_strength = strength
+    pattern.investigative_relevance = relevance
+    return pattern
+
+
 _DETECTORS = (
     detect_cross_case_entities,
     detect_cross_case_links,
@@ -1030,4 +1159,9 @@ def detect_all_patterns(
         # attached; a pattern with no evidence keeps an empty list rather than a
         # placeholder pointer.
         pattern.provenance = roll_up_provenance(pattern.evidence)
+        # Live signals carry the analytical basis / WHY / relevance / strength
+        # the investigator needs to answer "why was this surfaced?".  Set-aside
+        # entries stay unenriched: they were examined and dropped, not surfaced.
+        if not pattern.excluded:
+            _enrich_pattern(ctx, pattern)
     return result

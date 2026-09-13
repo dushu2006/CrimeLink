@@ -1019,6 +1019,10 @@ export interface GraphNodeRow {
   is_active: boolean;
   evidence: NodeEvidence | null;
   properties: Record<string, unknown>;
+  /** Source-derived legal/criminal status; never inferred from centrality. */
+  criminal_status?: string | null;
+  /** True only when a source document records a criminal/legal status. */
+  is_criminal?: boolean;
 }
 
 export interface GraphEdgeRow {
@@ -1473,6 +1477,13 @@ export interface RelationshipFinding {
   provenance: ProvenanceItem[];
   path: RelationshipPath | null;
   analysis: ObservationBlock | null;
+  /** Deterministic "why was this relationship surfaced?" */
+  why?: string | null;
+  /** Observed relationship (STRONG/MODERATE/WEAK/INSUFFICIENT). */
+  relationship_strength?: string | null;
+  /** Evidentiary confidence band (HIGH/MODERATE/LOW/INSUFFICIENT). */
+  evidence_strength?: string | null;
+  analytical_basis?: AnalyticalBasis | null;
 }
 
 export interface StrengthFactors {
@@ -1484,6 +1495,69 @@ export interface StrengthFactors {
   contradiction_level: string;
   entity_certainty: string;
   notes: string[];
+}
+
+/** Deterministic graph-analytical signals behind a finding. */
+export interface AnalyticalBasis {
+  degree_centrality?: number | null;
+  weighted_degree?: number | null;
+  betweenness_centrality?: number | null;
+  pagerank?: number | null;
+  community_id?: number | string | null;
+  community_size?: number | null;
+  cross_case_count?: number | null;
+  relationship_count?: number | null;
+  evidence_count?: number | null;
+  source_count?: number | null;
+  temporal_relevance?: string | null;
+  evidence_convergence?: string | null;
+  relationship_strength?: string | null;
+  bridge_info?: { own_community?: number | string; bridges_to?: (number | string)[]; bridge_count?: number } | null;
+  metrics?: Record<string, unknown>;
+  explanations?: Record<string, string>;
+}
+
+export interface EvidenceConvergenceAssessment {
+  convergence_type: string;
+  source_categories: string[];
+  independent_source_count: number;
+  record_count: number;
+  explanation: string;
+}
+
+export interface EvidenceStrengthAssessment {
+  strength: string;
+  basis: string[];
+  components: Record<string, unknown>;
+  explanation: string;
+}
+
+export interface InvestigativeRelevanceAssessment {
+  relevance: string;
+  score?: number | null;
+  basis: string[];
+  components: Record<string, unknown>;
+  explanation: string;
+}
+
+/** One structured finding: the full WHY chain around a surfaced signal. */
+export interface StructuredFinding {
+  finding_id: string;
+  title: string;
+  finding_type: string;
+  objective: string;
+  why: string;
+  entities: ResolvedEntity[];
+  analytical_basis: AnalyticalBasis | null;
+  relationships: RelationshipFinding[];
+  patterns: SuspiciousPattern[];
+  supporting_evidence: EvidenceItem[];
+  contradictory_evidence: EvidenceItem[];
+  alternative_explanations: string[];
+  assessment: Record<string, unknown>;
+  data_gaps: DataGap[];
+  focused_graph: FocusedGraph;
+  next_investigative_direction: string;
 }
 
 export interface SuspiciousPattern {
@@ -1503,6 +1577,14 @@ export interface SuspiciousPattern {
   excluded: boolean;
   exclusion_reason: string | null;
   provenance: ProvenanceItem[];
+  /** Deterministic "why was this surfaced?" — the mechanism, never a verdict. */
+  why?: string | null;
+  analytical_basis?: AnalyticalBasis | null;
+  evidence_convergence?: EvidenceConvergenceAssessment | null;
+  evidence_strength?: EvidenceStrengthAssessment | null;
+  investigative_relevance?: InvestigativeRelevanceAssessment | null;
+  pattern_type?: string | null;
+  disclaimer?: string | null;
 }
 
 export interface Hypothesis {
@@ -1584,7 +1666,7 @@ export interface MemorySection {
 }
 
 export interface ScopeSection {
-  mode: "case" | "master";
+  mode: "case" | "master" | "person";
   /** Human reading of the scope: "Case C106" or "Master Network". */
   label: string;
   dataset_id: string | null;
@@ -1647,14 +1729,30 @@ export interface InvestigatorResponse {
   provenance: ProvenanceItem[];
   memory: MemorySection | null;
   timing_ms: Record<string, number>;
-  structured_findings?: any[];
+  structured_findings?: StructuredFinding[];
   analytical_basis?: any;
   investigative_relevance?: any;
   evidence_strength?: any;
   evidence_convergence?: any;
-  silent_intermediaries?: any[];
+  silent_intermediaries?: SilentIntermediaryFinding[];
   data_quality?: any[];
   validation_notes?: string[];
+}
+
+/** Low-visibility, structurally important intermediary — never "silent criminal". */
+export interface SilentIntermediaryFinding {
+  entity_id: string;
+  display_name: string;
+  entity_type: string;
+  why_surfaced: string;
+  analytical_basis: AnalyticalBasis;
+  network_role: string;
+  investigative_relevance: string;
+  evidence_strength: string;
+  supporting_evidence: EvidenceItem[];
+  community_bridges: (number | string)[];
+  cross_case_bridges: string[];
+  disclaimer: string;
 }
 
 export interface InvestigatePayload {
@@ -1795,4 +1893,180 @@ export function getInvestigationJobWsUrlAlt(jobId: string): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
   return `${proto}://${host}${base}?token=${encodeURIComponent(token)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Cases registry
+// ---------------------------------------------------------------------------
+
+export interface CaseSummary {
+  id: string;
+  case_number: string;
+  title: string;
+  jurisdiction_id: string;
+  status?: string;
+  dataset_id?: string;
+}
+
+export function listCases(): Promise<{ items: CaseSummary[] }> {
+  return api("/cases");
+}
+
+// ---------------------------------------------------------------------------
+// Network analysis — the explicit three-scope graph surface.
+//
+// MASTER NETWORK  = the complete active-dataset graph (cross-case).
+// CASE NETWORK    = one case's master graph.
+// PERSON NETWORK  = one person's neighbourhood, cross-case, active dataset.
+//
+// Nothing auto-runs: the workspace posts /investigate/network-analysis and
+// polls the returned job exactly like a question investigation.  The graph
+// itself is rendered from the real graph endpoints below — never fabricated.
+// ---------------------------------------------------------------------------
+
+export type NetworkScopeMode = "master" | "case" | "person";
+
+/** The complete active-dataset graph (same row shape as a case graph). */
+export interface MasterGraph extends CaseGraph {
+  mode: "master";
+  case_ids: string[];
+}
+
+export function masterGraph(
+  opts: {
+    includeStaging?: boolean;
+    labels?: string[];
+    relTypes?: string[];
+    limit?: number;
+  } = {},
+): Promise<MasterGraph> {
+  const params = new URLSearchParams();
+  if (opts.includeStaging) params.set("include_staging", "true");
+  if (opts.labels?.length) params.set("labels", opts.labels.join(","));
+  if (opts.relTypes?.length) params.set("rel_types", opts.relTypes.join(","));
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return api(`/graph/master${qs ? `?${qs}` : ""}`);
+}
+
+/** One selectable person target in the active dataset (cross-case). */
+export interface MasterPersonTarget extends PersonTarget {
+  case_ids: string[];
+  criminal_status: string | null;
+  is_criminal?: boolean;
+}
+
+export function masterPersons(): Promise<{
+  mode: "master";
+  case_ids: string[];
+  total_persons: number;
+  items: MasterPersonTarget[];
+}> {
+  return api("/graph/master/persons");
+}
+
+/** A person's neighbourhood over the active dataset (cross-case). */
+export interface MasterPersonNetwork extends Omit<PersonNetwork, "case_id"> {
+  mode: "master";
+  case_ids: string[];
+  person_case_ids: string[];
+}
+
+export function masterPersonNetwork(
+  personKey: string,
+  depth: number = DEFAULT_NETWORK_DEPTH,
+): Promise<MasterPersonNetwork> {
+  const hops = Math.max(1, Math.floor(Number(depth) || DEFAULT_NETWORK_DEPTH));
+  const params = new URLSearchParams({ depth: String(hops) });
+  return api(
+    `/graph/master/person/${encodeURIComponent(personKey)}?${params.toString()}`,
+  );
+}
+
+/** One ranked metric row (structural measure, never a criminality score). */
+export interface NetworkMetricRow {
+  key: string;
+  name: string;
+  label: string;
+  value: number;
+  case_count?: number;
+  is_criminal: boolean;
+}
+
+export interface NetworkCommunity {
+  id: number;
+  size: number;
+  top_members: { key: string; name: string; label: string }[];
+}
+
+export interface NetworkCrossCaseRow {
+  key: string;
+  name: string;
+  label: string;
+  case_count: number;
+  case_ids: string[];
+  betweenness: number;
+  is_criminal: boolean;
+}
+
+export interface NetworkAnalysisAnalysis {
+  mode: NetworkScopeMode;
+  scope_label: string;
+  case_ids: string[];
+  case_number: string | null;
+  case_title: string | null;
+  person_key: string | null;
+  person_name: string | null;
+  graph: { nodes: number; edges: number; communities: number };
+  metrics: {
+    betweenness: NetworkMetricRow[];
+    degree: NetworkMetricRow[];
+    weighted_degree: NetworkMetricRow[];
+    pagerank: NetworkMetricRow[];
+    explanations: Record<string, string>;
+  };
+  communities: NetworkCommunity[];
+  cross_case: NetworkCrossCaseRow[];
+}
+
+export interface NetworkAnalysisResult {
+  status: string;
+  response: InvestigatorResponse;
+  analysis: NetworkAnalysisAnalysis;
+}
+
+export interface NetworkAnalysisRequest {
+  mode: NetworkScopeMode;
+  case_id?: string | null;
+  person_key?: string | null;
+  max_patterns?: number;
+  include_excluded?: boolean;
+}
+
+export function startNetworkAnalysis(payload: NetworkAnalysisRequest): Promise<InvestigationJob> {
+  return api("/investigate/network-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: payload.mode,
+      case_id: payload.case_id ?? null,
+      person_key: payload.person_key ?? null,
+      max_patterns: payload.max_patterns ?? 25,
+      include_excluded: payload.include_excluded ?? true,
+    }),
+  });
+}
+
+/** Extract a finished job's network-analysis payload, or null if incomplete. */
+export function networkAnalysisFromJob(job: InvestigationJob | null | undefined): NetworkAnalysisResult | null {
+  if (!job) return null;
+  const result = job.result as { response?: InvestigatorResponse; analysis?: NetworkAnalysisAnalysis; status?: string } | undefined;
+  if (result && result.response && result.analysis) {
+    return {
+      status: result.status ?? job.status,
+      response: result.response,
+      analysis: result.analysis,
+    };
+  }
+  return null;
 }

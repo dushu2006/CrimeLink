@@ -12,7 +12,7 @@
 
 import { Link } from "react-router-dom";
 import type { EvidenceItem, ProvenanceItem } from "../../api/client";
-import { FileLink } from "../EvidenceLink";
+import { DocumentFileLink, FileLink } from "../EvidenceLink";
 import { Badge } from "../Status";
 import { labelText, labelTone, provenanceTarget, provenanceText } from "../../lib/investigator";
 
@@ -48,11 +48,17 @@ export function ProvenanceChip({
   }
 
   if (target.kind === "document") {
+    // A document opens in the same SourceViewer overlay as every other piece
+    // of evidence — never navigating away from the investigation.
     return (
-      <Link className="evidence-link" to={target.to} title={pointer.label || pointer.ref}>
-        <span className="evidence-icon" aria-hidden="true" />
-        <span>{text ?? pointer.label}</span>
-      </Link>
+      <DocumentFileLink
+        docId={pointer.doc_id ?? pointer.ref}
+        originFile={pointer.origin_file}
+        row={pointer.row_number}
+        lineStart={pointer.line_start}
+        lineEnd={pointer.line_end}
+        label={text ?? pointer.label}
+      />
     );
   }
 

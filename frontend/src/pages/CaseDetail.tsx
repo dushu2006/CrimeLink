@@ -271,7 +271,9 @@ export default function CaseDetail() {
               </div>
             </div>
             <div className="row-actions">
-              {/* Investigation Analysis is now global master workspace — no per-case graph navigation */}
+              <Link className="btn btn-primary" to={`/cases/${caseId}/graph?mode=master`}>
+                INVESTIGATE CASE
+              </Link>
               <Link className="btn btn-secondary" to={`/cases/${caseId}/review`}>
                 {t("case.review")}
                 {caseRow.pending_review_count > 0 && (
