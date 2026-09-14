@@ -38,6 +38,7 @@ from app.domain.enums import (
     REL_TYPES,
     UNEVIDENCED_META_REL_TYPES,
     EntityType,
+    is_document_artifact_node,
 )
 from app.domain.models import CaseGraphSnapshot, GraphEdge, GraphNode, MergeResult
 from app.logging import get_logger
@@ -103,6 +104,8 @@ CONSTRAINTS = _build_constraints()
 CASE_PROJECTION = """
 MATCH (n)
 WHERE $case_id IN n.case_ids
+  AND coalesce(n.entity_type, '') NOT IN ['DOCUMENT', 'EVIDENCE']
+  AND coalesce(n.is_document_artifact, false) = false
   AND ($include_inactive OR coalesce(n.is_active, true))
   AND ($include_staging OR NOT coalesce(n.staging, false))
 RETURN n
@@ -118,6 +121,8 @@ RETURN a.provenance_key AS source, b.provenance_key AS target,
 MULTI_CASE_PROJECTION = """
 MATCH (n)
 WHERE ANY(cid IN $case_ids WHERE cid IN n.case_ids)
+  AND coalesce(n.entity_type, '') NOT IN ['DOCUMENT', 'EVIDENCE']
+  AND coalesce(n.is_document_artifact, false) = false
   AND ($include_inactive OR coalesce(n.is_active, true))
   AND NOT coalesce(n.staging, false)
 RETURN n
@@ -130,6 +135,8 @@ RETURN n
 SEARCH_FALLBACK = """
 MATCH (n)
 WHERE ($label IS NULL OR $label IN labels(n))
+  AND coalesce(n.entity_type, '') NOT IN ['DOCUMENT', 'EVIDENCE']
+  AND coalesce(n.is_document_artifact, false) = false
   AND ($case_id IS NULL OR $case_id IN n.case_ids)
   AND (toLower(coalesce(n.name, '')) CONTAINS $q
        OR toLower(coalesce(n.number, '')) CONTAINS $q
@@ -272,7 +279,7 @@ class Neo4jGraphStore:
 
     # ---------------------------------------------------------------- writes
     def upsert_nodes(self, nodes: Iterable[GraphNode]) -> int:
-        batch = list(nodes)
+        batch = [node for node in nodes if not is_document_artifact_node(node)]
         if not batch:
             return 0
         pks = [n.provenance_key for n in batch]

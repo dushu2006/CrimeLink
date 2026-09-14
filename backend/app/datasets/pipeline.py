@@ -271,7 +271,11 @@ async def run_import(
                 f"Reconciled {folded} placeholder records against identifiers "
                 "defined elsewhere in the dataset"
             )
+        # Entity resolution is complete before graph construction. Shared
+        # identifiers are explicit derived leads, never implicit person links.
+        shared_relationships = normalizer.result.derive_shared_identifier_relationships()
         report.canonical = normalizer.result.counts()
+        report.canonical["derived_shared_relationships"] = shared_relationships
         await session.commit()
 
         # --- 3. INGESTING --------------------------------------------------
@@ -563,7 +567,8 @@ async def _persist_entities(
             "dataset_id": dataset_id,
             "canonical_id": entity.canonical_id,
             "entity_type": entity.entity_type,
-            "name": (entity.name or "")[:500],
+            "name": (entity.name or entity.display_name or "")[:500],
+            "display_name": (entity.display_name or entity.name or "")[:500],
             "normalized_value": (entity.normalized_value or "")[:500],
             "attributes": entity.attributes,
             "provenance": entity.provenance,

@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
     api_base_url: str = "http://127.0.0.1:8000"
+    trusted_hosts: str | list[str] = Field(default_factory=lambda: ["*"])
+    max_request_bytes: int = 70 * 1024 * 1024
 
     # ------------------------------------------------------------ persistence
     # Backend selection; "auto" resolves from `profile`.
@@ -264,13 +266,37 @@ class Settings(BaseSettings):
     http_port: int = 8000  # used by docker compose
 
     @model_validator(mode="after")
+    def _validate_production_security(self) -> "Settings":
+        """Fail closed when an operator selects a production profile.
+
+        Development keeps the embedded zero-configuration experience, but a
+        production process must never boot with the repository placeholders,
+        wildcard CORS, or debug logging enabled.
+        """
+        production = self.profile == "production" or self.environment == "production"
+        if production:
+            if self.debug:
+                raise ValueError("CRIMELINK_DEBUG must be false in production")
+            if self.secret_key.startswith(("change-me", "GENERATE", "<")) or len(self.secret_key) < 32:
+                raise ValueError("CRIMELINK_SECRET_KEY must be a generated 32+ character secret in production")
+            if "*" in self.cors_origins:
+                raise ValueError("CRIMELINK_CORS_ORIGINS must not contain '*' in production")
+            if self.neo4j_password in {"crimelink", "neo4j"}:
+                raise ValueError("CRIMELINK_NEO4J_PASSWORD must be changed in production")
+            if self.minio_secret_key == "crimelink":
+                raise ValueError("CRIMELINK_MINIO_SECRET_KEY must be changed in production")
+            if "crimelink:crimelink@" in self.postgres_dsn or "GENERATE_" in self.postgres_dsn:
+                raise ValueError("CRIMELINK_POSTGRES_DSN must contain a real production credential")
+        return self
+
+    @model_validator(mode="after")
     def _relocate_graph_snapshot(self) -> "Settings":
         """Keep the embedded graph beside the database unless told otherwise."""
         if self.graph_snapshot_path == DEFAULT_GRAPH_SNAPSHOT:
             object.__setattr__(self, "graph_snapshot_path", self.data_dir / "graph.json")
         return self
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "trusted_hosts", mode="before")
     @classmethod
     def _split_origins(cls, v: Any) -> Any:
         if v is None or v == "":

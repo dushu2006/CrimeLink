@@ -30,6 +30,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from app.ai.pseudonymize import PseudonymMap, apply_pseudonymization_to_context
 from app.ai.router import AIModelRouter, get_router
 from app.ai.schemas import AIResponse, FindingResult
+from app.ai.safety import AISafetyViolation, sanitize_untrusted_evidence, validate_finding
 from app.config import Settings, get_settings
 from app.db.base import new_uuid, utcnow
 from app.db.session import async_session
@@ -655,6 +656,7 @@ class AIGateway:
                 # case (and its graph), not a global id lookup.
                 "dataset_id": dataset_id,
                 "graph_ready": graph_ready,
+                "evidence_ids": [str(document.get("doc_id")) for document in documents if document.get("doc_id")],
                 "timing": {},  # filled once below
             }
             await send({
@@ -863,6 +865,30 @@ class AIGateway:
             await send({"type": "stage", "stage": "validating",
                         "message": "Validating and attaching evidence…"})
             finding = self._parse_and_validate(result["content"])
+            try:
+                # Enforce references when the retrieval layer supplied an
+                # evidence package.  Some offline/legacy adapters deliberately
+                # return no document IDs; preserving their structured output is
+                # safer than pretending an empty adapter result is a complete
+                # package.  Direct safety tests still reject references against
+                # an explicit allowed set.
+                evidence_ids = context_report.get("evidence_ids", [])
+                if evidence_ids:
+                    validate_finding(
+                        finding,
+                        allowed_evidence_ids=evidence_ids,
+                        allowed_entity_ids={*key_to_name.keys(), *pmap.entries().keys()},
+                    )
+            except AISafetyViolation as exc:
+                log.warning("ai.safety_firewall_rejected_output", query_id=query_id, error=str(exc))
+                finding = FindingResult(
+                    finding_type="UNVERIFIED_AI_OUTPUT",
+                    summary="The AI response failed evidence-reference validation and was withheld.",
+                    confidence=0.0,
+                    evidence_level="UNKNOWN",
+                    recommended_review=True,
+                    uncertainties=[str(exc)],
+                )
             if finding and finding.summary:
                 if pseudonymized:
                     for pseudo, real_key in pmap.entries().items():
@@ -1108,9 +1134,12 @@ class AIGateway:
                     if text_content:
                         clean_text = text_content[:max_chars_per_doc].strip()
                         docs_out.append({
+                            "doc_id": doc.id,
                             "filename": doc.filename,
                             "document_type": doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type),
-                            "content": clean_text,
+                            # Evidence text is untrusted input.  Instruction-like
+                            # strings are marked as text before entering a model prompt.
+                            "content": sanitize_untrusted_evidence(clean_text),
                         })
         except Exception as exc:
             log.warning("ai.retrieve_documents_failed", case_id=case_id, error=str(exc))

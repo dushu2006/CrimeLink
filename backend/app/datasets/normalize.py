@@ -64,6 +64,13 @@ REL_ASSOCIATE_OF = "ASSOCIATE_OF"
 REL_INVESTIGATES = "INVESTIGATES"
 REL_RELATED_TO = "RELATED_TO"
 REL_HAS_FIR = "HAS_FIR"
+# Explicit derived relations.  A shared identifier is a useful investigative
+# lead, but it is not a direct person-to-person association.
+REL_SHARED_PHONE = "SHARED_PHONE"
+REL_SHARED_ACCOUNT = "SHARED_ACCOUNT"
+REL_SHARED_VEHICLE = "SHARED_VEHICLE"
+REL_SHARED_LOCATION = "SHARED_LOCATION"
+REL_SHARED_IDENTIFIER = "SHARED_IDENTIFIER"
 
 #: Columns that identify *which* person a row is about, in priority order.
 #: Consulted by the secondary extraction pass so a person referenced as
@@ -104,6 +111,11 @@ GRAPH_REL_TYPES: dict[str, str] = {
     REL_INVESTIGATES: "PARTICIPATED_IN",
     REL_RELATED_TO: "ASSOCIATE_OF",
     REL_HAS_FIR: "HAS_FIR",
+    REL_SHARED_PHONE: "SHARED_PHONE",
+    REL_SHARED_ACCOUNT: "SHARED_ACCOUNT",
+    REL_SHARED_VEHICLE: "SHARED_VEHICLE",
+    REL_SHARED_LOCATION: "SHARED_LOCATION",
+    REL_SHARED_IDENTIFIER: "SHARED_IDENTIFIER",
 }
 
 #: Free-text relationship words a dataset may use in an edge table.
@@ -141,6 +153,14 @@ _REL_WORD_MAP: dict[str, str] = {
     "locatedat": REL_LOCATED_AT,
     "associateof": REL_ASSOCIATE_OF,
     "knows": REL_ASSOCIATE_OF,
+    "sharedphone": REL_SHARED_PHONE,
+    "sharesphone": REL_SHARED_PHONE,
+    "sharedaccount": REL_SHARED_ACCOUNT,
+    "sharesaccount": REL_SHARED_ACCOUNT,
+    "sharedvehicle": REL_SHARED_VEHICLE,
+    "sharesvehicle": REL_SHARED_VEHICLE,
+    "sharedlocation": REL_SHARED_LOCATION,
+    "shareslocation": REL_SHARED_LOCATION,
     "relatedto": REL_RELATED_TO,
     "familyof": REL_RELATED_TO,
     "investigates": REL_INVESTIGATES,
@@ -157,10 +177,20 @@ _REL_WORD_MAP: dict[str, str] = {
 class CanonicalEntity:
     canonical_id: str
     entity_type: str
+    # ``display_name`` is presentation data; ``canonical_id`` is immutable
+    # identity and must never be used as a fallback display value in AI output.
+    # ``name`` remains as a compatibility alias for existing adapters.
     name: str = ""
+    display_name: str = ""
     normalized_value: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.display_name:
+            self.display_name = self.name
+        if not self.name:
+            self.name = self.display_name
 
     def merge(self, other: "CanonicalEntity") -> None:
         _, _, natural_key = self.canonical_id.partition(":")
@@ -173,12 +203,15 @@ class CanonicalEntity:
             other_is_not_id = other.name.strip() != natural_key.strip()
             if is_placeholder and (other_is_not_id or not self.name):
                 self.name = other.name
+                self.display_name = other.display_name or other.name
                 self.normalized_value = other.normalized_value or self.normalized_value
                 self.attributes.pop("stub", None)
             elif not self.name:
                 self.name = other.name
         if not self.normalized_value and other.normalized_value:
             self.normalized_value = other.normalized_value
+        if not self.display_name:
+            self.display_name = self.name or other.display_name
         for key, value in other.attributes.items():
             if value not in (None, "") and self.attributes.get(key) in (None, ""):
                 self.attributes[key] = value
@@ -244,6 +277,78 @@ class NormalizationResult:
         for case_id in rel.case_ids:
             if case_id not in existing.case_ids:
                 existing.case_ids.append(case_id)
+
+    def derive_shared_identifier_relationships(self) -> int:
+        """Materialize explicit, uncertainty-aware shared-identifier leads.
+
+        Co-use is derived only from direct PERSON -> identifier edges already
+        emitted by source records.  It never becomes ``ASSOCIATE_OF`` and the
+        derived edge retains the supporting edge keys and source provenance so
+        a finding can be traced back to the exact rows that caused it.
+        """
+        identifier_types = {
+            sm.PHONE: REL_SHARED_PHONE,
+            sm.ACCOUNT: REL_SHARED_ACCOUNT,
+            sm.VEHICLE: REL_SHARED_VEHICLE,
+            sm.ADDRESS: REL_SHARED_LOCATION,
+            sm.LOCATION: REL_SHARED_LOCATION,
+        }
+        owners: dict[tuple[str, str], list[CanonicalRelationship]] = {}
+        for rel in self.relationships.values():
+            if rel.rel_type not in {REL_USES_PHONE, REL_OWNS_ACCOUNT, REL_OWNS_VEHICLE, REL_RESIDES_AT, REL_LOCATED_AT}:
+                continue
+            source = self.entities.get(rel.source_canonical_id)
+            target = self.entities.get(rel.target_canonical_id)
+            if not source or source.entity_type != sm.PERSON or not target:
+                continue
+            shared_type = identifier_types.get(target.entity_type)
+            if not shared_type:
+                continue
+            owners.setdefault((target.entity_type, target.canonical_id), []).append(rel)
+
+        created = 0
+        for (identifier_type, identifier_id), supporting in owners.items():
+            people = sorted({rel.source_canonical_id for rel in supporting})
+            if len(people) < 2:
+                continue
+            for index, source_id in enumerate(people):
+                for target_id in people[index + 1:]:
+                    rel_type = identifier_types[identifier_type]
+                    evidence_keys = sorted({rel.edge_key for rel in supporting})
+                    source_docs = sorted({
+                        str((rel.provenance or {}).get("doc_id") or (rel.provenance or {}).get("dataset_file_id"))
+                        for rel in supporting
+                        if (rel.provenance or {}).get("doc_id") or (rel.provenance or {}).get("dataset_file_id")
+                    })
+                    self.add_relationship(CanonicalRelationship(
+                        source_canonical_id=source_id,
+                        target_canonical_id=target_id,
+                        rel_type=rel_type,
+                        confidence=min(float(rel.confidence or 0.0) for rel in supporting),
+                        attributes={
+                            "direct_vs_derived": "derived",
+                            "shared_identifier_type": identifier_type,
+                            "shared_identifier_key": identifier_id,
+                            "support_level": "shared_identifier_only",
+                            "contradiction_state": "unreviewed",
+                            "analytical_basis": "co_use_of_identifier",
+                            "supporting_edge_keys": evidence_keys,
+                            "supporting_provenance": [rel.provenance for rel in supporting],
+                            "source_doc_ids": source_docs,
+                            "alternative_explanations": [
+                                "Shared identifiers can reflect legitimate common ownership or contact."
+                            ],
+                        },
+                        provenance={
+                            "derived_from": evidence_keys,
+                            "source_doc_ids": source_docs,
+                            "supporting_provenance": [rel.provenance for rel in supporting],
+                            "derivation": "shared_identifier",
+                        },
+                        case_ids=sorted({case_id for rel in supporting for case_id in rel.case_ids}),
+                    ))
+                    created += 1
+        return created
 
     def counts(self) -> dict[str, Any]:
         by_type: dict[str, int] = {}
@@ -1230,7 +1335,15 @@ class Normalizer:
         raw_rel = str(row.get(m.get("COMMON.relationship", ""), "") or row.get("relationship_type", "")).strip()
         if not source_ref or not target_ref:
             return False
-        rel_type = _REL_WORD_MAP.get(sm.norm(raw_rel), REL_RELATED_TO)
+        rel_type = _REL_WORD_MAP.get(sm.norm(raw_rel))
+        if not rel_type:
+            # An unrecognized relationship is a review item, not an invented
+            # ASSOCIATE_OF edge. This is especially important for shared-
+            # identifier vocabulary from external exports.
+            self.result.warnings.append(
+                f"Unrecognized relationship {raw_rel!r}; edge was not created"
+            )
+            return False
 
         # Determine source entity type using structured from_type or alias lookup
         raw_source_type = row.get(m.get("COMMON.source_type", ""), "") or row.get("from_type", "")

@@ -12,15 +12,105 @@ from enum import Enum
 
 
 class Role(str, Enum):
+    """Operational roles used by the server-side RBAC/ABAC policy.
+
+    ``ADMIN`` remains a backwards-compatible alias for deployments created
+    before the role model was expanded.  Routes should still state the exact
+    roles they permit; the frontend never grants access.
+    """
+
     VIEWER = "VIEWER"
     INVESTIGATOR = "INVESTIGATOR"
+    SUPERVISOR = "SUPERVISOR"
+    FORENSIC_ANALYST = "FORENSIC_ANALYST"
+    FINANCIAL_ANALYST = "FINANCIAL_ANALYST"
+    INTELLIGENCE_ANALYST = "INTELLIGENCE_ANALYST"
+    AUDITOR = "AUDITOR"
+    STATION_ADMIN = "STATION_ADMIN"
+    DISTRICT_ADMIN = "DISTRICT_ADMIN"
+    SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
 
 
 class CaseStatus(str, Enum):
-    OPEN = "OPEN"
+    """Case lifecycle states; transitions are enforced by the domain service."""
+
+    DRAFT = "DRAFT"
+    OPEN = "OPEN"  # legacy name retained for existing clients
+    ACTIVE_INVESTIGATION = "ACTIVE_INVESTIGATION"
     UNDER_REVIEW = "UNDER_REVIEW"
+    SUBMITTED = "SUBMITTED"
     CLOSED = "CLOSED"
+    SEALED = "SEALED"
+
+
+class InformationClassification(str, Enum):
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    RESTRICTED = "RESTRICTED"
+    SECRET = "SECRET"
+    HIGHLY_RESTRICTED = "HIGHLY_RESTRICTED"
+
+
+class CustodyEventType(str, Enum):
+    COLLECTED = "COLLECTED"
+    IMPORTED = "IMPORTED"
+    HASH_VERIFIED = "HASH_VERIFIED"
+    STORED = "STORED"
+    ACCESSED = "ACCESSED"
+    DOWNLOADED = "DOWNLOADED"
+    DERIVED = "DERIVED"
+    SHARED = "SHARED"
+    EXPORTED = "EXPORTED"
+    SEALED = "SEALED"
+
+
+class TaskStatus(str, Enum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    PENDING_REVIEW = "PENDING_REVIEW"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class TaskPriority(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class HypothesisStatus(str, Enum):
+    OPEN = "OPEN"
+    SUPPORTED = "SUPPORTED"
+    WEAKENED = "WEAKENED"
+    REJECTED = "REJECTED"
+    UNVERIFIED = "UNVERIFIED"
+
+
+class UncertaintyState(str, Enum):
+    KNOWN = "KNOWN"
+    UNKNOWN = "UNKNOWN"
+    MISSING = "MISSING"
+    CONTRADICTORY = "CONTRADICTORY"
+    UNVERIFIED = "UNVERIFIED"
+
+
+class ApprovalType(str, Enum):
+    EVIDENCE_SEAL = "EVIDENCE_SEAL"
+    ENTITY_MERGE = "ENTITY_MERGE"
+    FINDING = "FINDING"
+    REPORT = "REPORT"
+    CASE_CLOSURE = "CASE_CLOSURE"
+    EVIDENCE_EXPORT = "EVIDENCE_EXPORT"
+
+
+class ApprovalStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class DocumentType(str, Enum):
@@ -288,6 +378,25 @@ def canonical_label(label: str) -> str:
     """The SCREAMING_CASE wire label for a stored node label."""
     return CANONICAL_LABELS.get(label, label.upper())
 
+DOCUMENT_ARTIFACT_LABELS: frozenset[str] = frozenset({"DOCUMENT", "EVIDENCE"})
+
+
+def is_document_artifact_node(node: object) -> bool:
+    """Centralized defense against document/evidence contamination.
+
+    ``entity_type`` is checked as well as the rendered label because legacy
+    projections used ``Event`` for DOCUMENT and old snapshots can still carry
+    that shape until they are rebuilt.
+    """
+    label = canonical_label(str(getattr(node, "label", "") or ""))
+    props = getattr(node, "properties", {}) or {}
+    entity_type = str(props.get("entity_type") or "").upper()
+    return (
+        label in DOCUMENT_ARTIFACT_LABELS
+        or entity_type in DOCUMENT_ARTIFACT_LABELS
+        or bool(props.get("is_document_artifact"))
+    )
+
 REL_TYPES: frozenset[str] = frozenset(
     {
         "PARTICIPATED_IN",
@@ -308,6 +417,11 @@ REL_TYPES: frozenset[str] = frozenset(
         "TRANSFER_TO",
         "CONTROLS_ACCOUNT",
         "ACCUSED_IN",
+        "SHARED_PHONE",
+        "SHARED_ACCOUNT",
+        "SHARED_VEHICLE",
+        "SHARED_LOCATION",
+        "SHARED_IDENTIFIER",
         "LOCATED_AT",
         "MENTIONED_IN",
         "POTENTIAL_ALIAS",

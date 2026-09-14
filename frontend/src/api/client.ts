@@ -1094,6 +1094,8 @@ export function personNetwork(
  */
 export interface CaseGraph {
   case_id: string;
+  view?: "PERSON NETWORK" | "PERSON + CONTEXT" | "EVIDENCE VIEW" | "FINDING SUBGRAPH";
+  available_views?: string[];
   include_staging: boolean;
   truncated: boolean;
   filters: { labels: string[]; rel_types: string[] };
@@ -1181,6 +1183,27 @@ export interface Finding {
 
 export function caseFindings(caseId: string): Promise<{ items: Finding[] }> {
   return api(`/cases/${caseId}/findings`);
+}
+
+export interface FindingMiniGraph {
+  finding_id: string;
+  case_id: string;
+  finding_type: string;
+  counts: { nodes: number; edges: number };
+  nodes: GraphNodeRow[];
+  edges: GraphEdgeRow[];
+  evidence: Record<string, unknown>[];
+  direct_vs_derived: string[];
+}
+
+/** Backend-generated evidence-derived graph; never a frontend one-hop guess. */
+export function findingGraph(
+  investigationId: string,
+  findingId: string,
+): Promise<FindingMiniGraph> {
+  return api(
+    `/investigations/${encodeURIComponent(investigationId)}/findings/${encodeURIComponent(findingId)}/graph`,
+  );
 }
 
 export function personFindings(

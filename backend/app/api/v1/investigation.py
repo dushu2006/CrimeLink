@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
+from app.db.models import InvestigationFinding, InvestigationSession
 from app.errors import NotFoundError, ValidationFailedError
 from app.security.deps import JurisdictionScope, Principal, get_principal, get_scope, require_roles
 from app.services import cases as case_service
@@ -70,6 +71,32 @@ async def case_findings(
 ) -> dict:
     await case_service.require_case(session, scope, case_id)
     return await asyncio.to_thread(investigation.findings_list, case_id)
+
+
+@router.get("/investigations/{investigation_id}/findings/{finding_id}/graph")
+async def finding_graph(
+    investigation_id: str,
+    finding_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Return only the evidence-derived mini graph for one finding.
+
+    ``investigation_id`` may be a case id for legacy callers or an
+    InvestigationSession id for question-based investigations. The trusted
+    backend resolves it before applying jurisdiction access checks.
+    """
+    finding = await session.get(InvestigationFinding, finding_id)
+    if finding is None:
+        raise NotFoundError("Finding not found.")
+    case_id = finding.case_id
+    if investigation_id != case_id:
+        session_row = await session.get(InvestigationSession, investigation_id)
+        if session_row is None or session_row.case_id != case_id:
+            raise NotFoundError("Finding not found for this investigation.")
+    await case_service.require_case(session, scope, case_id)
+    return await asyncio.to_thread(investigation.finding_graph, case_id, finding_id)
 
 
 @router.post("/cases/{case_id}/findings/{finding_id}/review")

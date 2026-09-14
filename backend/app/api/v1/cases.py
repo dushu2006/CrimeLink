@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Case
 from app.db.session import get_db_session
-from app.domain.enums import CaseStatus
+from app.domain.enums import CaseStatus, InformationClassification
 from app.errors import ValidationFailedError
 from app.security.deps import (
     AuditRecorder,
@@ -31,6 +31,7 @@ class CaseCreate(BaseModel):
     case_number: str = Field(min_length=3, max_length=120)
     title: str = Field(min_length=3, max_length=500)
     jurisdiction_id: str | None = None
+    classification: InformationClassification = InformationClassification.INTERNAL
 
 
 class CaseStatusUpdate(BaseModel):
@@ -46,7 +47,7 @@ class CaseStatusUpdate(BaseModel):
 )
 async def create_case(
     payload: CaseCreate,
-    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "SUPERVISOR", "ADMIN", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN")),
     scope: JurisdictionScope = Depends(get_scope),
     session: AsyncSession = Depends(get_db_session),
     recorder: AuditRecorder = Depends(get_audit_recorder),
@@ -57,6 +58,7 @@ async def create_case(
         case_number=payload.case_number.strip(),
         title=payload.title.strip(),
         jurisdiction_id=payload.jurisdiction_id,
+        classification=payload.classification,
     )
     return {
         "id": case.id,
@@ -64,6 +66,7 @@ async def create_case(
         "title": case.title,
         "jurisdiction_id": case.jurisdiction_id,
         "status": case.status.value,
+        "classification": case.classification.value,
         "created_at": case.created_at.isoformat() if case.created_at else None,
     }
 
@@ -98,6 +101,7 @@ async def get_case(
         "title": case.title,
         "jurisdiction_id": case.jurisdiction_id,
         "status": case.status.value,
+        "classification": case.classification.value,
         "created_at": case.created_at.isoformat() if case.created_at else None,
         "closed_at": case.closed_at.isoformat() if case.closed_at else None,
         "document_count": len(documents),
@@ -116,7 +120,7 @@ async def get_case(
 async def update_status(
     case_id: str,
     payload: CaseStatusUpdate,
-    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "SUPERVISOR", "ADMIN", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN")),
     scope: JurisdictionScope = Depends(get_scope),
     session: AsyncSession = Depends(get_db_session),
     recorder: AuditRecorder = Depends(get_audit_recorder),
@@ -126,7 +130,7 @@ async def update_status(
         raise ValidationFailedError(
             "A closed case is read-only under the retention policy."
         )
-    await case_service.update_status(session, case, payload.status)
+    await case_service.update_status(session, case, payload.status, principal)
     return {"id": case.id, "status": case.status.value}
 
 

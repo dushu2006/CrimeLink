@@ -52,14 +52,24 @@ def node_key(dataset_id: str, canonical_id: str) -> str:
     return f"ds:{dataset_id}:{canonical_id}"
 
 
-def _graph_label(entity_type: str) -> str:
-    label = sm.GRAPH_LABELS.get(entity_type, "Person")
-    return label if label in _VALID_LABELS else "Person"
+def _graph_label(entity_type: str) -> str | None:
+    """Return an explicit graph label or ``None`` for provenance artifacts.
+
+    Unknown types are rejected rather than guessed as ``Person``.  The old
+    fallback was the direct path by which filenames, README records and parser
+    artifacts entered actor analytics.
+    """
+    if not sm.is_graph_eligible(entity_type):
+        return None
+    label = sm.GRAPH_LABELS.get(entity_type)
+    return label if label in _VALID_LABELS else None
 
 
-def _graph_rel(rel_type: str) -> str:
-    mapped = nz.GRAPH_REL_TYPES.get(rel_type, "ASSOCIATE_OF")
-    return mapped if mapped in REL_TYPES else "ASSOCIATE_OF"
+def _graph_rel(rel_type: str) -> str | None:
+    # Unknown source vocabulary is a data-quality review item, not a licence to
+    # invent a person-to-person association.
+    mapped = nz.GRAPH_REL_TYPES.get(rel_type)
+    return mapped if mapped in REL_TYPES else None
 
 
 def _name_property(label: str, name: str) -> dict[str, Any]:
@@ -130,15 +140,23 @@ def build_node(
     fallback_doc_id: str = "",
 ) -> GraphNode:
     label = _graph_label(entity.entity_type)
-    display = entity.name or entity.normalized_value or entity.canonical_id
+    if label is None:
+        raise ValueError(f"Entity type {entity.entity_type!r} is provenance-only and cannot enter the graph")
+    display_name = getattr(entity, "display_name", "") or ""
+    display = display_name or entity.name or entity.normalized_value or entity.canonical_id
     provenance = entity.provenance or {}
     properties: dict[str, Any] = {
         **_name_property(label, display),
         "dataset_id": dataset_id,
         "canonical_id": entity.canonical_id,
+        "display_name": display_name or entity.name,
         "entity_type": entity.entity_type,
         "normalized_value": entity.normalized_value,
-        "confidence": 1.0,
+        "is_document_artifact": False,
+        "confidence": float((entity.attributes or {}).get("confidence", 1.0) or 1.0),
+        "resolution_confidence": (entity.attributes or {}).get("resolution_confidence"),
+        "resolution_features": (entity.attributes or {}).get("resolution_features", []),
+        "contradictions": (entity.attributes or {}).get("contradictions", []),
         "is_active": True,
         "case_ids": list(case_ids),
         # G1: every node names the document it came from.  For a row inside a
@@ -172,14 +190,27 @@ def build_edge(
     fallback_doc_id: str,
 ) -> GraphEdge:
     rel_type = _graph_rel(relationship.rel_type)
+    if rel_type is None:
+        raise ValueError(f"Relationship type {relationship.rel_type!r} is not in the graph ontology")
     provenance = relationship.provenance or {}
+    attrs = relationship.attributes or {}
+    source_doc_id = provenance.get("doc_id") or provenance.get("dataset_file_id") or fallback_doc_id
+    source_doc_ids = list(attrs.get("source_doc_ids") or provenance.get("source_doc_ids") or [])
+    if source_doc_id and source_doc_id not in source_doc_ids:
+        source_doc_ids.append(source_doc_id)
     properties: dict[str, Any] = {
         "dataset_id": dataset_id,
         "canonical_rel_type": relationship.rel_type,
         "confidence": float(relationship.confidence or 1.0),
+        "direct_vs_derived": attrs.get("direct_vs_derived", "direct"),
+        "support_level": attrs.get("support_level", "direct_source_record"),
+        "contradiction_state": attrs.get("contradiction_state", "not_recorded"),
+        "analytical_basis": attrs.get("analytical_basis", "source_record"),
+        "case_scope": list(relationship.case_ids),
         # G1: an evidenced edge must name the document that justifies it.  The
         # dataset file the row came from *is* that document.
-        "source_doc_id": provenance.get("doc_id") or fallback_doc_id,
+        "source_doc_id": source_doc_id,
+        "source_doc_ids": source_doc_ids,
         "origin": provenance or None,
         "discriminator": relationship.edge_key,
     }
@@ -225,6 +256,11 @@ async def project_dataset(
     store = container.graph_store
     injector = container.injector
     dataset_id = dataset.id
+    # A rebuild changes the analytical universe even when the graph backend
+    # preserves its process-local version. Never serve centrality/community
+    # values computed from the contaminated projection.
+    from app.services.graph_service import invalidate_analytics_cache
+    invalidate_analytics_cache()
 
     async def report(stage: str, pct: int, message: str) -> None:
         if progress is not None:
@@ -298,6 +334,11 @@ async def project_dataset(
         if entity.entity_type == sm.CASE:
             # Cases are real ``Case`` rows, projected above.
             continue
+        if not sm.is_graph_eligible(entity.entity_type):
+            # DOCUMENT/EVIDENCE remain queryable provenance records in the
+            # relational layer, but are never actor/network nodes.
+            skipped_entities += 1
+            continue
         try:
             batch.append(
                 build_node(
@@ -339,7 +380,13 @@ async def project_dataset(
     edge_batch: list[GraphEdge] = []
     case_edges: list[GraphEdge] = []
     for relationship in rel_rows:
+        source_type = relationship.source_canonical_id.split(":", 1)[0]
         target_type = relationship.target_canonical_id.split(":", 1)[0]
+        if source_type in sm.DOCUMENT_ARTIFACT_TYPES or target_type in sm.DOCUMENT_ARTIFACT_TYPES:
+            # Evidence links stay in canonical/provenance storage and are
+            # resolved by evidence APIs, never by the actor graph.
+            skipped_edges += 1
+            continue
         if target_type == sm.CASE:
             edge = _case_edge(dataset_id, relationship, case_by_key, fallback_doc_id)
             if edge is not None:

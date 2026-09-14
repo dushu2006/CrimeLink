@@ -36,7 +36,7 @@ from typing import Any, Iterable
 import networkx as nx
 
 from app.config import Settings, get_settings
-from app.domain.enums import AGGREGATING_REL_TYPES, UNEVIDENCED_META_REL_TYPES
+from app.domain.enums import AGGREGATING_REL_TYPES, UNEVIDENCED_META_REL_TYPES, is_document_artifact_node
 from app.domain.models import GraphEdge, GraphNode, MergeResult
 from app.logging import get_logger
 from app.ports.stores import GraphPayload
@@ -192,6 +192,11 @@ class EmbeddedGraphStore:
         count = 0
         with self._lock:
             for node in nodes:
+                if is_document_artifact_node(node):
+                    # The relational evidence store owns documents; the graph
+                    # store refuses them even if a legacy caller bypasses the
+                    # dataset projection policy.
+                    continue
                 data = _json_safe(node.properties)
                 data.setdefault("confidence", 1.0)
                 data.setdefault("is_active", True)
@@ -232,6 +237,13 @@ class EmbeddedGraphStore:
         count = 0
         with self._lock:
             for edge in edges:
+                if (
+                    not self._graph.has_node(edge.source_key)
+                    or is_document_artifact_node(self._to_graph_node(edge.source_key, self._graph.nodes[edge.source_key]))
+                    or not self._graph.has_node(edge.target_key)
+                    or is_document_artifact_node(self._to_graph_node(edge.target_key, self._graph.nodes[edge.target_key]))
+                ):
+                    continue
                 if not self._graph.has_node(edge.source_key):
                     continue
                 if not self._graph.has_node(edge.target_key):

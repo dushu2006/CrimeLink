@@ -21,6 +21,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -95,16 +96,26 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
+    if settings.trusted_hosts != ["*"]:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type", "X-Dataset-Id", "X-Trace-Id"],
     )
 
     @app.middleware("http")
     async def trace_and_metrics(request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        try:
+            oversized = bool(content_length and int(content_length) > settings.max_request_bytes)
+        except ValueError:
+            oversized = True
+        if oversized:
+            return Response(status_code=413, content="Request body too large")
         trace_id = request.headers.get("x-trace-id") or new_trace_id()
         set_trace_id(trace_id)
         # Also expose it on the request so a handler can quote it back in a
@@ -130,6 +141,10 @@ def create_app() -> FastAPI:
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'"
+            if settings.environment == "production":
+                response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
     app.include_router(api_router, prefix="/api/v1")

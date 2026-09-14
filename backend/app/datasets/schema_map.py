@@ -65,8 +65,11 @@ ENTITY_TYPES: tuple[str, ...] = (
     EVIDENCE, DEVICE, EMAIL, PROPERTY, DOCUMENT, OFFICER, TRANSACTION, CALL, EVENT,
 )
 
-#: How a canonical entity type maps onto a graph node label.  Types absent from
-#: this map are event-like and become edges/attributes rather than nodes.
+#: How a canonical entity type maps onto a graph node label.  This is an
+#: allow-list, not a best-effort conversion.  DOCUMENT and EVIDENCE records
+#: are provenance/evidence records and deliberately have no graph label:
+#: allowing them into the actor graph makes filenames and parser artefacts look
+#: like people when a caller forgets to pass an explicit type.
 GRAPH_LABELS: dict[str, str] = {
     PERSON: "Person",
     PHONE: "Phone",
@@ -79,10 +82,25 @@ GRAPH_LABELS: dict[str, str] = {
     OFFICER: "Person",
     DEVICE: "Phone",
     EMAIL: "Phone",
-    EVIDENCE: "Event",
-    DOCUMENT: "Event",
     EVENT: "Event",
 }
+
+#: Canonical records that must remain in provenance/evidence storage and must
+#: never be projected as actor/network nodes.  Keep this set centralized so
+#: normalization, graph projection and analytics cannot drift apart.
+DOCUMENT_ARTIFACT_TYPES: frozenset[str] = frozenset({DOCUMENT, EVIDENCE})
+GRAPH_ELIGIBLE_ENTITY_TYPES: frozenset[str] = frozenset(
+    entity_type for entity_type in ENTITY_TYPES
+    if entity_type not in DOCUMENT_ARTIFACT_TYPES
+)
+
+
+def is_document_artifact(entity_type: str | None) -> bool:
+    return str(entity_type or "").upper() in DOCUMENT_ARTIFACT_TYPES
+
+
+def is_graph_eligible(entity_type: str | None) -> bool:
+    return str(entity_type or "").upper() in GRAPH_ELIGIBLE_ENTITY_TYPES
 
 
 # ---------------------------------------------------------------------------

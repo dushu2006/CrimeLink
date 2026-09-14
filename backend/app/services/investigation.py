@@ -1124,6 +1124,76 @@ def findings_list(case_id: str) -> dict[str, Any]:
         }
 
 
+def finding_graph(case_id: str, finding_id: str) -> dict[str, Any]:
+    """Build the evidence-derived mini graph for one persisted finding.
+
+    This is deliberately generated server-side from the finding's entity and
+    relationship references; a frontend one-hop expansion could accidentally
+    include unrelated neighbours or document artifacts.
+    """
+    from app.domain.enums import is_document_artifact_node
+    from app.services.graph_service import _edge_row, _node_row
+
+    container = get_container()
+    with sync_session() as session:
+        finding = session.get(InvestigationFinding, finding_id)
+        if finding is None or finding.case_id != case_id:
+            raise ValidationFailedError("Finding not found for this case.")
+        snapshot = container.graph_store.snapshot(case_id, include_staging=False)
+        seed_keys = {str(key) for key in (finding.entity_keys or [])}
+        evidence = finding.evidence or []
+        evidence_edge_keys = {
+            str(ref.get("edge_key") or ref.get("key"))
+            for ref in evidence
+            if isinstance(ref, dict) and (ref.get("edge_key") or ref.get("key"))
+        }
+        evidence_pairs = {
+            (str(ref.get("source")), str(ref.get("target")))
+            for ref in evidence
+            if isinstance(ref, dict) and ref.get("source") and ref.get("target")
+        }
+        selected_edges = []
+        selected_keys = set(seed_keys)
+        for edge in snapshot.edges:
+            edge_key = str(getattr(edge, "key", "") or edge.properties.get("discriminator") or "")
+            pair = (edge.source_key, edge.target_key)
+            relevant = (
+                edge.source_key in seed_keys and edge.target_key in seed_keys
+                or edge_key in evidence_edge_keys
+                or pair in evidence_pairs
+            )
+            if not relevant:
+                continue
+            if (
+                edge.source_key not in snapshot.nodes
+                or edge.target_key not in snapshot.nodes
+                or is_document_artifact_node(snapshot.nodes[edge.source_key])
+                or is_document_artifact_node(snapshot.nodes[edge.target_key])
+            ):
+                continue
+            selected_edges.append(edge)
+            selected_keys.update((edge.source_key, edge.target_key))
+
+        nodes = [
+            snapshot.nodes[key]
+            for key in sorted(selected_keys)
+            if key in snapshot.nodes and not is_document_artifact_node(snapshot.nodes[key])
+        ]
+        return {
+            "finding_id": finding_id,
+            "case_id": case_id,
+            "finding_type": finding.finding_type,
+            "counts": {"nodes": len(nodes), "edges": len(selected_edges)},
+            "nodes": [_node_row(node) for node in nodes],
+            "edges": [_edge_row(edge) for edge in selected_edges],
+            "evidence": evidence,
+            "direct_vs_derived": sorted({
+                str((edge.properties or {}).get("direct_vs_derived", "direct"))
+                for edge in selected_edges
+            }) or ["unknown"],
+        }
+
+
 def review_finding(
     case_id: str, finding_id: str, decision: str, note: str | None, user_id: str
 ) -> dict[str, Any]:
