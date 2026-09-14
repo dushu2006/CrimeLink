@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.service import audit_service
 from app.db.models import Case, JurisdictionAccessRequest, User
 from app.db.session import get_db_session
-from app.domain.enums import AccessRequestStatus, AuditAction, Role
+from app.domain.enums import AccessRequestStatus, AuditAction, InformationClassification, Role
 from app.errors import (
     AuthenticationError,
     JurisdictionDeniedError,
@@ -62,6 +62,10 @@ class Principal:
         self.role = Role(user.role.value if hasattr(user.role, "value") else user.role)
         self.jurisdiction_id = user.jurisdiction_id
         self.station_id = user.station_id
+        raw_clearance = getattr(user, "max_classification", InformationClassification.CONFIDENTIAL)
+        self.max_classification = InformationClassification(
+            raw_clearance.value if hasattr(raw_clearance, "value") else raw_clearance
+        )
         self.ip_address = ip_address
 
     def has_role(self, *roles: Role) -> bool:

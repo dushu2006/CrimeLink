@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.container import get_container
 from app.db.models import CaseDocument
 from app.db.session import get_db_session
-from app.domain.enums import DocumentType, SourceConfidence
+from app.domain.enums import DocumentType, InformationClassification, SourceConfidence
 from app.errors import NotFoundError, ValidationFailedError
+from app.security.classification import can_access, require_classification
 from app.security.deps import (
     AuditRecorder,
     JurisdictionScope,
@@ -61,6 +62,7 @@ async def upload_document(
     file: UploadFile = File(...),
     document_type: str = Form(...),
     source_confidence: str = Form("UNVERIFIED"),
+    classification: str = Form("CONFIDENTIAL"),
     language: str | None = Form(None),
     principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN")),
     scope: JurisdictionScope = Depends(get_scope),
@@ -82,6 +84,10 @@ async def upload_document(
         raise ValidationFailedError(
             f"Unknown source confidence '{source_confidence}'."
         ) from exc
+    try:
+        evidence_classification = InformationClassification(classification.strip().upper())
+    except ValueError as exc:
+        raise ValidationFailedError(f"Unknown information classification '{classification}'.") from exc
 
     payload = await file.read()
     filename = file.filename or "upload.bin"
@@ -96,6 +102,7 @@ async def upload_document(
         payload=payload,
         document_type=doc_type,
         source_confidence=confidence,
+        classification=evidence_classification,
         mime_type=file.content_type or "application/octet-stream",
         language_hint=language,
     )
@@ -122,7 +129,7 @@ async def list_documents(
     documents = await document_service.list_documents(session, case.id)
     return {
         "case_id": case.id,
-        "items": [document_service.document_row(d) for d in documents],
+        "items": [document_service.document_row(d) for d in documents if can_access(principal, d.classification)],
         "count": len(documents),
     }
 
@@ -144,6 +151,7 @@ async def get_document(
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)
+    require_classification(principal, document.classification)
     return document_service.document_row(document)
 
 
@@ -169,6 +177,7 @@ async def evidence(
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)
+    require_classification(principal, document.classification)
 
     parsed: tuple[int, int] | None = None
     if span:
@@ -209,4 +218,5 @@ async def verify_evidence(
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)
+    require_classification(principal, document.classification)
     return await document_service.verify_document_hash(get_container(), document)

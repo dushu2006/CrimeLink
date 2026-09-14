@@ -12,15 +12,105 @@ from enum import Enum
 
 
 class Role(str, Enum):
+    """Operational roles used by the server-side RBAC/ABAC policy.
+
+    ``ADMIN`` remains a backwards-compatible alias for deployments created
+    before the role model was expanded.  Routes should still state the exact
+    roles they permit; the frontend never grants access.
+    """
+
     VIEWER = "VIEWER"
     INVESTIGATOR = "INVESTIGATOR"
+    SUPERVISOR = "SUPERVISOR"
+    FORENSIC_ANALYST = "FORENSIC_ANALYST"
+    FINANCIAL_ANALYST = "FINANCIAL_ANALYST"
+    INTELLIGENCE_ANALYST = "INTELLIGENCE_ANALYST"
+    AUDITOR = "AUDITOR"
+    STATION_ADMIN = "STATION_ADMIN"
+    DISTRICT_ADMIN = "DISTRICT_ADMIN"
+    SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
 
 
 class CaseStatus(str, Enum):
-    OPEN = "OPEN"
+    """Case lifecycle states; transitions are enforced by the domain service."""
+
+    DRAFT = "DRAFT"
+    OPEN = "OPEN"  # legacy name retained for existing clients
+    ACTIVE_INVESTIGATION = "ACTIVE_INVESTIGATION"
     UNDER_REVIEW = "UNDER_REVIEW"
+    SUBMITTED = "SUBMITTED"
     CLOSED = "CLOSED"
+    SEALED = "SEALED"
+
+
+class InformationClassification(str, Enum):
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    RESTRICTED = "RESTRICTED"
+    SECRET = "SECRET"
+    HIGHLY_RESTRICTED = "HIGHLY_RESTRICTED"
+
+
+class CustodyEventType(str, Enum):
+    COLLECTED = "COLLECTED"
+    IMPORTED = "IMPORTED"
+    HASH_VERIFIED = "HASH_VERIFIED"
+    STORED = "STORED"
+    ACCESSED = "ACCESSED"
+    DOWNLOADED = "DOWNLOADED"
+    DERIVED = "DERIVED"
+    SHARED = "SHARED"
+    EXPORTED = "EXPORTED"
+    SEALED = "SEALED"
+
+
+class TaskStatus(str, Enum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    PENDING_REVIEW = "PENDING_REVIEW"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class TaskPriority(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class HypothesisStatus(str, Enum):
+    OPEN = "OPEN"
+    SUPPORTED = "SUPPORTED"
+    WEAKENED = "WEAKENED"
+    REJECTED = "REJECTED"
+    UNVERIFIED = "UNVERIFIED"
+
+
+class UncertaintyState(str, Enum):
+    KNOWN = "KNOWN"
+    UNKNOWN = "UNKNOWN"
+    MISSING = "MISSING"
+    CONTRADICTORY = "CONTRADICTORY"
+    UNVERIFIED = "UNVERIFIED"
+
+
+class ApprovalType(str, Enum):
+    EVIDENCE_SEAL = "EVIDENCE_SEAL"
+    ENTITY_MERGE = "ENTITY_MERGE"
+    FINDING = "FINDING"
+    REPORT = "REPORT"
+    CASE_CLOSURE = "CASE_CLOSURE"
+    EVIDENCE_EXPORT = "EVIDENCE_EXPORT"
+
+
+class ApprovalStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class DocumentType(str, Enum):

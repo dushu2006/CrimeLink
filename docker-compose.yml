@@ -30,7 +30,7 @@ services:
     container_name: crimelink-postgres
     environment:
       POSTGRES_USER: ${CRIMELINK_POSTGRES_USER:-crimelink}
-      POSTGRES_PASSWORD: ${CRIMELINK_POSTGRES_PASSWORD:-crimelink}
+      POSTGRES_PASSWORD: ${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}
       POSTGRES_DB: ${CRIMELINK_POSTGRES_DB:-crimelink}
       # The crash-consistency bar for an evidence system: never lose a committed
       # transaction, ever — including audit rows.
@@ -60,7 +60,7 @@ services:
     image: neo4j:5.26.0-community
     container_name: crimelink-neo4j
     environment:
-      NEO4J_AUTH: neo4j/${CRIMELINK_NEO4J_PASSWORD:-crimelink}
+      NEO4J_AUTH: neo4j/${CRIMELINK_NEO4J_PASSWORD:?CRIMELINK_NEO4J_PASSWORD must be set}
       NEO4J_dbms_memory_heap_max__size: 2G
       NEO4J_dbms_memory_pagecache_size: 1G
       # No outbound calls to Neo4j's telemetry endpoints: this runs on a
@@ -105,7 +105,7 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${CRIMELINK_MINIO_ACCESS_KEY:-crimelink}
-      MINIO_ROOT_PASSWORD: ${CRIMELINK_MINIO_SECRET_KEY:-crimelink}
+      MINIO_ROOT_PASSWORD: ${CRIMELINK_MINIO_SECRET_KEY:?CRIMELINK_MINIO_SECRET_KEY must be set}
     volumes:
       - minio-data:/data
     healthcheck:
@@ -130,10 +130,10 @@ services:
     environment:
       CRIMELINK_PROFILE: production
       CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
-      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:-crimelink}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
-      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:-crimelink}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_NEO4J_URI: bolt://neo4j:7687
-      CRIMELINK_NEO4J_PASSWORD: ${CRIMELINK_NEO4J_PASSWORD:-crimelink}
+      CRIMELINK_NEO4J_PASSWORD: ${CRIMELINK_NEO4J_PASSWORD:?CRIMELINK_NEO4J_PASSWORD must be set}
       CRIMELINK_REDIS_URL: redis://redis:6379/0
       CRIMELINK_CELERY_BROKER_URL: redis://redis:6379/1
       CRIMELINK_CELERY_RESULT_BACKEND: redis://redis:6379/2
@@ -175,10 +175,10 @@ services:
     environment:
       CRIMELINK_PROFILE: production
       CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
-      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:-crimelink}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
-      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:-crimelink}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_NEO4J_URI: bolt://neo4j:7687
-      CRIMELINK_NEO4J_PASSWORD: ${CRIMELINK_NEO4J_PASSWORD:-crimelink}
+      CRIMELINK_NEO4J_PASSWORD: ${CRIMELINK_NEO4J_PASSWORD:?CRIMELINK_NEO4J_PASSWORD must be set}
       CRIMELINK_REDIS_URL: redis://redis:6379/0
       CRIMELINK_CELERY_BROKER_URL: redis://redis:6379/1
       CRIMELINK_CELERY_RESULT_BACKEND: redis://redis:6379/2
@@ -210,8 +210,8 @@ services:
     env_file: [.env]
     environment:
       CRIMELINK_PROFILE: production
-      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:-crimelink}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
-      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:-crimelink}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_REDIS_URL: redis://redis:6379/0
       CRIMELINK_CELERY_BROKER_URL: redis://redis:6379/1
       CRIMELINK_CELERY_RESULT_BACKEND: redis://redis:6379/2

@@ -11,6 +11,7 @@ the background (PRD principle P2).
 
 from __future__ import annotations
 
+from pathlib import PurePath
 from typing import Any
 
 from sqlalchemy import select
@@ -20,8 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.container import Container, get_container
 from app.db.base import new_uuid, utcnow
-from app.db.models import Case, CaseDocument, DocumentStageEvent, IngestionJob
+from app.db.models import Case, CaseDocument, DocumentStageEvent, EvidenceCustodyEvent, IngestionJob
 from app.domain.enums import (
+    CustodyEventType,
     DocumentType,
     IngestionStatus,
     JobStatus,
@@ -48,6 +50,7 @@ async def upload_document(
     payload: bytes,
     document_type: DocumentType,
     source_confidence: SourceConfidence = SourceConfidence.UNVERIFIED,
+    classification="CONFIDENTIAL",
     mime_type: str = "application/octet-stream",
     language_hint: str | None = None,
     source_metadata: dict[str, Any] | None = None,
@@ -55,9 +58,26 @@ async def upload_document(
     """Persist the original, record metadata, and enqueue the pipeline."""
     container = container or get_container()
     settings: Settings = container.settings
+    from app.domain.enums import InformationClassification
+    from app.security.classification import require_classification
+    evidence_classification = InformationClassification(classification)
+    require_classification(principal, evidence_classification)
 
     if not payload:
         raise ValidationFailedError("The uploaded file is empty.")
+    # Treat the client filename as display metadata only.  Never allow a path
+    # separator, dot-segment, NUL, or an absolute path into an object key.
+    raw_filename = str(filename or "upload.bin").replace("\\", "/")
+    safe_filename = PurePath(raw_filename).name
+    if (
+        safe_filename in {"", ".", ".."}
+        or "\x00" in safe_filename
+        or "/" in raw_filename
+        or "\\" in str(filename)
+        or safe_filename != raw_filename
+    ):
+        raise ValidationFailedError("Filename must be a single path-safe name.")
+    filename = safe_filename
     if len(payload) > settings.upload_max_bytes:
         raise ValidationFailedError(
             f"File exceeds the {settings.upload_max_bytes // (1024 * 1024)} MB upload limit."
@@ -103,6 +123,7 @@ async def upload_document(
         mime_type=mime_type,
         ingestion_status=IngestionStatus.PENDING,
         source_confidence=source_confidence,
+        classification=evidence_classification,
         uploaded_by=principal.id,
         source_metadata=dict(source_metadata or {}),
     )
@@ -117,6 +138,30 @@ async def upload_document(
         requested_by=principal.id,
     )
     session.add(job)
+    # Custody is part of the same transaction as the evidence metadata.  A
+    # document can never appear as stored without an auditable custody trail.
+    session.add_all(
+        [
+            EvidenceCustodyEvent(
+                evidence_id=doc_id,
+                case_id=case.id,
+                event_type=CustodyEventType.IMPORTED,
+                actor_id=principal.id,
+                object_hash=digest,
+                location=storage_key,
+                details={"filename": filename, "mime_type": mime_type},
+            ),
+            EvidenceCustodyEvent(
+                evidence_id=doc_id,
+                case_id=case.id,
+                event_type=CustodyEventType.STORED,
+                actor_id=principal.id,
+                object_hash=digest,
+                location=storage_key,
+                details={"storage_backend": container.object_store.backend_name},
+            ),
+        ]
+    )
     try:
         await session.flush()
     except IntegrityError as exc:
@@ -179,6 +224,8 @@ def document_row(document: CaseDocument, containers: Container | None = None) ->
         "ingestion_stage": document.ingestion_stage,
         "failure_reason": document.failure_reason,
         "source_confidence": document.source_confidence.value,
+        "classification": document.classification.value,
+        "integrity_state": "UNVERIFIED",
         "quarantined": document.quarantined,
         "retry_count": document.retry_count,
         "created_at": document.created_at.isoformat() if document.created_at else None,

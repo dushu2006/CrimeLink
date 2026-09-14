@@ -39,9 +39,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, created_at_column, pk_column, utcnow
 from app.domain.enums import (
     AccessRequestStatus,
+    ApprovalStatus,
+    ApprovalType,
     AuditAction,
     CaseStatus,
+    CustodyEventType,
     DocumentType,
+    HypothesisStatus,
+    InformationClassification,
     IngestionStatus,
     JobStatus,
     MatchBasis,
@@ -50,6 +55,9 @@ from app.domain.enums import (
     ResolutionStatus,
     Role,
     SourceConfidence,
+    TaskPriority,
+    TaskStatus,
+    UncertaintyState,
 )
 
 
@@ -75,6 +83,11 @@ class User(Base):
     role: Mapped[Role] = mapped_column(_enum(Role, "role"), nullable=False)
     station_id: Mapped[str] = mapped_column(String(64), nullable=False)
     jurisdiction_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    max_classification: Mapped[InformationClassification] = mapped_column(
+        _enum(InformationClassification, "user_max_classification"),
+        default=InformationClassification.CONFIDENTIAL,
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
@@ -132,6 +145,11 @@ class Case(Base):
     status: Mapped[CaseStatus] = mapped_column(
         _enum(CaseStatus, "case_status"), default=CaseStatus.OPEN, nullable=False
     )
+    classification: Mapped[InformationClassification] = mapped_column(
+        _enum(InformationClassification, "case_classification"),
+        default=InformationClassification.INTERNAL,
+        nullable=False,
+    )
     created_by: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=True
     )
@@ -175,6 +193,11 @@ class CaseDocument(Base):
         default=SourceConfidence.UNVERIFIED,
         nullable=False,
     )
+    classification: Mapped[InformationClassification] = mapped_column(
+        _enum(InformationClassification, "evidence_classification"),
+        default=InformationClassification.CONFIDENTIAL,
+        nullable=False,
+    )
     quarantined: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_deleted: Mapped[bool] = mapped_column(
@@ -203,6 +226,208 @@ class CaseDocument(Base):
         UniqueConstraint("case_id", "content_hash", name="uq_case_documents_case_hash"),
         CheckConstraint("retry_count >= 0", name="ck_case_documents_retry_nonneg"),
     )
+
+
+class EvidenceCustodyEvent(Base):
+    """Append-only chain-of-custody event for an evidence object.
+
+    The original ``CaseDocument`` row remains the authoritative metadata and
+    this table records every custody transition without overwriting history.
+    ``object_hash`` is captured at the event boundary so later integrity checks
+    can explain exactly which bytes were handled.
+    """
+
+    __tablename__ = "evidence_custody_events"
+
+    id: Mapped[str] = pk_column()
+    evidence_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("case_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    event_type: Mapped[CustodyEventType] = mapped_column(
+        _enum(CustodyEventType, "custody_event_type"), nullable=False
+    )
+    actor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    object_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (Index("ix_custody_case_time", "case_id", "created_at"),)
+
+
+class InvestigationTask(Base):
+    """Evidence-gathering work item; never a legal-decision recommendation."""
+
+    __tablename__ = "investigation_tasks"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    owner_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    creator_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    priority: Mapped[TaskPriority] = mapped_column(
+        _enum(TaskPriority, "task_priority"), default=TaskPriority.MEDIUM, nullable=False
+    )
+    status: Mapped[TaskStatus] = mapped_column(
+        _enum(TaskStatus, "task_status"), default=TaskStatus.TODO, nullable=False
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    linked_evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    linked_entities: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    linked_findings: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    comments: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class InvestigatorNote(Base):
+    """Versioned, linked working note.  Notes cannot mutate authoritative evidence."""
+
+    __tablename__ = "investigator_notes"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    author_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    classification: Mapped[InformationClassification] = mapped_column(
+        _enum(InformationClassification, "note_classification"),
+        default=InformationClassification.CONFIDENTIAL,
+        nullable=False,
+    )
+    linked_evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    linked_entities: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    linked_findings: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    supersedes_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+
+
+class HypothesisRecord(Base):
+    """Persistent testable hypothesis, separate from legal status or guilt."""
+
+    __tablename__ = "hypotheses"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    supporting_evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    contradicting_evidence: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    unknown_information: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    investigator_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    status: Mapped[HypothesisStatus] = mapped_column(
+        _enum(HypothesisStatus, "hypothesis_status"), default=HypothesisStatus.OPEN, nullable=False
+    )
+    assessment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class ContradictionRecord(Base):
+    """Two or more conflicting claims with sources and a neutral next check."""
+
+    __tablename__ = "contradictions"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    subject_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    predicate: Mapped[str] = mapped_column(String(120), nullable=False)
+    claims: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    verification_steps: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[UncertaintyState] = mapped_column(
+        _enum(UncertaintyState, "contradiction_status"), default=UncertaintyState.CONTRADICTORY, nullable=False
+    )
+    detected_by: Mapped[str] = mapped_column(String(32), default="deterministic", nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+
+class ClaimRecord(Base):
+    """Subject-predicate-object claim with time, evidence and status."""
+
+    __tablename__ = "claims"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    predicate: Mapped[str] = mapped_column(String(120), nullable=False)
+    object: Mapped[str] = mapped_column(String(200), nullable=False)
+    observed_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_refs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    evidence_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[UncertaintyState] = mapped_column(
+        _enum(UncertaintyState, "claim_status"), default=UncertaintyState.UNVERIFIED, nullable=False
+    )
+    contradiction_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+
+
+class ApprovalRecord(Base):
+    """Controlled human approval bound to an object version/hash."""
+
+    __tablename__ = "approval_records"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    object_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    approval_type: Mapped[ApprovalType] = mapped_column(
+        _enum(ApprovalType, "approval_type"), nullable=False
+    )
+    status: Mapped[ApprovalStatus] = mapped_column(
+        _enum(ApprovalStatus, "approval_status"), default=ApprovalStatus.PENDING, nullable=False
+    )
+    requested_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    decided_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    object_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+
+class ModelRegistryEntry(Base):
+    """Versioned AI model/provider configuration and evaluation status."""
+
+    __tablename__ = "model_registry"
+
+    id: Mapped[str] = pk_column()
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    version: Mapped[str] = mapped_column(String(80), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    deployment_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    performance: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="UNTESTED")
+    active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = created_at_column()
+
+
+class InvestigationReport(Base):
+    """Versioned evidence-grounded report requiring human approval."""
+
+    __tablename__ = "investigation_reports"
+
+    id: Mapped[str] = pk_column()
+    case_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    content: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    evidence_index: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    object_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="DRAFT", nullable=False)
+    generated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    created_at: Mapped[datetime] = created_at_column()
 
 
 class IngestionJob(Base):
