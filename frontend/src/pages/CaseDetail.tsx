@@ -30,6 +30,9 @@ interface DocRow {
   id: string;
   document_type: string;
   filename: string;
+  relative_path?: string | null;
+  storage_key?: string | null;
+  dataset_file_id?: string | null;
   language: string | null;
   size_bytes: number;
   content_hash: string;
@@ -511,6 +514,8 @@ export default function CaseDetail() {
                       <DocumentFileLink
                         docId={doc.id}
                         originFile={doc.filename}
+                        relativePath={doc.relative_path}
+                        datasetFileId={doc.dataset_file_id}
                         label={doc.filename}
                       />
                     </td>

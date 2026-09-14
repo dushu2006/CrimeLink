@@ -71,6 +71,8 @@ export type SourceTarget =
   | {
       kind: "file";
       path: string;
+      docId?: string | null;
+      datasetFileId?: string | null;
       row?: number | null;
       lineStart?: number | null;
       lineEnd?: number | null;
@@ -83,6 +85,8 @@ export interface PreviewFileMeta {
   media_type?: string;
   size_bytes?: number;
   dataset_id?: string | null;
+  dataset_file_id?: string | null;
+  doc_id?: string | null;
 }
 
 export interface PreviewResult {
@@ -122,6 +126,12 @@ function formatBytes(bytes: number | undefined): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function shortName(path: string): string {
+  const clean = path.split("#")[0];
+  const parts = clean.split("/");
+  return parts[parts.length - 1] || clean;
 }
 
 /** Human description of exactly which part of the source is being shown. */
@@ -260,7 +270,9 @@ function PdfView({
     let objectUrl: string | null = null;
     setUrl(null);
     setError(null);
-    fetchBlob(`/sources/raw?path=${encodeURIComponent(path)}`)
+    const rawEndpoint =
+      preview?.raw_url || `/sources/raw?path=${encodeURIComponent(preview?.file?.path || path)}`;
+    fetchBlob(rawEndpoint)
       .then((blob) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
@@ -273,7 +285,7 @@ function PdfView({
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path]);
+  }, [path, preview?.raw_url, preview?.file?.path]);
 
   const pages = preview?.pdf;
   return (
@@ -310,12 +322,13 @@ function PdfView({
   );
 }
 
-function ImageFileView({ path }: { path: string }) {
+function ImageFileView({ path, rawUrl }: { path: string; rawUrl?: string | null }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     let objectUrl: string | null = null;
-    fetchBlob(`/sources/raw?path=${encodeURIComponent(path)}`)
+    const rawEndpoint = rawUrl || `/sources/raw?path=${encodeURIComponent(path)}`;
+    fetchBlob(rawEndpoint)
       .then((blob) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(blob);
@@ -326,7 +339,7 @@ function ImageFileView({ path }: { path: string }) {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path]);
+  }, [path, rawUrl]);
   if (!url) return <Spinner />;
   return (
     <div className="image-view">
@@ -443,6 +456,10 @@ export function SourceViewerBody({
       return;
     }
     const params = new URLSearchParams({ path: effectiveTarget.path, context: String(context) });
+    if (effectiveTarget.kind === "file") {
+      if (effectiveTarget.docId) params.set("doc_id", effectiveTarget.docId);
+      if (effectiveTarget.datasetFileId) params.set("dataset_file_id", effectiveTarget.datasetFileId);
+    }
     if (effectiveTarget.row) params.set("row", String(effectiveTarget.row));
     if (effectiveTarget.lineStart) params.set("line_start", String(effectiveTarget.lineStart));
     if (effectiveTarget.lineEnd) params.set("line_end", String(effectiveTarget.lineEnd));
@@ -471,6 +488,10 @@ export function SourceViewerBody({
     if (!win) return;
     setLoadingMore(true);
     const params = new URLSearchParams({ path, offset: String(win.end + 1), limit: "500" });
+    if (effectiveTarget.kind === "file") {
+      if (effectiveTarget.docId) params.set("doc_id", effectiveTarget.docId);
+      if (effectiveTarget.datasetFileId) params.set("dataset_file_id", effectiveTarget.datasetFileId);
+    }
     api<PreviewResult>(`/sources/preview?${params.toString()}`)
       .then((data) => {
         if (data.window && preview.window) {
@@ -528,7 +549,18 @@ export function SourceViewerBody({
             <button
               className="btn btn-small"
               type="button"
-              onClick={() => void download(`/sources/raw?path=${encodeURIComponent(path)}&download=true`, preview.file?.filename ?? "source-file")}
+              onClick={() => {
+                const downloadPath = preview.file?.path || path;
+                const downloadName = preview.file?.filename || shortName(downloadPath) || "source-file";
+                const downloadUrl =
+                  preview.download_url ||
+                  `/sources/raw?path=${encodeURIComponent(downloadPath)}&download=true${
+                    effectiveTarget.kind === "file" && effectiveTarget.docId
+                      ? `&doc_id=${encodeURIComponent(effectiveTarget.docId)}`
+                      : ""
+                  }`;
+                void download(downloadUrl, downloadName);
+              }}
             >
               Download
             </button>
@@ -567,7 +599,7 @@ export function SourceViewerBody({
       )}
 
       {renderKind === "pdf" && path && <PdfView path={path} preview={preview} />}
-      {renderKind === "image" && path && <ImageFileView path={path} />}
+      {renderKind === "image" && path && <ImageFileView path={preview.file?.path || path} rawUrl={preview.raw_url} />}
       {renderKind === "csv" && win && (
         <CsvView win={win} fields={fields} onLoadMore={win.truncated ? loadMore : undefined} loadingMore={loadingMore} />
       )}
@@ -584,6 +616,10 @@ export function SourceViewerBody({
                   onClick={() => {
                     // Sheet switching is a fresh load at the top of that sheet.
                     const params = new URLSearchParams({ path, sheet });
+                    if (effectiveTarget.kind === "file") {
+                      if (effectiveTarget.docId) params.set("doc_id", effectiveTarget.docId);
+                      if (effectiveTarget.datasetFileId) params.set("dataset_file_id", effectiveTarget.datasetFileId);
+                    }
                     void api<PreviewResult>(`/sources/preview?${params.toString()}`).then(setPreview);
                   }}
                 >

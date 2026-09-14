@@ -386,10 +386,153 @@ def _evaluation_guard(clean: str) -> None:
         )
 
 
+async def _resolve_source_path(
+    session: AsyncSession,
+    dataset: Dataset,
+    root: Path,
+    path: str | None = None,
+    doc_id: str | None = None,
+    dataset_file_id: str | None = None,
+) -> tuple[Path, str, DatasetFile | None, CaseDocument | None]:
+    """Resolve the exact stored source file within the active dataset workspace.
+
+    Scope is strictly bounded to the active dataset:
+    - If dataset_file_id is provided, lookup the DatasetFile for the active dataset.
+    - If doc_id is provided, lookup CaseDocument and its active dataset DatasetFile/relative_path.
+    - If path is provided, resolve directly against root if existing; if not found directly,
+      resolve by doc_id / dataset_file_id / storage_key without guessing or reconstructing paths.
+    """
+    base = root.resolve()
+
+    # 1. Explicit dataset_file_id lookup
+    if dataset_file_id:
+        df = await session.get(DatasetFile, dataset_file_id)
+        if df and df.dataset_id == dataset.id:
+            cand = (base / df.relative_path.replace("\\", "/").lstrip("/")).resolve()
+            if cand.is_file() and cand.is_relative_to(base):
+                doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
+                return cand, df.relative_path, df, doc
+
+    # 2. Explicit doc_id lookup
+    if doc_id:
+        doc = await session.get(CaseDocument, doc_id)
+        if doc:
+            df = (
+                await session.execute(
+                    select(DatasetFile).where(
+                        DatasetFile.doc_id == doc.id,
+                        DatasetFile.dataset_id == dataset.id,
+                    )
+                )
+            ).scalars().first()
+            rel = df.relative_path if df else ((doc.source_metadata or {}).get("relative_path") or doc.storage_key)
+            if rel:
+                rel_clean = rel.replace("\\", "/").lstrip("/")
+                cand = (base / rel_clean).resolve()
+                if cand.is_file() and cand.is_relative_to(base):
+                    return cand, rel_clean, df, doc
+
+    # 3. Path-based resolution
+    cleaned = (path or "").strip().replace("\\", "/").split("#", 1)[0].lstrip("/")
+    if not cleaned:
+        raise SourceAccessError("No source file was specified.", status=source_viewer.STATUS_NOT_FOUND)
+    if cleaned.startswith("/") or (len(cleaned) > 1 and cleaned[1] == ":"):
+        raise SourceAccessError("Source paths must be relative to the dataset root.")
+    if any(part == ".." for part in Path(cleaned).parts):
+        raise SourceAccessError("Source paths must not traverse outside the dataset.")
+
+    # 3a. Direct check on disk in root
+    cand = (base / cleaned).resolve()
+    if cand.is_file() and cand.is_relative_to(base):
+        df = (
+            await session.execute(
+                select(DatasetFile).where(
+                    DatasetFile.dataset_id == dataset.id,
+                    DatasetFile.relative_path == cleaned,
+                )
+            )
+        ).scalars().first()
+        doc = None
+        if df and df.doc_id:
+            doc = await session.get(CaseDocument, df.doc_id)
+        elif not df:
+            doc = (
+                await session.execute(
+                    select(CaseDocument).where(
+                        CaseDocument.storage_key == cleaned,
+                        CaseDocument.dataset_id == dataset.id,
+                    )
+                )
+            ).scalars().first()
+        return cand, cleaned, df, doc
+
+    # 3b. Check if cleaned matches a doc_id
+    doc = await session.get(CaseDocument, cleaned)
+    if doc:
+        df = (
+            await session.execute(
+                select(DatasetFile).where(
+                    DatasetFile.doc_id == doc.id,
+                    DatasetFile.dataset_id == dataset.id,
+                )
+            )
+        ).scalars().first()
+        rel = df.relative_path if df else ((doc.source_metadata or {}).get("relative_path") or doc.storage_key)
+        if rel:
+            rel_clean = rel.replace("\\", "/").lstrip("/")
+            cand = (base / rel_clean).resolve()
+            if cand.is_file() and cand.is_relative_to(base):
+                return cand, rel_clean, df, doc
+
+    # 3c. Check if cleaned matches a dataset_file_id
+    df = await session.get(DatasetFile, cleaned)
+    if df and df.dataset_id == dataset.id:
+        cand = (base / df.relative_path.replace("\\", "/").lstrip("/")).resolve()
+        if cand.is_file() and cand.is_relative_to(base):
+            doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
+            return cand, df.relative_path, df, doc
+
+    # 3d. Check if cleaned matches CaseDocument.storage_key
+    doc = (
+        await session.execute(
+            select(CaseDocument).where(
+                CaseDocument.storage_key == cleaned,
+                CaseDocument.dataset_id == dataset.id,
+            )
+        )
+    ).scalars().first()
+    if doc:
+        rel = (doc.source_metadata or {}).get("relative_path") or doc.storage_key
+        rel_clean = rel.replace("\\", "/").lstrip("/")
+        cand = (base / rel_clean).resolve()
+        if cand.is_file() and cand.is_relative_to(base):
+            df = (
+                await session.execute(
+                    select(DatasetFile).where(
+                        DatasetFile.doc_id == doc.id,
+                        DatasetFile.dataset_id == dataset.id,
+                    )
+                )
+            ).scalars().first()
+            return cand, rel_clean, df, doc
+
+    # 3e. Leading segments stripped fallback (preserved from source_viewer.resolve_in_dataset)
+    parts = Path(cleaned).parts
+    for i in range(1, len(parts)):
+        sub = str(Path(*parts[i:])).replace("\\", "/")
+        cand = (base / sub).resolve()
+        if cand.is_file() and cand.is_relative_to(base):
+            return cand, sub, None, None
+
+    raise SourceNotFoundError(f"Source file not found in the dataset: {cleaned}")
+
+
 @router.get("/preview")
 async def preview_file(
     request: Request,
-    path: str = Query(..., description="Dataset-relative path"),
+    path: str = Query(..., description="Dataset-relative path, file ID, or document ID"),
+    doc_id: str | None = Query(None, description="Optional CaseDocument ID"),
+    dataset_file_id: str | None = Query(None, description="Optional DatasetFile ID"),
     sheet: str | None = Query(None, description="Workbook sheet name (XLSX)"),
     row: int | None = Query(None, ge=1),
     line_start: int | None = Query(None, ge=1),
@@ -409,10 +552,40 @@ async def preview_file(
         # Empty initial state: no dataset active → preview not available.
         raise NotFoundError("No dataset is active.")
     root = await _dataset_root(session, dataset.id)
+    if root is None:
+        raise NotFoundError("Active dataset workspace is unavailable.")
     dataset_id = dataset.id
 
+    try:
+        resolved_file, resolved_relative_path, dataset_file, case_doc = await _resolve_source_path(
+            session=session,
+            dataset=dataset,
+            root=root,
+            path=clean,
+            doc_id=doc_id,
+            dataset_file_id=dataset_file_id,
+        )
+    except SourceNotFoundError as exc:
+        return {
+            "status": source_viewer.STATUS_NOT_FOUND,
+            "reason": str(exc),
+            "openable": False,
+            "render_kind": "none",
+            "file": {"path": clean},
+            "window": None,
+        }
+    except SourceAccessError as exc:
+        return {
+            "status": exc.status,
+            "reason": str(exc),
+            "openable": False,
+            "render_kind": "none",
+            "file": {"path": clean},
+            "window": None,
+        }
+
     result = source_viewer.preview(
-        path,
+        resolved_relative_path,
         root=root,
         row=row,
         line_start=line_start,
@@ -422,11 +595,19 @@ async def preview_file(
         offset=offset,
         sheet=sheet,
         dataset_id=dataset_id,
-        raw_url=_raw_url(clean),
-        download_url=_raw_url(clean),
+        raw_url=_raw_url(resolved_relative_path),
+        download_url=_raw_url(resolved_relative_path),
     )
+    if "file" in result and isinstance(result["file"], dict):
+        result["file"]["path"] = resolved_relative_path
+        if dataset_file:
+            result["file"]["dataset_file_id"] = dataset_file.id
+            result["file"]["filename"] = dataset_file.filename
+        if case_doc:
+            result["file"]["doc_id"] = case_doc.id
+            result["file"]["filename"] = case_doc.filename
     if result["status"] in {source_viewer.STATUS_AVAILABLE, source_viewer.STATUS_NO_EXTRACTED_TEXT}:
-        recorder.record("DOC_VIEW", target_resource=f"source:{clean}", details={"kind": result.get("render_kind")})
+        recorder.record("DOC_VIEW", target_resource=f"source:{resolved_relative_path}", details={"kind": result.get("render_kind")})
         await recorder.flush()
     return result
 
@@ -434,7 +615,9 @@ async def preview_file(
 @router.get("/file")
 async def read_file(
     request: Request,
-    path: str = Query(..., description="Dataset-relative path"),
+    path: str = Query(..., description="Dataset-relative path, file ID, or document ID"),
+    doc_id: str | None = Query(None, description="Optional CaseDocument ID"),
+    dataset_file_id: str | None = Query(None, description="Optional DatasetFile ID"),
     row: int | None = Query(None, ge=1),
     line_start: int | None = Query(None, ge=1),
     line_end: int | None = Query(None, ge=1),
@@ -451,9 +634,19 @@ async def read_file(
     if dataset is None:
         raise NotFoundError("No dataset is active.")
     root = await _dataset_root(session, dataset.id)
+    if root is None:
+        raise NotFoundError("Active dataset workspace is unavailable.")
     try:
+        resolved_file, resolved_relative_path, dataset_file, case_doc = await _resolve_source_path(
+            session=session,
+            dataset=dataset,
+            root=root,
+            path=clean,
+            doc_id=doc_id,
+            dataset_file_id=dataset_file_id,
+        )
         window = source_viewer.read_window(
-            path,
+            resolved_relative_path,
             row=row,
             line_start=line_start,
             line_end=line_end,
@@ -474,7 +667,7 @@ async def read_file(
         }
     recorder.record(
         "DOC_VIEW",
-        target_resource=f"source:{clean}",
+        target_resource=f"source:{resolved_relative_path}",
         details={"row": row, "line_start": line_start},
     )
     await recorder.flush()
@@ -489,7 +682,9 @@ async def read_file(
 @router.get("/raw")
 async def raw_file(
     request: Request,
-    path: str = Query(..., description="Dataset-relative path"),
+    path: str = Query(..., description="Dataset-relative path, file ID, or document ID"),
+    doc_id: str | None = Query(None, description="Optional CaseDocument ID"),
+    dataset_file_id: str | None = Query(None, description="Optional DatasetFile ID"),
     exp: int | None = Query(None),
     sig: str | None = Query(None),
     download: bool = Query(False, description="Force attachment disposition"),
@@ -507,9 +702,28 @@ async def raw_file(
     used to probe which evidence files exist.
     """
     clean = path.split("#", 1)[0]
+    dataset = await _active_dataset(session)
+    if dataset is None:
+        raise NotFoundError("No dataset is active.")
+    root = await _dataset_root(session, dataset.id)
+    if root is None:
+        raise NotFoundError("Active dataset workspace is unavailable.")
+
+    try:
+        resolved_file, resolved_relative_path, dataset_file, case_doc = await _resolve_source_path(
+            session=session,
+            dataset=dataset,
+            root=root,
+            path=clean,
+            doc_id=doc_id,
+            dataset_file_id=dataset_file_id,
+        )
+    except (SourceNotFoundError, SourceAccessError) as exc:
+        raise NotFoundError(str(exc)) from exc
+
     authorised = False
     if exp is not None and sig is not None:
-        authorised = _verify_source_signature(clean, int(exp), sig)
+        authorised = _verify_source_signature(clean, int(exp), sig) or _verify_source_signature(resolved_relative_path, int(exp), sig)
     if not authorised:
         header = request.headers.get("authorization") or ""
         if header.startswith("Bearer "):
@@ -524,22 +738,11 @@ async def raw_file(
     if not authorised:
         raise NotFoundError("Link expired or invalid.")
 
-    dataset = await _active_dataset(session)
-    if dataset is None:
-        raise NotFoundError("No dataset is active.")
-    root = await _dataset_root(session, dataset.id)
-    try:
-        resolved = source_viewer.resolve_in_dataset(clean, root=root)
-    except SourceNotFoundError as exc:
-        raise NotFoundError(str(exc)) from exc
-    except SourceAccessError as exc:
-        raise NotFoundError(str(exc)) from exc
-
-    size = resolved.stat().st_size
-    kind = source_viewer.detect_kind(resolved)
+    size = resolved_file.stat().st_size
+    kind = source_viewer.detect_kind(resolved_file)
     media_type = kind.media_type
     disposition = "attachment" if (download or kind.kind == "binary") else "inline"
-    filename = quote(resolved.name)
+    filename = quote(case_doc.filename if case_doc else (dataset_file.filename if dataset_file else resolved_file.name))
     headers = {
         "Content-Disposition": f"{disposition}; filename*=UTF-8''{filename}",
         "Accept-Ranges": "bytes",
@@ -558,7 +761,7 @@ async def raw_file(
             if start <= end and start < size:
                 length = end - start + 1
 
-                def stream_range(handle=resolved):
+                def stream_range(handle=resolved_file):
                     with handle.open("rb") as fh:
                         fh.seek(start)
                         remaining = length
@@ -580,7 +783,7 @@ async def raw_file(
                     },
                 )
 
-    def stream_all(handle=resolved):
+    def stream_all(handle=resolved_file):
         with handle.open("rb") as fh:
             while chunk := fh.read(_RAW_CHUNK):
                 yield chunk

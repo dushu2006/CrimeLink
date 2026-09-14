@@ -1314,7 +1314,7 @@ def get_display_label(node: Any) -> str:
             if val and str(val).strip():
                 return str(val).strip()
     elif "VEHICLE" in label_upper:
-        for f in ("registration_no", "registration_number", "plate", "name"):
+        for f in ("registration", "registration_no", "registration_number", "plate", "name"):
             val = props.get(f)
             if val and str(val).strip():
                 return str(val).strip()
@@ -1349,8 +1349,9 @@ def get_display_label(node: Any) -> str:
             if val and str(val).strip():
                 return str(val).strip()
 
+    prov_key = getattr(node, "provenance_key", "")
     node_name = getattr(node, "name", None)
-    if node_name and str(node_name).strip():
+    if node_name and str(node_name).strip() and not (prov_key and node_name == prov_key[:8]):
         return str(node_name).strip()
 
     for f in ("display_name", "name", "number", "plate", "address", "title"):
@@ -1359,10 +1360,12 @@ def get_display_label(node: Any) -> str:
             return str(val).strip()
 
     canonical_id = props.get("canonical_id")
-    if canonical_id:
-        return str(canonical_id)
+    if canonical_id and str(canonical_id).strip():
+        return str(canonical_id).strip()
 
-    prov_key = getattr(node, "provenance_key", "")
+    if node_name and str(node_name).strip():
+        return str(node_name).strip()
+
     return str(prov_key)[:8] if prov_key else "Unknown"
 
 

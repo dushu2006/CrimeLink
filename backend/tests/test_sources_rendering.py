@@ -21,9 +21,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 from app.datasets.pipeline import ImportOptions, run_import
+from app.db.models import CaseDocument
 from app.db.session import async_session
+from app.services.documents import document_row
 
 JURISDICTION = "RJ-JAIPUR"
 
@@ -389,3 +392,82 @@ async def test_signed_raw_url_expires_without_leaking(client, admin_headers, ren
     unsigned = result["raw_url"].split("&sig=")[0] + "&sig=nope"
     response = client.get(unsigned)
     assert response.status_code == 404
+
+
+async def test_case_document_nested_resolution_regression(client, admin_headers, rendered_dataset):
+    """Regression test reproducing the exact case:
+    A document (fir.txt) is listed in the active case and stored in a nested folder
+    (blue_ledger/fir.txt).
+    Previously:
+    - CaseDetail passed originFile='fir.txt' to SourceViewer
+    - /sources/preview?path=fir.txt checked only root / 'fir.txt', returning NOT FOUND.
+    - /sources/raw?path=fir.txt failed with 404.
+    Now:
+    - document_row provides relative_path ('blue_ledger/fir.txt').
+    - /explore/documents/{doc_id} provides relative_path ('blue_ledger/fir.txt').
+    - /sources/preview with doc_id or stored relative path resolves to the exact file,
+      returning status AVAILABLE, openable True, and valid download_url.
+    - /sources/raw with doc_id or stored relative path streams the exact file bytes.
+    - Bare unresolvable path without doc_id returns NOT_FOUND without fuzzy guessing.
+    """
+    async with async_session() as session:
+        doc = (
+            await session.execute(
+                select(CaseDocument).where(
+                    CaseDocument.dataset_id == rendered_dataset,
+                    CaseDocument.filename == "fir.txt",
+                )
+            )
+        ).scalars().first()
+    assert doc is not None, "fir.txt CaseDocument should exist in rendered_dataset"
+
+    # 1. document_row provides relative_path
+    d_row = document_row(doc)
+    assert d_row["filename"] == "fir.txt"
+    assert d_row["relative_path"] == "blue_ledger/fir.txt"
+    assert d_row["storage_key"] == doc.storage_key
+
+    # 2. explore document detail provides relative_path
+    exp_res = client.get(f"/api/v1/explore/documents/{doc.id}", headers=admin_headers)
+    assert exp_res.status_code == 200
+    exp_json = exp_res.json()
+    assert exp_json["filename"] == "fir.txt"
+    assert exp_json["relative_path"] == "blue_ledger/fir.txt"
+
+    # 3. Preview with doc_id and bare filename resolves to the nested file
+    prev_with_doc_id = client.get(
+        f"/api/v1/sources/preview?path=fir.txt&doc_id={doc.id}",
+        headers=admin_headers,
+    ).json()
+    assert prev_with_doc_id["status"] == "AVAILABLE"
+    assert prev_with_doc_id["openable"] is True
+    assert prev_with_doc_id["file"]["path"] == "blue_ledger/fir.txt"
+    assert prev_with_doc_id["file"]["filename"] == "fir.txt"
+    assert prev_with_doc_id["file"]["doc_id"] == doc.id
+    assert "FIR 12/2026" in str(prev_with_doc_id.get("window", {}))
+
+    # 4. Preview with stored relative path directly
+    prev_rel = client.get(
+        f"/api/v1/sources/preview?path=blue_ledger/fir.txt",
+        headers=admin_headers,
+    ).json()
+    assert prev_rel["status"] == "AVAILABLE"
+    assert prev_rel["openable"] is True
+    assert prev_rel["file"]["path"] == "blue_ledger/fir.txt"
+
+    # 5. Raw download with doc_id streams exact source file bytes
+    raw_res = client.get(
+        f"/api/v1/sources/raw?path=fir.txt&doc_id={doc.id}&download=true",
+        headers=admin_headers,
+    )
+    assert raw_res.status_code == 200
+    assert "FIR 12/2026" in raw_res.text
+    assert 'filename*=UTF-8\'\'fir.txt' in raw_res.headers.get("content-disposition", "")
+
+    # 6. Negative check: bare filename without doc_id cannot guess arbitrary paths
+    prev_unscoped = client.get(
+        "/api/v1/sources/preview?path=fir.txt",
+        headers=admin_headers,
+    ).json()
+    assert prev_unscoped["status"] == "NOT_FOUND"
+

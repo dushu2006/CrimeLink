@@ -159,11 +159,19 @@ async def list_documents(
 
 def document_row(document: CaseDocument, containers: Container | None = None) -> dict[str, Any]:
     container = containers or get_container()
+    meta = document.source_metadata or {}
+    relative_path = meta.get("relative_path") or document.storage_key
+    if relative_path:
+        relative_path = relative_path.replace("\\", "/").lstrip("/")
+    dataset_file_id = meta.get("dataset_file_id")
     return {
         "id": document.id,
         "case_id": document.case_id,
         "document_type": document.document_type.value,
         "filename": document.filename,
+        "relative_path": relative_path,
+        "storage_key": document.storage_key,
+        "dataset_file_id": dataset_file_id,
         "language": document.language,
         "size_bytes": document.size_bytes,
         "content_hash": document.content_hash,

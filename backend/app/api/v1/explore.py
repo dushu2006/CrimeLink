@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import get_container
-from app.db.models import Case, CaseDocument, SourceReference
+from app.db.models import Case, CaseDocument, DatasetFile, SourceReference
 from app.db.session import get_db_session
 from app.errors import NotFoundError
 from app.security.deps import (
@@ -158,6 +158,22 @@ async def document_detail(
     except Exception:  # noqa: BLE001 - the document view must still render
         entities = []
 
+    meta = document.source_metadata or {}
+    rel_path = meta.get("relative_path") or document.storage_key
+    if rel_path:
+        rel_path = rel_path.replace("\\", "/").lstrip("/")
+    dataset_file_id = meta.get("dataset_file_id")
+    if not dataset_file_id or not rel_path:
+        df = (
+            await session.execute(
+                select(DatasetFile).where(DatasetFile.doc_id == document.id)
+            )
+        ).scalars().first()
+        if df:
+            dataset_file_id = dataset_file_id or df.id
+            if not rel_path:
+                rel_path = df.relative_path.replace("\\", "/").lstrip("/")
+
     return {
         "id": document.id,
         "case": {"id": case.id, "case_number": case.case_number, "title": case.title},
@@ -172,7 +188,9 @@ async def document_detail(
         "size_bytes": document.size_bytes,
         "language": document.language,
         "origin": (document.source_metadata or {}).get("document_origin"),
-        "relative_path": (document.source_metadata or {}).get("relative_path"),
+        "relative_path": rel_path,
+        "storage_key": document.storage_key,
+        "dataset_file_id": dataset_file_id,
         "reference_count": int(reference_total),
         "entities": entities[:200],
         "entity_count": len(entities),

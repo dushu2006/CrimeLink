@@ -140,6 +140,8 @@ export function EvidencePointerLink({
 export function DocumentFileLink({
   docId,
   originFile,
+  relativePath,
+  datasetFileId,
   row,
   lineStart,
   lineEnd,
@@ -147,27 +149,37 @@ export function DocumentFileLink({
 }: {
   docId: string;
   originFile?: string | null;
+  relativePath?: string | null;
+  datasetFileId?: string | null;
   row?: number | null;
   lineStart?: number | null;
   lineEnd?: number | null;
   label?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [resolvedPath, setResolvedPath] = useState<string | null>(originFile ?? null);
+  const initialPath =
+    relativePath ||
+    (originFile && (originFile.includes("/") || originFile.includes("\\")) ? originFile : null);
+  const [resolvedPath, setResolvedPath] = useState<string | null>(initialPath);
+  const [resolvedFileId, setResolvedFileId] = useState<string | null>(datasetFileId ?? null);
   const [resolving, setResolving] = useState(false);
-  const [resolved, setResolved] = useState<boolean>(Boolean(originFile));
+  const [resolved, setResolved] = useState<boolean>(Boolean(initialPath));
 
   const openViewer = () => {
     setOpen(true);
     if (resolvedPath) return;
     if (resolving || resolved) return;
     setResolving(true);
-    api<{ origin?: { file: string } | null; relative_path?: string | null }>(
-      `/explore/documents/${encodeURIComponent(docId)}`,
-    )
+    api<{
+      origin?: { file: string } | null;
+      relative_path?: string | null;
+      storage_key?: string | null;
+      dataset_file_id?: string | null;
+    }>(`/explore/documents/${encodeURIComponent(docId)}`)
       .then((detail) => {
-        const path = detail?.origin?.file || detail?.relative_path || null;
+        const path = detail?.relative_path || detail?.storage_key || detail?.origin?.file || null;
         setResolvedPath(path);
+        if (detail?.dataset_file_id) setResolvedFileId(detail.dataset_file_id);
         setResolved(true);
       })
       .catch(() => {
@@ -176,10 +188,12 @@ export function DocumentFileLink({
       .finally(() => setResolving(false));
   };
 
-  const target: SourceTarget | null = resolvedPath
+  const target: SourceTarget | null = resolvedPath || docId
     ? {
         kind: "file",
-        path: resolvedPath,
+        path: resolvedPath || originFile || docId,
+        docId: docId,
+        datasetFileId: resolvedFileId,
         row: row ?? undefined,
         lineStart: lineStart ?? undefined,
         lineEnd: lineEnd ?? undefined,
@@ -201,7 +215,7 @@ export function DocumentFileLink({
       {open && target && (
         <SourceViewer
           target={target}
-          subtitle={resolvedPath ?? undefined}
+          subtitle={resolvedPath ?? originFile ?? undefined}
           onClose={() => setOpen(false)}
         />
       )}

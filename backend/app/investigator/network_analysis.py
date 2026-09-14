@@ -116,6 +116,25 @@ def _canonical(node: Any) -> str:
     return canonical_label(node.label)
 
 
+def is_confirmed_criminal(node: Any) -> bool:
+    """Check if an entity is a confirmed criminal based strictly on source-derived records."""
+    if not node:
+        return False
+    label = getattr(node, "label", "") or ""
+    if label.lower() not in {"person", "suspect"}:
+        return False
+    props = getattr(node, "properties", {}) or {}
+    c_status = str(props.get("criminal_status") or props.get("legal_status") or "").strip().lower()
+    return c_status in {"convicted", "criminal", "confirmed", "accused", "proclaimed_offender"}
+
+
+def node_shape_rule(node: Any) -> str:
+    """Visual rule: star for confirmed criminal PERSON only, ellipse for all others."""
+    if is_confirmed_criminal(node):
+        return "star"
+    return "ellipse"
+
+
 def _top_metric(
     centrality: CentralityResult, snapshot: CaseGraphSnapshot, metric: str, limit: int
 ) -> list[dict[str, Any]]:
