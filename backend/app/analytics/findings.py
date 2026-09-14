@@ -23,6 +23,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.domain.enums import is_document_artifact_node
 from app.domain.models import CaseGraphSnapshot, GraphNode
 from app.logging import get_logger
 
@@ -303,6 +304,60 @@ def frequent_contact_findings(snapshot: CaseGraphSnapshot) -> list[Finding]:
     return findings
 
 
+def shared_identifier_findings(snapshot: CaseGraphSnapshot) -> list[Finding]:
+    """Surface co-use as an explicit, uncertainty-aware derived finding."""
+    findings: list[Finding] = []
+    for edge in snapshot.edges:
+        if not edge.rel_type.startswith("SHARED_"):
+            continue
+        props = edge.properties or {}
+        if edge.source_key not in snapshot.nodes or edge.target_key not in snapshot.nodes:
+            continue
+        source = snapshot.nodes[edge.source_key]
+        target = snapshot.nodes[edge.target_key]
+        identifier = props.get("shared_identifier_type") or edge.rel_type.removeprefix("SHARED_")
+        docs = _edge_docs(edge)
+        findings.append(Finding(
+            finding_type="SHARED_IDENTIFIER",
+            title=f"{source.name} and {target.name} share a {str(identifier).lower()} identifier",
+            narrative=(
+                f"The source records show that {source.name} and {target.name} are both "
+                f"linked to the same {str(identifier).lower()} identifier. This is a "
+                "derived lead and does not establish a direct association or intent."
+            ),
+            reason=(
+                "Derived from separate person-to-identifier records; the shared "
+                "identifier relationship is not a direct person-to-person fact."
+            ),
+            confidence=float(edge.properties.get("confidence", 0.0) or 0.0),
+            confidence_band="MEDIUM" if docs else "LOW",
+            entity_keys=[edge.source_key, edge.target_key],
+            evidence=[{
+                "kind": "relationship",
+                "rel_type": edge.rel_type,
+                "source": edge.source_key,
+                "target": edge.target_key,
+                "direct_vs_derived": "derived",
+                "support_level": props.get("support_level", "shared_identifier_only"),
+                "contradiction_state": props.get("contradiction_state", "unreviewed"),
+                "analytical_basis": props.get("analytical_basis", "co_use_of_identifier"),
+                "source_doc_ids": docs,
+                "origin": props.get("origin"),
+                "supporting_provenance": props.get("supporting_provenance") or [],
+            }],
+            details={
+                "direct_vs_derived": "derived",
+                "shared_identifier_type": identifier,
+                "alternative_explanations": props.get("alternative_explanations") or [],
+                "next_investigative_steps": [
+                    "Verify the shared identifier in the source records and check ownership dates.",
+                    "Seek an independent source before treating the lead as an association.",
+                ],
+            },
+        ))
+    return findings
+
+
 def hub_findings(
     snapshot: CaseGraphSnapshot,
     centrality: dict[str, dict[str, float]] | None,
@@ -361,14 +416,70 @@ def generate_findings(
     snapshot: CaseGraphSnapshot,
     centrality: dict[str, dict[str, float]] | None = None,
 ) -> list[Finding]:
-    """All deterministic findings for a case, de-duplicated."""
+    """All deterministic findings for a case, de-duplicated.
+
+    Filter legacy snapshots at the findings boundary as well as at projection
+    and centrality boundaries.  A stale document node must never affect a
+    finding merely because an old graph snapshot is still on disk.
+    """
+    eligible = {
+        key: node for key, node in snapshot.nodes.items()
+        if not is_document_artifact_node(node)
+    }
+    safe_snapshot = CaseGraphSnapshot(
+        case_id=snapshot.case_id,
+        nodes=eligible,
+        edges=[
+            edge for edge in snapshot.edges
+            if edge.source_key in eligible and edge.target_key in eligible
+        ],
+    )
+    safe_centrality = {
+        key: value for key, value in (centrality or {}).items() if key in eligible
+    }
     findings: list[Finding] = []
     seen: set[tuple] = set()
-    for finding in (
-        *financial_chain_findings(snapshot),
-        *frequent_contact_findings(snapshot),
-        *hub_findings(snapshot, centrality),
-    ):
+    candidates = (
+        *financial_chain_findings(safe_snapshot),
+        *frequent_contact_findings(safe_snapshot),
+        *shared_identifier_findings(safe_snapshot),
+        *hub_findings(safe_snapshot, safe_centrality),
+    )
+    edge_by_pair = {
+        (edge.source_key, edge.target_key, edge.rel_type): edge
+        for edge in safe_snapshot.edges
+    }
+    for finding in candidates:
+        for evidence in finding.evidence:
+            if evidence.get("kind") != "relationship":
+                continue
+            source = evidence.get("source") or evidence.get("from_account")
+            target = evidence.get("target") or evidence.get("to_account")
+            rel_type = evidence.get("rel_type")
+            edge = edge_by_pair.get((source, target, rel_type))
+            if edge is None:
+                edge = next((
+                    candidate for candidate in safe_snapshot.edges
+                    if candidate.rel_type == rel_type
+                    and {candidate.source_key, candidate.target_key} == {source, target}
+                ), None)
+            if edge is not None:
+                props = edge.properties or {}
+                evidence.setdefault("direct_vs_derived", props.get("direct_vs_derived", "direct"))
+                evidence.setdefault("support_level", props.get("support_level", "direct_source_record"))
+                evidence.setdefault("contradiction_state", props.get("contradiction_state", "not_recorded"))
+                evidence.setdefault("analytical_basis", props.get("analytical_basis", "source_record"))
+                evidence.setdefault("source_doc_ids", _edge_docs(edge))
+                evidence.setdefault("origin", props.get("origin"))
+        finding.details.setdefault(
+            "contradiction_state",
+            "reviewed" if finding.details.get("contradictions") else "not_recorded",
+        )
+        finding.details.setdefault("alternative_explanations", [])
+        finding.details.setdefault("next_investigative_steps", [
+            "Review the cited source records and confirm the relevant dates.",
+            "Seek an independent source before treating this signal as established.",
+        ])
         key = finding.dedupe_key()
         if key in seen:
             continue

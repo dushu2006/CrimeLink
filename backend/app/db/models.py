@@ -894,6 +894,29 @@ class Dataset(Base):
     __table_args__ = (Index("ix_datasets_status", "status"),)
 
 
+class DatasetPseudonym(Base):
+    """Trusted-backend AI identity mapping for one dataset.
+
+    This table is never sent to an AI provider or exposed by a graph endpoint.
+    It makes a pseudonym stable across workers, restarts, and source formats
+    while keeping de-pseudonymization inside the authorized backend boundary.
+    """
+
+    __tablename__ = "dataset_pseudonyms"
+
+    id: Mapped[str] = pk_column()
+    dataset_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    canonical_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    pseudonym: Mapped[str] = mapped_column(String(96), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    created_at: Mapped[datetime] = created_at_column()
+
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "canonical_key", name="uq_dataset_pseudonyms_key"),
+        UniqueConstraint("dataset_id", "pseudonym", name="uq_dataset_pseudonyms_value"),
+    )
+
+
 class DatasetFile(Base):
     """Every file discovered inside a dataset, with what we made of it.
 
@@ -966,6 +989,9 @@ class DatasetEntity(Base):
     #: CASE | EVIDENCE | DOCUMENT | DEVICE | EMAIL | PROPERTY | TRANSACTION | ...
     entity_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Investigator-facing display value. Kept separate from immutable
+    #: ``canonical_id`` and from any AI pseudonym.
+    display_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     #: Normalized identifying value (digits-only phone, upper-case plate, ...).
     normalized_value: Mapped[str] = mapped_column(String(240), nullable=False, default="")
     attributes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

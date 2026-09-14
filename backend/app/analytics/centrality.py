@@ -27,6 +27,7 @@ from typing import Any
 import networkx as nx
 
 from app.config import Settings, get_settings
+from app.domain.enums import is_document_artifact_node
 from app.domain.models import CaseGraphSnapshot
 from app.logging import get_logger
 
@@ -65,10 +66,17 @@ class CentralityResult:
 def build_nx_graph(snapshot: CaseGraphSnapshot) -> nx.DiGraph:
     """Project a case snapshot onto a confidence-weighted directed graph."""
     graph = nx.DiGraph()
+    eligible_keys: set[str] = set()
     for key, node in snapshot.nodes.items():
+        # Analytics are actor/context analytics, never document analytics.
+        # This guard intentionally remains even after graph projection is
+        # corrected so legacy snapshots cannot contaminate cached metrics.
+        if is_document_artifact_node(node):
+            continue
+        eligible_keys.add(key)
         graph.add_node(key, label=node.label, confidence=float(node.properties.get("confidence", 1.0)))
     for edge in snapshot.edges:
-        if edge.source_key not in snapshot.nodes or edge.target_key not in snapshot.nodes:
+        if edge.source_key not in eligible_keys or edge.target_key not in eligible_keys:
             continue
         weight = float(edge.properties.get("confidence", 1.0) or 1.0)
         weight = max(0.01, min(1.0, weight))

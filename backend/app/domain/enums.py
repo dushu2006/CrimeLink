@@ -378,6 +378,25 @@ def canonical_label(label: str) -> str:
     """The SCREAMING_CASE wire label for a stored node label."""
     return CANONICAL_LABELS.get(label, label.upper())
 
+DOCUMENT_ARTIFACT_LABELS: frozenset[str] = frozenset({"DOCUMENT", "EVIDENCE"})
+
+
+def is_document_artifact_node(node: object) -> bool:
+    """Centralized defense against document/evidence contamination.
+
+    ``entity_type`` is checked as well as the rendered label because legacy
+    projections used ``Event`` for DOCUMENT and old snapshots can still carry
+    that shape until they are rebuilt.
+    """
+    label = canonical_label(str(getattr(node, "label", "") or ""))
+    props = getattr(node, "properties", {}) or {}
+    entity_type = str(props.get("entity_type") or "").upper()
+    return (
+        label in DOCUMENT_ARTIFACT_LABELS
+        or entity_type in DOCUMENT_ARTIFACT_LABELS
+        or bool(props.get("is_document_artifact"))
+    )
+
 REL_TYPES: frozenset[str] = frozenset(
     {
         "PARTICIPATED_IN",
@@ -398,6 +417,11 @@ REL_TYPES: frozenset[str] = frozenset(
         "TRANSFER_TO",
         "CONTROLS_ACCOUNT",
         "ACCUSED_IN",
+        "SHARED_PHONE",
+        "SHARED_ACCOUNT",
+        "SHARED_VEHICLE",
+        "SHARED_LOCATION",
+        "SHARED_IDENTIFIER",
         "LOCATED_AT",
         "MENTIONED_IN",
         "POTENTIAL_ALIAS",

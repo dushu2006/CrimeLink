@@ -23,7 +23,7 @@ from app.analytics.temporal import build_temporal_graph, find_temporal_paths
 from app.config import Settings, get_settings
 from app.container import Container, get_container
 from app.db.models import Case
-from app.domain.enums import canonical_label
+from app.domain.enums import canonical_label, is_document_artifact_node
 from app.domain.models import GraphNode
 from app.errors import NotFoundError
 from app.logging import get_logger
@@ -35,6 +35,12 @@ log = get_logger("crimelink.services.graph")
 # version changes on every graph write.
 _centrality_cache: dict[tuple[str, int], CentralityResult] = {}
 _CACHE_LIMIT = 32
+
+
+def invalidate_analytics_cache() -> None:
+    """Drop analytical projections after a graph rebuild or dataset switch."""
+    _centrality_cache.clear()
+
 
 #: Default hop depth for the person-centric network.  A *default*, not a cap:
 #: the investigator can ask for any depth and the traversal will go as far as
@@ -62,6 +68,11 @@ _PERSON_PRIORITY_RELS = frozenset(
         "MEMBER_OF",
         "LOCATED_AT",
         "ACCUSED_IN",
+        "SHARED_PHONE",
+        "SHARED_ACCOUNT",
+        "SHARED_VEHICLE",
+        "SHARED_LOCATION",
+        "SHARED_IDENTIFIER",
         "PARTICIPATED_IN",
         "TRANSFER_TO",
     }
@@ -89,6 +100,11 @@ def _bfs_neighbourhood(
     """
     adjacency: dict[str, list[tuple[str, Any]]] = {}
     for edge in snapshot.edges:
+        if (
+            is_document_artifact_node(snapshot.nodes.get(edge.source_key))
+            or is_document_artifact_node(snapshot.nodes.get(edge.target_key))
+        ):
+            continue
         adjacency.setdefault(edge.source_key, []).append((edge.target_key, edge))
         adjacency.setdefault(edge.target_key, []).append((edge.source_key, edge))
 
@@ -185,7 +201,9 @@ class GraphService:
         self, session: AsyncSession, scope: JurisdictionScope, key: str
     ) -> GraphNode:
         node = self.container.graph_store.get_node(key)
-        if node is None:
+        if node is None or is_document_artifact_node(node):
+            # Evidence is opened through the provenance/evidence service, not
+            # through actor graph traversal.
             raise NotFoundError("Graph node not found.")
         allowed = await self._allowed_case_ids(session, scope)
         node_cases = set(node.properties.get("case_ids") or [])
@@ -355,10 +373,16 @@ class GraphService:
         snapshot = self.container.graph_store.snapshot(case_id, include_staging=include_staging)
         if labels:
             wanted = {canonical_label(l) for l in labels}
-            nodes = [n for n in snapshot.nodes.values() if canonical_label(n.label) in wanted]
+            nodes = [
+                n for n in snapshot.nodes.values()
+                if not is_document_artifact_node(n) and canonical_label(n.label) in wanted
+            ]
         else:
-            nodes = list(snapshot.nodes.values())
-        edges = list(snapshot.edges)
+            # Default graph reads are actor/context reads. Evidence artifacts
+            # are opened through provenance APIs, never rendered as nodes.
+            nodes = [n for n in snapshot.nodes.values() if not is_document_artifact_node(n)]
+        keep = {n.provenance_key for n in nodes}
+        edges = [e for e in snapshot.edges if e.source_key in keep and e.target_key in keep]
         if rel_types:
             wanted_rels = {r.upper() for r in rel_types}
             edges = [e for e in edges if e.rel_type.upper() in wanted_rels]
@@ -375,6 +399,8 @@ class GraphService:
             truncated = True
         return {
             "case_id": case_id,
+            "view": "PERSON + CONTEXT",
+            "available_views": ["PERSON NETWORK", "PERSON + CONTEXT", "EVIDENCE VIEW", "FINDING SUBGRAPH"],
             "include_staging": include_staging,
             "truncated": truncated,
             "filters": {"labels": labels or [], "rel_types": rel_types or []},
@@ -409,7 +435,7 @@ class GraphService:
         persons = [
             node
             for node in snapshot.nodes.values()
-            if canonical_person(node)
+            if not is_document_artifact_node(node) and canonical_person(node)
         ]
         persons.sort(key=lambda n: (-degree.get(n.provenance_key, 0), n.name))
         items = [
@@ -534,7 +560,10 @@ class GraphService:
         for edge in snapshot.edges:
             degree[edge.source_key] = degree.get(edge.source_key, 0) + 1
             degree[edge.target_key] = degree.get(edge.target_key, 0) + 1
-        persons = [node for node in snapshot.nodes.values() if canonical_person(node)]
+        persons = [
+            node for node in snapshot.nodes.values()
+            if not is_document_artifact_node(node) and canonical_person(node)
+        ]
         persons.sort(key=lambda n: (-degree.get(n.provenance_key, 0), n.name))
         items = [
             {
@@ -808,10 +837,16 @@ class GraphService:
         )
         if labels:
             wanted = {canonical_label(l) for l in labels}
-            nodes = [n for n in snapshot.nodes.values() if canonical_label(n.label) in wanted]
+            nodes = [
+                n for n in snapshot.nodes.values()
+                if not is_document_artifact_node(n) and canonical_label(n.label) in wanted
+            ]
         else:
-            nodes = list(snapshot.nodes.values())
-        edges = list(snapshot.edges)
+            # Default graph reads are actor/context reads. Evidence artifacts
+            # are opened through provenance APIs, never rendered as nodes.
+            nodes = [n for n in snapshot.nodes.values() if not is_document_artifact_node(n)]
+        keep = {n.provenance_key for n in nodes}
+        edges = [e for e in snapshot.edges if e.source_key in keep and e.target_key in keep]
         if rel_types:
             wanted_rels = {r.upper() for r in rel_types}
             edges = [e for e in edges if e.rel_type.upper() in wanted_rels]
@@ -825,6 +860,8 @@ class GraphService:
             truncated = True
         return {
             "mode": "master",
+            "view": "PERSON + CONTEXT",
+            "available_views": ["PERSON NETWORK", "PERSON + CONTEXT", "EVIDENCE VIEW", "FINDING SUBGRAPH"],
             "case_ids": case_ids,
             "include_staging": include_staging,
             "truncated": truncated,
@@ -909,6 +946,8 @@ class GraphService:
         entity_case_map: dict[str, set[str]] = {}
 
         for key, node in snapshot.nodes.items():
+            if is_document_artifact_node(node):
+                continue
             props = node.properties or {}
             cids = set(props.get("case_ids") or []) & set(case_ids)
             entity_case_map[key] = cids

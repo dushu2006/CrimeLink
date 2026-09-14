@@ -403,3 +403,21 @@ npm run build
 The backend suite includes the original regression suite plus industry workflow
 and AI-safety tests. The React Router v6 line still has moderate upstream audit
 advisories; upgrading to v7 is a separate, untested framework migration.
+
+## Ontology and evidence boundary
+
+Canonical `DOCUMENT` and `EVIDENCE` records remain in provenance storage and
+are rejected by both graph adapters; they are never mapped to `Person` or used
+by centrality, communities, cross-case detection, or findings. The graph
+projection is an explicit allow-list, and legacy snapshots are filtered again
+at analytics and API boundaries. Co-used phones, accounts, vehicles, and
+locations are represented as `SHARED_*` derived leads with supporting edge
+provenance, uncertainty, and alternative explanations rather than silently
+becoming `ASSOCIATE_OF`.
+
+Canonical identity, investigator display name, and AI pseudonym are separate.
+Dataset-scoped pseudonym maps are reused across AI requests and supported
+source formats; document identifiers and raw source identifiers are removed
+from pseudonymized model context. The finding graph endpoint is
+`GET /api/v1/investigations/{investigation_id}/findings/{finding_id}/graph` and
+is generated from the finding's evidence references on the trusted backend.
