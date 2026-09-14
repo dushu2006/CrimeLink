@@ -27,6 +27,7 @@ import {
   strengthSentence,
   strengthTone,
 } from "../../lib/investigator";
+import { patternIdentity } from "../../lib/pattern-identity";
 import { EvidenceList, NoteList } from "./InvestigatorEvidence";
 
 export function PatternCard({
@@ -252,14 +253,17 @@ export function PatternList({
 
   return (
     <>
-      {live.map((pattern) => (
-        <PatternCard
-          key={`${pattern.kind}-${pattern.title}`}
-          pattern={pattern}
-          selected={selectedKind === `${pattern.kind}-${pattern.title}`}
-          onSelect={onSelect}
-        />
-      ))}
+      {live.map((pattern) => {
+        const key = patternIdentity(pattern);
+        return (
+          <PatternCard
+            key={key ?? undefined}
+            pattern={pattern}
+            selected={selectedKind === `${pattern.kind}-${pattern.title}`}
+            onSelect={onSelect}
+          />
+        );
+      })}
       {setAside.length > 0 && (
         <details className="technical-details">
           <summary className="technical-details-toggle">
@@ -271,9 +275,10 @@ export function PatternList({
               shared location, benign-only repetition, or social-media adjacency on its own. They
               remain here so the decision to set them aside is reviewable.
             </p>
-            {setAside.map((pattern) => (
-              <PatternCard key={`${pattern.kind}-${pattern.title}`} pattern={pattern} />
-            ))}
+            {setAside.map((pattern) => {
+              const key = patternIdentity(pattern);
+              return <PatternCard key={key ?? undefined} pattern={pattern} />;
+            })}
           </div>
         </details>
       )}
