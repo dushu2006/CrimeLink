@@ -371,3 +371,35 @@ docker-compose.yml            # production topology
 
 Confidential — law-enforcement use only. Exported PDF briefs carry a
 `CONFIDENTIAL / LAW ENFORCEMENT USE ONLY` watermark on every page.
+
+## Industry foundation (2026-09)
+
+The current branch adds a durable investigator workflow without weakening the
+three guarantees above. See [`docs/INDUSTRY_UPGRADE.md`](docs/INDUSTRY_UPGRADE.md)
+for the implemented/adapter-ready boundary and
+[`docs/BACKUP_DISASTER_RECOVERY.md`](docs/BACKUP_DISASTER_RECOVERY.md) for the
+restore runbook.
+
+New case-scoped surfaces include server-enforced information classification,
+chain-of-custody events and integrity verification, formal case transitions,
+investigation tasks, versioned notes, hypotheses, claims, contradictions,
+unknowns, evidence-gathering next steps, controlled approvals, versioned
+reports, and an AI evidence-reference firewall.  CrimeLink still never makes
+an automatic legal conclusion.
+
+### Test commands
+
+```bash
+# Backend (the PYTHONPATH is needed for the repository's intra-test imports)
+cd backend
+PYTHONPATH=. .venv/bin/python -m pytest
+
+# Frontend
+cd frontend
+npm test
+npm run build
+```
+
+The backend suite includes the original regression suite plus industry workflow
+and AI-safety tests. The React Router v6 line still has moderate upstream audit
+advisories; upgrading to v7 is a separate, untested framework migration.

@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
 import { TechnicalDetails } from "../components/TechnicalDetails";
 import { DocumentFileLink } from "../components/EvidenceLink";
+import InvestigationWorkflowPanel from "../components/investigator/InvestigationWorkflowPanel";
 
 /** The stage messages the AI stream reports while an answer is produced. */
 const AI_PHASE_LABEL: Record<string, string> = {
@@ -356,6 +357,8 @@ export default function CaseDetail() {
           same file yields the same hash.
         </p>
       </section>
+
+      {caseId && <InvestigationWorkflowPanel caseId={caseId} />}
 
       <section className="panel">
         <h2>Ask AI about this case</h2>
