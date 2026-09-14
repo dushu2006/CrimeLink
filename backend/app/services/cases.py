@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.datasets import registry
 from app.db.base import utcnow
 from app.db.models import Case, CaseDocument, DetectedPattern, EntityResolutionItem
-from app.domain.enums import CaseStatus, PatternStatus, ResolutionStatus
-from app.errors import ConflictError, NotFoundError
+from app.domain.enums import CaseStatus, PatternStatus, ResolutionStatus, Role
+from app.errors import ConflictError, NotFoundError, PermissionDeniedError, ValidationFailedError
 from app.security.deps import JurisdictionScope, Principal
 
 
@@ -25,9 +25,12 @@ async def create_case(
     case_number: str,
     title: str,
     jurisdiction_id: str | None = None,
+    classification=None,
 ) -> Case:
     jurisdiction = jurisdiction_id or principal.jurisdiction_id
-    if jurisdiction != principal.jurisdiction_id and principal.role.value != "ADMIN":
+    from app.security.classification import require_classification
+    require_classification(principal, classification or "INTERNAL")
+    if jurisdiction != principal.jurisdiction_id and principal.role.value not in {"ADMIN", "SUPER_ADMIN", "DISTRICT_ADMIN", "STATION_ADMIN"}:
         # Creating a case in another jurisdiction is an administrative act.
         from app.errors import PermissionDeniedError
 
@@ -56,6 +59,7 @@ async def create_case(
         title=title,
         jurisdiction_id=jurisdiction,
         status=CaseStatus.OPEN,
+        classification=classification or "INTERNAL",
         created_by=principal.id,
     )
     session.add(case)
@@ -262,6 +266,7 @@ async def case_summaries(
                 "title": case.title,
                 "jurisdiction_id": case.jurisdiction_id,
                 "status": case.status.value,
+                "classification": case.classification.value,
                 "document_count": documents,
                 "pending_review_count": pending_reviews,
                 "created_at": case.created_at.isoformat() if case.created_at else None,
@@ -270,10 +275,32 @@ async def case_summaries(
     return out
 
 
-async def update_status(session: AsyncSession, case: Case, status: CaseStatus) -> Case:
+_CASE_TRANSITIONS: dict[CaseStatus, set[CaseStatus]] = {
+    CaseStatus.DRAFT: {CaseStatus.OPEN, CaseStatus.ACTIVE_INVESTIGATION},
+    CaseStatus.OPEN: {CaseStatus.ACTIVE_INVESTIGATION, CaseStatus.UNDER_REVIEW},
+    CaseStatus.ACTIVE_INVESTIGATION: {CaseStatus.UNDER_REVIEW, CaseStatus.SUBMITTED},
+    CaseStatus.UNDER_REVIEW: {CaseStatus.ACTIVE_INVESTIGATION, CaseStatus.SUBMITTED},
+    CaseStatus.SUBMITTED: {CaseStatus.UNDER_REVIEW, CaseStatus.CLOSED},
+    CaseStatus.CLOSED: {CaseStatus.SEALED},
+    CaseStatus.SEALED: set(),
+}
+
+
+async def update_status(
+    session: AsyncSession, case: Case, status: CaseStatus, principal: Principal | None = None
+) -> Case:
+    current = CaseStatus(case.status.value if hasattr(case.status, "value") else case.status)
+    if status == current:
+        return case
+    if status not in _CASE_TRANSITIONS.get(current, set()):
+        raise ValidationFailedError(f"Invalid case transition: {current.value} -> {status.value}.")
+    if status in {CaseStatus.CLOSED, CaseStatus.SEALED}:
+        allowed = {Role.SUPERVISOR, Role.STATION_ADMIN, Role.DISTRICT_ADMIN, Role.SUPER_ADMIN, Role.ADMIN}
+        if principal is not None and principal.role not in allowed:
+            raise PermissionDeniedError("Supervisor approval is required for this case transition.")
     case.status = status
-    if status == CaseStatus.CLOSED:
-        case.closed_at = utcnow()
+    if status in {CaseStatus.CLOSED, CaseStatus.SEALED}:
+        case.closed_at = case.closed_at or utcnow()
     await session.flush()
     return case
 
