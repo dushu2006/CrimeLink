@@ -49,6 +49,7 @@ from app.db.session import (
     _bootstrap_postgres,
     get_sync_engine,
     get_sync_sessionmaker,
+    sync_database_columns,
     sync_sqlite_columns,
     sync_sqlite_enum_constraints,
 )
@@ -382,16 +383,16 @@ def run_db_migrations(settings: Settings | None = None) -> None:
     # Create all missing tables
     Base.metadata.create_all(bind=engine)
 
-    # If SQLite: synchronize columns and enum CHECK constraints
-    if settings.effective_relational_backend == "sqlite":
-        with engine.connect() as conn:
-            added = sync_sqlite_columns(conn, Base.metadata)
-            if added:
-                log.info("bootstrap.sqlite_columns_synchronized", added=added)
+    # Synchronize missing columns on all backends (SQLite and PostgreSQL)
+    with engine.connect() as conn:
+        added = sync_database_columns(conn, Base.metadata)
+        if added:
+            log.info("bootstrap.columns_synchronized", added=added, backend=settings.effective_relational_backend)
+        if settings.effective_relational_backend == "sqlite":
             upgraded = sync_sqlite_enum_constraints(conn, Base.metadata)
             if upgraded:
                 log.info("bootstrap.sqlite_enums_synchronized", upgraded=upgraded)
-            conn.commit()
+        conn.commit()
 
     log.info("bootstrap.db_schema_ready", backend=settings.effective_relational_backend)
 

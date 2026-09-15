@@ -247,7 +247,7 @@ def _quote_ident(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
 
-def _scalar_default_literal(column: Any) -> str | None:
+def _scalar_default_literal(column: Any, dialect: Any = None) -> str | None:
     """SQL literal for a static column default, when one exists.
 
     Only *static* defaults can be expressed in ``ALTER TABLE ... ADD COLUMN``:
@@ -259,8 +259,10 @@ def _scalar_default_literal(column: Any) -> str | None:
     server_default = column.server_default
     if server_default is not None:
         arg = server_default.arg
+        if hasattr(arg, "value"):
+            arg = arg.value
         if isinstance(arg, bool):
-            return "1" if arg else "0"
+            return "1" if (dialect and dialect.name == "sqlite") else ("TRUE" if arg else "FALSE")
         if isinstance(arg, (int, float)):
             return repr(arg)
         if isinstance(arg, str):
@@ -272,8 +274,10 @@ def _scalar_default_literal(column: Any) -> str | None:
     if default is None or getattr(default, "is_callable", False):
         return None
     arg = default.arg
+    if hasattr(arg, "value"):
+        arg = arg.value
     if isinstance(arg, bool):
-        return "1" if arg else "0"
+        return "1" if (dialect and dialect.name == "sqlite") else ("TRUE" if arg else "FALSE")
     if isinstance(arg, (int, float)):
         return repr(arg)
     if isinstance(arg, str):
@@ -294,29 +298,25 @@ def _backfill_value(column: Any) -> Any:
     if getattr(default, "is_callable", False):
         callable_default = getattr(default.arg, "__wrapped__", default.arg)
         try:
-            return callable_default()
+            val = callable_default()
+            return val.value if hasattr(val, "value") else val
         except Exception:  # noqa: BLE001 - a retrofit must never fail on default evaluation
             return None
-    return default.arg
+    val = default.arg
+    return val.value if hasattr(val, "value") else val
 
 
-def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]:
-    """Add model columns missing from existing SQLite tables.
+def sync_database_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]:
+    """Add model columns missing from existing database tables (SQLite and PostgreSQL).
 
     Returns the ``(table, column)`` pairs that were added.  Additions are
     strictly additive and never drop or rewrite data.  New tables created by
     ``create_all`` are skipped because they already carry every column.
-
-    SQLite cannot add a ``NOT NULL`` column to a populated table without a
-    static default, so a retrofit column whose default is Python-side is added
-    nullable and then backfilled — the same choice the ``source_metadata``
-    Alembic migration makes (``nullable=True`` + ``UPDATE ... SET '{}'``).  The
-    ORM always supplies a value for new rows, so reads and writes behave
-    identically either way.
     """
     inspector = inspect(connection)
     existing_tables = set(inspector.get_table_names())
     added: list[tuple[str, str]] = []
+    dialect = connection.dialect
 
     for table in metadata.sorted_tables:
         if table.name not in existing_tables:
@@ -326,11 +326,8 @@ def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]
             if column.name in existing_columns:
                 continue
 
-            column_type = column.type.compile(dialect=_SQLITE_DIALECT)
-            default_sql = _scalar_default_literal(column)
-            # SQLite rejects NOT NULL additions without a static default and a
-            # NOT NULL retrofit would also fail on populated tables, so retrofit
-            # columns stay nullable at the storage layer (see module docstring).
+            column_type = column.type.compile(dialect=dialect)
+            default_sql = _scalar_default_literal(column, dialect=dialect)
             ddl = (
                 f"ALTER TABLE {_quote_ident(table.name)} ADD COLUMN "
                 f"{_quote_ident(column.name)} {column_type}"
@@ -341,20 +338,33 @@ def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]
 
             backfill = _backfill_value(column)
             if backfill is not None:
-                if isinstance(backfill, bool):
+                if isinstance(backfill, bool) and dialect.name == "sqlite":
                     backfill = 1 if backfill else 0
                 elif isinstance(backfill, (dict, list)):
                     backfill = json.dumps(backfill)
-                if isinstance(backfill, (str, int, float)):
+                if isinstance(backfill, (str, int, float, bool)):
                     connection.execute(
                         text(
                             f"UPDATE {_quote_ident(table.name)} "
-                            f"SET {_quote_ident(column.name)} = :value"
+                            f"SET {_quote_ident(column.name)} = :value "
+                            f"WHERE {_quote_ident(column.name)} IS NULL"
                         ),
                         {"value": backfill},
                     )
+            if table.name == "dataset_entities" and column.name == "display_name":
+                connection.execute(
+                    text(
+                        "UPDATE dataset_entities SET display_name = name "
+                        "WHERE display_name = '' OR display_name IS NULL"
+                    )
+                )
             added.append((table.name, column.name))
     return added
+
+
+def sync_sqlite_columns(connection: Any, metadata: Any) -> list[tuple[str, str]]:
+    """Alias for backwards compatibility."""
+    return sync_database_columns(connection, metadata)
 
 
 def sync_sqlite_enum_constraints(connection: Any, metadata: Any) -> list[tuple[str, str]]:
