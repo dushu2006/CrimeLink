@@ -1,6 +1,6 @@
 # CrimeLink — production deployment topology (PRD 15)
 #
-# Eight containers, exactly as specified:
+# Eleven containers (8 core + 1 demo seed + 2 observability), as specified + Priority 1.4:
 #
 #   1. postgres  — relational system of record (PostgreSQL 15)
 #   2. neo4j     — the investigation graph (Neo4j 5 Community)
@@ -10,14 +10,9 @@
 #   6. worker    — Celery worker for the six-stage document pipeline
 #   7. beat      — Celery beat: nightly pattern detection + audit anchoring
 #   8. web       — nginx: serves the React console, terminates TLS, proxies /api
-#
-# Everything is pinned by digest-friendly tags so the stack can be rebuilt from
-# an internal mirror on NIC-MeghRaj with no registry access.
-#
-# Quick start:
-#   cp .env.example .env      # then set CRIMELINK_SECRET_KEY and CRIMELINK_AI_API_KEY
-#   docker compose up -d --build
-#   Open the console and create the first administrator account.
+#   9. seed      — production demo seed: idempotent PG/Neo4j/MinIO demo data (evaluator-ready, no manual upload)
+#  10. prometheus — scrapes /api/v1/health/metrics, evaluates alert_rules.yml
+#  11. grafana    — dashboards for pipeline, ER SLA, audit chain, API latency
 
 name: crimelink
 
@@ -32,8 +27,6 @@ services:
       POSTGRES_USER: ${CRIMELINK_POSTGRES_USER:-crimelink}
       POSTGRES_PASSWORD: ${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}
       POSTGRES_DB: ${CRIMELINK_POSTGRES_DB:-crimelink}
-      # The crash-consistency bar for an evidence system: never lose a committed
-      # transaction, ever — including audit rows.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     command:
       - postgres
@@ -63,8 +56,6 @@ services:
       NEO4J_AUTH: neo4j/${CRIMELINK_NEO4J_PASSWORD:?CRIMELINK_NEO4J_PASSWORD must be set}
       NEO4J_dbms_memory_heap_max__size: 2G
       NEO4J_dbms_memory_pagecache_size: 1G
-      # No outbound calls to Neo4j's telemetry endpoints: this runs on a
-      # closed government network.
       NEO4J_dbms_security_procedures_unrestricted: "gds.*"
       NEO4J_dbms_usage__report_enabled: "false"
     volumes:
@@ -85,8 +76,6 @@ services:
   redis:
     image: redis:7.2.5-alpine
     container_name: crimelink-redis
-    # No persistence: queued work is re-dispatchable from the jobs table, and a
-    # lost queue entry is recoverable while a corrupt AOF file is not.
     command: ["redis-server", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -115,8 +104,6 @@ services:
       retries: 10
     restart: unless-stopped
     networks: [crimelink]
-    # Buckets are created by the application at boot (MinioObjectStore.ensure_buckets),
-    # so no sidecar initialisation container is needed.
 
   # ---------------------------------------------------------------------------
   # 5. API
@@ -183,7 +170,6 @@ services:
       CRIMELINK_CELERY_BROKER_URL: redis://redis:6379/1
       CRIMELINK_CELERY_RESULT_BACKEND: redis://redis:6379/2
       CRIMELINK_MINIO_ENDPOINT: minio:9000
-      # The worker runs the six-stage pipeline; it never serves HTTP.
       CRIMELINK_ALLOW_STARTUP_BOOTSTRAP: "false"
     depends_on:
       postgres: { condition: service_healthy }
@@ -194,7 +180,7 @@ services:
     networks: [crimelink]
 
   # ---------------------------------------------------------------------------
-  # 7. Scheduler — nightly pattern detection and audit anchoring
+  # 7. Scheduler
   # ---------------------------------------------------------------------------
   beat:
     build:
@@ -231,13 +217,87 @@ services:
     container_name: crimelink-web
     ports:
       - "${CRIMELINK_HTTP_PORT:-80}:80"
-      # Uncomment after placing certificates in ./infra/tls:
-      # - "443:443"
     volumes:
-      # Drop fullchain.pem / privkey.pem here to enable TLS.
       - ./infra/tls:/etc/nginx/tls:ro
     depends_on:
       api: { condition: service_healthy }
+    restart: unless-stopped
+    networks: [crimelink]
+
+  # ---------------------------------------------------------------------------
+  # 9. Production Demo Seed — Idempotent, evaluator-ready, no manual upload
+  #    Populates PG (users/roles/cases/evidence metadata/source/investigation),
+  #    Neo4j (people, relationships, properties), MinIO (actual files)
+  #    Stable IDs: CASE-001/CR-1024 PERSON-001 E-042 INV-0001
+  #    Same data scope for ADMIN/INVESTIGATOR/VIEWER, different permissions
+  #    Runs after API healthy, exits 0 on success, idempotent no duplicates
+  # ---------------------------------------------------------------------------
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crimelink-seed
+    command: ["python", "scripts/seed_demo.py"]
+    env_file: [.env]
+    environment:
+      CRIMELINK_PROFILE: production
+      CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
+      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_NEO4J_URI: bolt://neo4j:7687
+      CRIMELINK_NEO4J_PASSWORD: ${CRIMELINK_NEO4J_PASSWORD:?CRIMELINK_NEO4J_PASSWORD must be set}
+      CRIMELINK_REDIS_URL: redis://redis:6379/0
+      CRIMELINK_MINIO_ENDPOINT: minio:9000
+    depends_on:
+      api: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      neo4j: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    restart: "no"
+    networks: [crimelink]
+
+  # ---------------------------------------------------------------------------
+  # 10. Observability
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    container_name: crimelink-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --web.console.templates=/etc/prometheus/consoles
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${CRIMELINK_PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    networks: [crimelink]
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: crimelink-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${CRIMELINK_GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${CRIMELINK_GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_DISABLE_LOGIN_FORM: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/crimelink.json
+    volumes:
+      - ./infra/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infra/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${CRIMELINK_GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
     restart: unless-stopped
     networks: [crimelink]
 
@@ -251,3 +311,5 @@ volumes:
   neo4j-data:
   neo4j-logs:
   minio-data:
+  prometheus-data:
+  grafana-data:

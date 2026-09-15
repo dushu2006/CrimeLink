@@ -1,0 +1,79 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "CrimeLink Operational Overview",
+    "tags": ["crimelink", "investigation"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "type": "timeseries",
+        "title": "Documents Processed / Failed",
+        "datasource": "Prometheus",
+        "targets": [
+          {"expr": "rate(crimelink_documents_processed_total[5m])", "legendFormat": "processed"},
+          {"expr": "rate(crimelink_documents_failed_total[5m])", "legendFormat": "failed"}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "type": "stat",
+        "title": "ER Queue Depth",
+        "datasource": "Prometheus",
+        "targets": [{"expr": "crimelink_er_queue_pending"}],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "type": "stat",
+        "title": "ER Oldest Item (hours)",
+        "datasource": "Prometheus",
+        "targets": [{"expr": "crimelink_er_queue_oldest_item_hours"}],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "type": "timeseries",
+        "title": "API Latency p95",
+        "datasource": "Prometheus",
+        "targets": [
+          {"expr": "histogram_quantile(0.95, rate(crimelink_api_request_duration_seconds_bucket[5m]))", "legendFormat": "p95"}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "type": "timeseries",
+        "title": "API Requests by Status",
+        "datasource": "Prometheus",
+        "targets": [
+          {"expr": "sum by (status) (rate(crimelink_api_requests_total[5m]))", "legendFormat": "{{status}}"}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "type": "stat",
+        "title": "Graph Nodes / Edges",
+        "datasource": "Prometheus",
+        "targets": [
+          {"expr": "crimelink_graph_nodes", "legendFormat": "nodes"},
+          {"expr": "crimelink_graph_edges", "legendFormat": "edges"}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "type": "stat",
+        "title": "Pattern Queue (NEW)",
+        "datasource": "Prometheus",
+        "targets": [{"expr": "crimelink_pattern_queue_new"}],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 16}
+      },
+      {
+        "type": "stat",
+        "title": "Quarantine Docs",
+        "datasource": "Prometheus",
+        "targets": [{"expr": "crimelink_quarantine_documents"}],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 16}
+      }
+    ],
+    "schemaVersion": 30,
+    "version": 1
+  },
+  "overwrite": true
+}

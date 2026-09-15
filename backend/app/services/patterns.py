@@ -126,6 +126,20 @@ async def review(
     return _row(pattern)
 
 
+async def get_pattern(
+    session: AsyncSession,
+    scope: JurisdictionScope,
+    pattern_id: str,
+) -> dict:
+    from app.services.cases import require_case
+
+    pattern = await session.get(DetectedPattern, pattern_id)
+    if pattern is None:
+        raise NotFoundError("Pattern finding not found.")
+    await require_case(session, scope, pattern.case_id)
+    return _row(pattern)
+
+
 async def dismissal_report(
     session: AsyncSession,
     scope: JurisdictionScope,

@@ -2173,3 +2173,197 @@ export function networkAnalysisFromJob(job: InvestigationJob | null | undefined)
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Sprint 2 — Professional Investigation Workflow
+// ---------------------------------------------------------------------------
+
+export interface GlobalSearchResult {
+  query: string;
+  categories: {
+    entities: any[];
+    cases: any[];
+    evidence: any[];
+    documents: any[];
+    patterns: any[];
+    locations: any[];
+  };
+  counts: Record<string, number>;
+  total: number;
+}
+
+export function globalSearch(q: string, limit = 20): Promise<GlobalSearchResult> {
+  return api(`/search/global?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+export interface CaseDashboard {
+  header: {
+    id: string;
+    case_number: string;
+    title: string;
+    status: string;
+    jurisdiction_id: string;
+    dataset_id: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+    closed_at: string | null;
+    description: string;
+  };
+  stats: {
+    entities: number;
+    entities_by_label: Record<string, number>;
+    relationships: number;
+    relationships_by_type: Record<string, number>;
+    evidence: number;
+    documents: number;
+    patterns: number;
+    unresolved: number;
+  };
+  intelligence: {
+    high_priority: any[];
+    gaps: any[];
+    unresolved: any[];
+    patterns: any[];
+    recent_activity: any[];
+  };
+}
+
+export function caseDashboard(caseId: string): Promise<CaseDashboard> {
+  return api(`/cases/${encodeURIComponent(caseId)}/dashboard`);
+}
+
+export interface EnhancedTimelineEvent {
+  event_key: string;
+  timestamp: string | null;
+  type: string;
+  entity: string | null;
+  related_entities: string[];
+  participants: any[];
+  location: string | null;
+  evidence: string[];
+  evidence_doc_ids: string[];
+  source_doc_id: string | null;
+  case_id: string;
+  source: string | null;
+  confidence: number;
+  provenance: any;
+  name: string;
+  description: string;
+  event_type: string | null;
+  at: string | null;
+}
+
+export interface EnhancedTimelineResponse {
+  case_id: string;
+  events: EnhancedTimelineEvent[];
+  count: number;
+}
+
+export function enhancedTimeline(
+  caseId: string,
+  opts: {
+    from_ts?: string;
+    to_ts?: string;
+    participant?: string;
+    event_type?: string;
+    location?: string;
+    evidence_type?: string;
+    entity?: string;
+    limit?: number;
+  } = {}
+): Promise<EnhancedTimelineResponse> {
+  const params = new URLSearchParams();
+  if (opts.from_ts) params.set("from_ts", opts.from_ts);
+  if (opts.to_ts) params.set("to_ts", opts.to_ts);
+  if (opts.participant) params.set("participant", opts.participant);
+  if (opts.event_type) params.set("event_type", opts.event_type);
+  if (opts.location) params.set("location", opts.location);
+  if (opts.evidence_type) params.set("evidence_type", opts.evidence_type);
+  if (opts.entity) params.set("entity", opts.entity);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return api(`/cases/${encodeURIComponent(caseId)}/timeline${qs ? `?${qs}` : ""}`);
+}
+
+export interface TimelineAnalyzeRequest {
+  from_ts?: string | null;
+  to_ts?: string | null;
+  question?: string | null;
+}
+
+export interface TimelineAnalyzeResponse {
+  case_id: string;
+  window: { from_ts: string | null; to_ts: string | null };
+  events: EnhancedTimelineEvent[];
+  context_timeline: any[];
+  counts: { events: number; entities: number; relationships: number };
+  ai_analysis: any | null;
+}
+
+export function analyzeTimelineWindow(
+  caseId: string,
+  payload: TimelineAnalyzeRequest
+): Promise<TimelineAnalyzeResponse> {
+  return api(`/cases/${encodeURIComponent(caseId)}/timeline/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface PatternInvestigation {
+  pattern: {
+    id: string;
+    case_id: string;
+    pattern_type: string;
+    explanation: string;
+    confidence: number;
+    status: string;
+    entity_keys: string[];
+    evidence_level: string;
+    analytical_basis: string[];
+    contradictory_evidence: string;
+    data_gaps: string[];
+  };
+  entities: any[];
+  relationships: any[];
+  related_cases: any[];
+  evidence: { doc_ids: string[]; count: number };
+  graph: { nodes: any[]; edges: any[]; center: string | null };
+  counts: { entities: number; relationships: number; related_cases: number; evidence: number };
+  provenance: any;
+}
+
+export function investigatePattern(patternId: string): Promise<PatternInvestigation> {
+  return api(`/patterns/${encodeURIComponent(patternId)}/investigation`);
+}
+
+export interface AttentionItem {
+  id: string;
+  type: string;
+  case_id: string;
+  severity: string;
+  title: string;
+  description: string;
+  timestamp: string | null;
+  link: { kind: string; case_id?: string; pattern_id?: string; finding_id?: string; document_id?: string; entity_key?: string; resolution_id?: string };
+}
+
+export interface AttentionCenter {
+  categories: {
+    critical: AttentionItem[];
+    investigation: AttentionItem[];
+    data_quality: AttentionItem[];
+    evidence: AttentionItem[];
+  };
+  counts: { critical: number; investigation: number; data_quality: number; evidence: number };
+  total: number;
+}
+
+export function attentionCenter(): Promise<AttentionCenter> {
+  return api(`/attention`);
+}
+
+export function attentionCounts(): Promise<{ counts: Record<string, number>; total: number }> {
+  return api(`/attention/counts`);
+}

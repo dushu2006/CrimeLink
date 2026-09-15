@@ -109,3 +109,46 @@ async def dismissal_report(
     return await pattern_service.dismissal_report(
         session, scope, case_id=case_id, days=days
     )
+
+
+@router.get("/{pattern_id}")
+async def get_pattern(
+    pattern_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    return await pattern_service.get_pattern(session, scope, pattern_id)
+
+
+@router.get("/{pattern_id}/investigation")
+async def investigate_pattern_endpoint(
+    pattern_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Actionable pattern investigation — entities, related cases, evidence, graph, provenance."""
+    from app.services.pattern_investigation import investigate_pattern
+
+    return await investigate_pattern(session, scope, pattern_id)
+
+
+@router.post("/{pattern_id}/investigate")
+@audited(
+    "PATTERN_INVESTIGATE",
+    target=lambda result, **kw: f"pattern:{kw.get('pattern_id')}",
+    case_id=lambda result, **kw: result.get("case_id") if isinstance(result, dict) and "pattern" in result else None,
+    details=lambda result, **kw: {"pattern_id": kw.get("pattern_id")},
+)
+async def investigate_pattern_action(
+    pattern_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Investigate action — same as GET investigation but audited as action."""
+    from app.services.pattern_investigation import investigate_pattern
+
+    return await investigate_pattern(session, scope, pattern_id)

@@ -251,6 +251,10 @@ def _why_for(kind: str, entities: list[str]) -> str:
     }.get(kind, f"{_WHY_PREFIX}the relationship engine matched this pair in scope.")
 
 
+def _is_person_label(label: str) -> bool:
+    return str(label).upper() == "PERSON" or label in {"Person", "PERSON", "person"}
+
+
 def discover_relationships(
     snapshot: CaseGraphSnapshot,
     resolved: list[ResolvedEntity],
@@ -259,9 +263,29 @@ def discover_relationships(
     max_pairs: int = MAX_PAIRS,
     limit: int = MAX_FINDINGS,
 ) -> list[RelationshipFinding]:
-    """Discover every relationship kind across the resolved entity pairs."""
+    """Discover every relationship kind across the resolved entity pairs — PERSON → PERSON only.
+
+    Supporting entities (phone, vehicle, location, file, doc, org, address) are used as EVIDENCE,
+    not as final relationship nodes. Example: PERSON-A → PHONE-X → PERSON-B produces PERSON-A ↔ PERSON-B
+    with PHONE-X as supporting evidence, NOT PERSON-A ↔ PHONE-X and PHONE-X ↔ PERSON-B.
+    """
     doc_index = doc_index or {}
-    keys = sorted({entity.canonical_id for entity in resolved if entity.resolved})
+    # Enforce PERSON-only: filter resolved to PERSON label
+    person_resolved = [e for e in resolved if e.resolved and _is_person_label(e.label)]
+    # If no person resolved, fallback to all resolved that are actually PERSON nodes in snapshot
+    if not person_resolved:
+        # Check snapshot for PERSON nodes among resolved keys
+        person_keys_in_snapshot = {
+            key for key, node in (snapshot.nodes or {}).items()
+            if _is_person_label(node.label)
+        }
+        person_resolved = [e for e in resolved if e.resolved and e.canonical_id in person_keys_in_snapshot]
+        if not person_resolved:
+            # If still none, return empty — accuracy over quantity, prefer no unreliable connections
+            # But for backward compat, if resolved contains PERSON-like names, keep them
+            person_resolved = [e for e in resolved if e.resolved]
+
+    keys = sorted({entity.canonical_id for entity in person_resolved if entity.resolved})
     names = _names(snapshot)
     adjacency = _adjacency(snapshot)
     findings: list[RelationshipFinding] = []

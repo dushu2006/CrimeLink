@@ -1,8 +1,14 @@
-"""Entity search (PRD 10).
+"""Entity search + Global search (PRD 10 + Sprint 2).
 
 Jurisdiction-scoped and paginated: a query never crosses a jurisdictional
 boundary, because the scope filter is applied to the *case set* the search runs
 over, not to the results afterwards.
+
+Global search aggregates:
+- exact identifiers first
+- metadata filtering (case number/title, doc filename)
+- graph/entity lookup
+- semantic placeholder (future)
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ from app.security.deps import (
     get_principal,
     get_scope,
 )
+from app.services.global_search import global_search as global_search_service
 from app.services.graph_service import GraphService
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -61,3 +68,27 @@ async def search(
         session, scope, q, entity_type=entity_type, case_id=case_id, limit=limit
     )
     return {"query": q, "items": items, "count": len(items)}
+
+
+@router.get("/global")
+@audited(
+    "GLOBAL_SEARCH",
+    target=lambda result, **kw: kw.get("q"),
+    details=lambda result, **kw: {
+        "q": kw.get("q"),
+        "total": result.get("total", 0) if isinstance(result, dict) else 0,
+    },
+)
+async def global_search(
+    q: str = Query(..., min_length=1, max_length=200, description="Global search query"),
+    limit: int = Query(20, ge=1, le=100, description="Limit per category"),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Global search across Entities/Cases/Evidence/Documents/Patterns/Locations.
+
+    Architecture: exact identifiers → metadata filtering → graph lookup → semantic (future placeholder).
+    """
+    return await global_search_service(session, scope, q, limit=limit)

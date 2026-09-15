@@ -237,6 +237,8 @@ class AuditAction(str, Enum):
     CONFIG_CHANGE = "CONFIG_CHANGE"
     AI_QUERY = "AI_QUERY"
     INVESTIGATE = "INVESTIGATE"
+    GLOBAL_SEARCH = "GLOBAL_SEARCH"
+    TIMELINE_ANALYZE = "TIMELINE_ANALYZE"
 
 
 class AIModelRole(str, Enum):

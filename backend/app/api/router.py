@@ -13,12 +13,14 @@ from app.api.v1 import (
     investigate,
     investigate_jobs,
     investigation,
+    investigator_activity,
     industry,
     industry_reports,
     industry_models,
     access,
     admin,
     ai,
+    attention,
     auth,
     cases,
     database,
@@ -56,10 +58,12 @@ api_router.include_router(database.router)
 api_router.include_router(datasets.router)
 api_router.include_router(ai.router)
 api_router.include_router(investigation.router)
+api_router.include_router(investigator_activity.router)
 api_router.include_router(industry.router)
 api_router.include_router(industry_reports.router)
 api_router.include_router(industry_models.router)
 api_router.include_router(investigate.router)
 api_router.include_router(investigate_jobs.router)
+api_router.include_router(attention.router)
 
 __all__ = ["api_router"]

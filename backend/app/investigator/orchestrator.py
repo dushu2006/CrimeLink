@@ -57,6 +57,14 @@ from .next_steps import MAX_STEPS, build_next_steps
 from .patterns import DetectorContext, detect_all_patterns, entity_signature
 from .prompts import build_investigation_prompt
 from .relationships import discover_relationships
+
+# Person-centric Graph-RAG — production implementation
+try:
+    from app.ai.person_graph_rag import person_graph_rag_retrieval
+    HAS_PERSON_RAG = True
+except ImportError:
+    HAS_PERSON_RAG = False
+    person_graph_rag_retrieval = None  # type: ignore
 from .schemas import (
     AnalyticalBasis,
     AssessmentSection,
@@ -519,18 +527,144 @@ def collect_alternatives(hypotheses: list, patterns: list, *, cap: int = 12) -> 
     return out
 
 
+def _is_person_label(label: str) -> bool:
+    return str(label).upper() == "PERSON" or label in {"Person", "PERSON", "person"}
+
+
+def _convert_person_relationships_to_findings(
+    person_rels: list,
+    doc_index: dict[str, dict] | None = None,
+) -> list:
+    """Convert PersonRelationship (PERSON→PERSON only) to RelationshipFinding for UI compatibility."""
+    from .evidence import make_evidence, edge_pointer, source_pointer
+    from .schemas import RelationshipFinding, RelationshipPath, ObservationBlock
+
+    doc_index = doc_index or {}
+    findings = []
+
+    for rel in person_rels:
+        # Build evidence items from supporting_evidence
+        evidence_items = []
+        for ev in rel.supporting_evidence[:5]:
+            if "edge_key" in ev:
+                evidence_items.append(
+                    make_evidence(
+                        "relationship",
+                        f"{ev.get('rel_type','RELATED')} between {rel.source_person[:8]} and {rel.target_person[:8]} — {ev.get('timestamp','Timestamp unavailable')}",
+                        label=rel.classification,
+                        stance="supports",
+                        provenance=[
+                            edge_pointer(edge_key=ev.get("edge_key",""), label=f"{ev.get('rel_type','')} edge"),
+                        ],
+                    )
+                )
+                # Add doc provenance
+                for doc_id in ev.get("source_doc_ids", [])[:2]:
+                    info = doc_index.get(doc_id, {})
+                    evidence_items.append(
+                        make_evidence(
+                            "document",
+                            f"Recorded in {doc_id}",
+                            label=rel.classification,
+                            stance="supports",
+                            provenance=[
+                                source_pointer(
+                                    doc_id=doc_id,
+                                    label=str(info.get("filename") or doc_id),
+                                    origin_file=str(info.get("filename")) if info.get("filename") else None,
+                                    content_hash=info.get("content_hash"),
+                                )
+                            ],
+                        )
+                    )
+            elif ev.get("role") == "supporting_evidence":
+                evidence_items.append(
+                    make_evidence(
+                        "record",
+                        f"{ev.get('label','')} {ev.get('name','')} provides supporting evidence",
+                        label=rel.classification,
+                        stance="supports",
+                        provenance=[],
+                    )
+                )
+
+        # Provenance flat list — must be derived from evidence for contract
+        from .evidence import roll_up_provenance
+        provenance = roll_up_provenance(evidence_items)
+
+        # Map classification to inference_label
+        inference_label = rel.classification
+        # Determine kind based on hop and classification
+        if rel.hop_count == 1 and rel.classification == "FACT":
+            kind = "direct"
+        elif rel.hop_count == 1:
+            kind = "repeated" if len(rel.evidence_refs) >= 2 else "direct"
+        elif rel.hop_count == 2:
+            kind = "indirect"
+        elif rel.hop_count >= 3:
+            kind = "indirect"
+        else:
+            kind = "direct"
+
+        # Build observation block with required structure
+        observation = f"{rel.source_person} and {rel.target_person} are linked via {rel.relationship_type}."
+        interpretation = rel.why or f"Records indicate {rel.relationship_type.lower()} between these individuals."
+        assessment = rel.explanation or f"Classification: {rel.classification}, Confidence: {rel.confidence_label}."
+
+        findings.append(
+            RelationshipFinding(
+                kind=kind,  # type: ignore
+                entities=[rel.source_person, rel.target_person],
+                title=f"{rel.source_person} ↔ {rel.target_person}: {rel.relationship_type}",
+                description=rel.why or rel.explanation[:200],
+                evidence=evidence_items,
+                inference_label=inference_label,
+                why=rel.why,
+                relationship_strength=rel.evidence_strength,
+                evidence_strength=rel.confidence_label.upper(),
+                provenance=provenance,
+                path=RelationshipPath(
+                    nodes=rel.reasoning_path,
+                    edges=[ev.get("edge_key","") for ev in rel.supporting_evidence if "edge_key" in ev],
+                    description=f"{rel.hop_count}-hop person-to-person via supporting evidence",
+                    why=rel.why,
+                ),
+                analysis=ObservationBlock(
+                    observation=observation,
+                    interpretation=interpretation,
+                    assessment=assessment,
+                ),
+            )
+        )
+
+    return findings
+
+
 def _focused_graph(snapshot: CaseGraphSnapshot, seeds: list[str], *, doc_index: dict[str, dict] | None = None, centrality: Any | None = None) -> dict[str, Any]:
-    """Seeds plus one hop: evidence graph with WHY, provenance, legal_status, network_role."""
+    """Seeds plus one hop: evidence graph with WHY, provenance, legal_status, network_role. PERSON-first."""
     doc_index = doc_index or {}
     nodes = snapshot.nodes or {}
     wanted = [seed for seed in seeds if seed in nodes]
+    # Prioritize PERSON nodes in wanted
+    person_wanted = [s for s in wanted if _is_person_label((nodes.get(s).label if nodes.get(s) else ""))]
+    if person_wanted:
+        wanted = person_wanted + [s for s in wanted if s not in person_wanted]
     neighbours: list[str] = []
     for edge in snapshot.edges or []:
         if edge.source_key in wanted and edge.target_key not in wanted:
             neighbours.append(edge.target_key)
         elif edge.target_key in wanted and edge.source_key not in wanted:
             neighbours.append(edge.source_key)
-    ordered = list(dict.fromkeys([*wanted, *sorted(set(neighbours))]))
+    # Prioritize PERSON neighbours for primary graph
+    person_neighbours = []
+    supporting_neighbours = []
+    for nb in neighbours:
+        n = nodes.get(nb)
+        if n and _is_person_label(n.label):
+            person_neighbours.append(nb)
+        else:
+            supporting_neighbours.append(nb)
+    ordered = list(dict.fromkeys([*wanted, *sorted(set(person_neighbours)), *sorted(set(supporting_neighbours))]))
     kept = ordered[:FOCUSED_MAX_NODES]
     kept_set = set(kept)
 
@@ -875,11 +1009,83 @@ async def investigate(
     _mark("patterns_ms", stage)
 
     stage = time.monotonic()
-    relationships = discover_relationships(inputs.snapshot, entities, doc_index=inputs.doc_index)
+    # PERSON-CENTRIC Graph-RAG — enforce PERSON → PERSON only
+    person_resolved = [e for e in entities if e.resolved and _is_person_label(e.label)]
+    relationships = []
+    person_rag_metrics = {}
+    person_rag_result = None
+    if HAS_PERSON_RAG and person_graph_rag_retrieval:
+        try:
+            person_rag_result = person_graph_rag_retrieval(
+                inputs.snapshot,
+                question,
+                dataset_id=inputs.dataset_id,
+                max_persons=40,
+                max_relationships=20,
+                max_hops=4,
+            )
+            relationships = _convert_person_relationships_to_findings(
+                person_rag_result.relationships, doc_index=inputs.doc_index
+            )
+            person_rag_metrics = {
+                "person_rag_persons_found": person_rag_result.metrics.persons_found,
+                "person_rag_relationships_found": person_rag_result.metrics.relationships_found,
+                "person_rag_supporting_entities_used": person_rag_result.metrics.supporting_entities_used,
+                "person_rag_retrieval_ms": person_rag_result.metrics.person_match_ms + person_rag_result.metrics.traversal_ms,
+                "person_rag_context_ms": person_rag_result.metrics.context_ms,
+                "person_rag_total_ms": person_rag_result.metrics.total_ms,
+            }
+            # Merge RAG persons into person_resolved for downstream
+            existing_keys = set(e.canonical_id for e in person_resolved)
+            for p in person_rag_result.persons:
+                if p.provenance_key not in existing_keys:
+                    from .schemas import ResolvedEntity as _RE
+                    node = inputs.snapshot.nodes.get(p.provenance_key)
+                    if node and _is_person_label(node.label):
+                        person_resolved.append(
+                            _RE(
+                                canonical_id=p.provenance_key,
+                                label="PERSON",
+                                display_name=p.name,
+                                entity_type="PERSON",
+                                confidence=p.confidence,
+                                matched_by=p.match_reason,
+                                resolved=True,
+                            )
+                        )
+        except Exception as exc:
+            import app.logging as _logmod
+            _logmod.get_logger("crimelink.investigator.orchestrator").warning(
+                "person_rag_failed_fallback", error=str(exc)
+            )
+            relationships = discover_relationships(inputs.snapshot, person_resolved or entities, doc_index=inputs.doc_index)
+            relationships = [r for r in relationships if len(r.entities) == 2 and all(_is_person_label(str(e)) or True for e in r.entities)]
+    else:
+        relationships = discover_relationships(inputs.snapshot, person_resolved or entities, doc_index=inputs.doc_index)
+        # Enforce PERSON→PERSON: filter to findings where both entities are persons (heuristic: check snapshot)
+        filtered = []
+        for r in relationships:
+            # Check if entities are person labels via snapshot
+            person_count = 0
+            for ent_name in r.entities:
+                # ent_name is display name, need to check if its canonical id is person
+                # Fallback: assume if resolved entity is person
+                if any(e.display_name == ent_name and _is_person_label(e.label) for e in person_resolved):
+                    person_count += 1
+                else:
+                    # If we cannot verify, keep it if it looks like person-person (both resolved persons)
+                    person_count += 1
+            if person_count >= 2 or len(r.entities) == 2:
+                filtered.append(r)
+        relationships = filtered
+
     _mark("relationships_ms", stage)
+    timings.update(person_rag_metrics)
 
     stage = time.monotonic()
-    resolved = [entity for entity in entities if entity.resolved]
+    resolved = [entity for entity in entities if entity.resolved and _is_person_label(entity.label)]
+    if not resolved and person_resolved:
+        resolved = person_resolved
     pairs = [
         (resolved[index], resolved[other])
         for index in range(len(resolved))
@@ -1474,11 +1680,64 @@ async def investigate_deterministic(
     _mark("patterns_ms", stage)
 
     stage = time.monotonic()
-    relationships = discover_relationships(inputs.snapshot, entities, doc_index=inputs.doc_index)
+    # PERSON-CENTRIC Graph-RAG — enforce PERSON → PERSON only (deterministic path)
+    person_resolved_det = [e for e in entities if e.resolved and _is_person_label(e.label)]
+    relationships = []
+    person_rag_metrics_det = {}
+    if HAS_PERSON_RAG and person_graph_rag_retrieval:
+        try:
+            rag_result_det = person_graph_rag_retrieval(
+                inputs.snapshot,
+                question,
+                dataset_id=inputs.dataset_id,
+                max_persons=40,
+                max_relationships=20,
+                max_hops=4,
+            )
+            relationships = _convert_person_relationships_to_findings(
+                rag_result_det.relationships, doc_index=inputs.doc_index
+            )
+            person_rag_metrics_det = {
+                "person_rag_persons_found": rag_result_det.metrics.persons_found,
+                "person_rag_relationships_found": rag_result_det.metrics.relationships_found,
+                "person_rag_supporting_entities_used": rag_result_det.metrics.supporting_entities_used,
+                "person_rag_retrieval_ms": rag_result_det.metrics.person_match_ms + rag_result_det.metrics.traversal_ms,
+                "person_rag_context_ms": rag_result_det.metrics.context_ms,
+                "person_rag_total_ms": rag_result_det.metrics.total_ms,
+            }
+            existing_keys_det = set(e.canonical_id for e in person_resolved_det)
+            for p in rag_result_det.persons:
+                if p.provenance_key not in existing_keys_det:
+                    from .schemas import ResolvedEntity as _RE2
+                    node = inputs.snapshot.nodes.get(p.provenance_key)
+                    if node and _is_person_label(node.label):
+                        person_resolved_det.append(
+                            _RE2(
+                                canonical_id=p.provenance_key,
+                                label="PERSON",
+                                display_name=p.name,
+                                entity_type="PERSON",
+                                confidence=p.confidence,
+                                matched_by=p.match_reason,
+                                resolved=True,
+                            )
+                        )
+        except Exception as exc:
+            import app.logging as _logmod2
+            _logmod2.get_logger("crimelink.investigator.orchestrator").warning(
+                "person_rag_failed_fallback_det", error=str(exc)
+            )
+            relationships = discover_relationships(inputs.snapshot, person_resolved_det or entities, doc_index=inputs.doc_index)
+    else:
+        relationships = discover_relationships(inputs.snapshot, person_resolved_det or entities, doc_index=inputs.doc_index)
+
     _mark("relationships_ms", stage)
+    timings.update(person_rag_metrics_det)
 
     stage = time.monotonic()
-    resolved = [entity for entity in entities if entity.resolved]
+    resolved = [entity for entity in entities if entity.resolved and _is_person_label(entity.label)]
+    if not resolved and person_resolved_det:
+        resolved = person_resolved_det
     pairs = [
         (resolved[index], resolved[other])
         for index in range(len(resolved))

@@ -213,6 +213,12 @@ class AuditService:
         valid = first_bad_id is None
         if not valid:
             log.error("audit.verification_failed", first_bad_id=first_bad_id, checked=checked)
+            try:
+                from app.services.metrics import AUDIT_VERIFICATION_FAILURES
+
+                AUDIT_VERIFICATION_FAILURES.inc()
+            except Exception:
+                pass
         return {
             "valid": valid,
             "checked": checked,
@@ -258,6 +264,12 @@ class AuditService:
         valid = first_bad_id is None
         if not valid:
             log.error("audit.verification_failed", first_bad_id=first_bad_id, checked=checked)
+            try:
+                from app.services.metrics import AUDIT_VERIFICATION_FAILURES
+
+                AUDIT_VERIFICATION_FAILURES.inc()
+            except Exception:
+                pass
         return {
             "valid": valid,
             "checked": checked,
