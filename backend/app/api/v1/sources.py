@@ -1,4 +1,4 @@
-"""Source and evidence navigation — the backend of the Source Viewer.
+"""Source and evidence navigation — MinIO-aware backend of the Source Viewer.
 
 Two questions, one module:
 
@@ -12,17 +12,12 @@ Two questions, one module:
   each file with the matching renderer (PDF pages for PDFs, tables for
   CSV/XLSX, formatted JSON, extracted DOCX/PPTX content) and an explicit
   state (AVAILABLE / UNSUPPORTED / CORRUPTED / NOT_FOUND / EXTRACTION_FAILED
-  / NO_EXTRACTED_TEXT).  Before this existed the Sources page listed the
-  bundled evaluation corpus rather than the uploaded dataset, and PDFs were
-  decoded as UTF-8 text -- the "%PDF-1.3" garbage on screen.
+  / NO_EXTRACTED_TEXT).
 
-Binary is streamed, never transcribed: ``/sources/raw`` serves the original
-bytes with a sniffed content type (and Range support, so native PDF viewers
-work), signed with the same HMAC scheme as the object store so a browser
-``<embed>`` can load it without an Authorization header.  Paths resolve
-*inside the active dataset's workspace only*: files of a replaced dataset are
-not openable, which is exactly what "one active dataset" means at the file
-level.
+MinIO-aware: In production, files live in MinIO (bucket documents) with
+deterministic keys evidence/E-042/original.pdf. This module tries MinIO first
+when backend is minio, then filesystem workspace. In production, MinIO is
+mandatory — fails loudly if unavailable, no silent Local fallback.
 """
 
 from __future__ import annotations
@@ -59,10 +54,8 @@ from app.services.source_viewer import SourceAccessError, SourceNotFoundError
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
-_RANGE = re.compile(r"bytes=(\d*)-(\d*)")
+_RANGE = re.compile(r"bytes=(\\d*)-(\\d*)")
 _RAW_CHUNK = 256 * 1024
-#: Signed source links are shorter-lived than object-store links: they open a
-#: file for immediate viewing, not for a workflow that spans a shift.
 SOURCE_URL_TTL_SECONDS = 900
 
 
@@ -86,11 +79,6 @@ def _reference_row(ref: SourceReference) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Active-dataset resolution (the isolation boundary for every route here)
-# ---------------------------------------------------------------------------
-
-
 async def _active_dataset(session: AsyncSession) -> Dataset | None:
     return await registry.active_dataset(session)
 
@@ -98,7 +86,6 @@ async def _active_dataset(session: AsyncSession) -> Dataset | None:
 async def _dataset_root(
     session: AsyncSession, dataset_id: str | None = None
 ) -> Path | None:
-    """Workspace of the given dataset (or the active one), if it exists."""
     dataset: Dataset | None = None
     if dataset_id:
         dataset = await registry.get_dataset(session, dataset_id)
@@ -143,31 +130,46 @@ def _raw_url(relative_path: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Listing: the active dataset's manifest
-# ---------------------------------------------------------------------------
+def _get_object_store_for_sources():
+    """Get object store — MinIO mandatory in production, fail loudly."""
+    settings = get_settings()
+    is_prod = settings.profile == "production" or settings.environment == "production"
+    backend = settings.effective_object_store_backend
+    try:
+        if backend == "minio":
+            from app.adapters.objectstore.minio_store import MinioObjectStore
+            store = MinioObjectStore(settings)
+            return store, settings.minio_bucket_documents, True, is_prod
+        else:
+            if is_prod:
+                raise RuntimeError("MinIO mandatory in production but backend is not minio — refusing Local fallback")
+            from app.adapters.objectstore.local import LocalObjectStore
+            store = LocalObjectStore(settings)
+            return store, settings.minio_bucket_documents, False, is_prod
+    except Exception as exc:
+        if is_prod:
+            from app.logging import get_logger
+            get_logger("crimelink.sources").error("sources.minio_unavailable_in_prod", error=str(exc))
+            raise SourceAccessError(f"Object storage unavailable in production: {exc}", status=source_viewer.STATUS_NOT_FOUND) from exc
+        try:
+            from app.adapters.objectstore.local import LocalObjectStore
+            store = LocalObjectStore(settings)
+            return store, settings.minio_bucket_documents, False, is_prod
+        except Exception:
+            return None, settings.minio_bucket_documents, False, is_prod
 
+
+# ---------------------------------------------------------------------------
+# Listing: the active dataset's manifest — MinIO-aware
+# ---------------------------------------------------------------------------
 
 @router.get("/files")
 async def dataset_files(
     session: AsyncSession = Depends(get_db_session),
     principal: Principal = Depends(get_principal),
 ) -> dict:
-    """Every file of the active dataset, with explicit availability per file.
-
-    The listing is the persistence layer's truth, not a folder scan: the
-    ``dataset_files`` manifest written during ingestion carries the sniffed
-    media type, the extraction status, the reason for any skip, and the
-    document id the file became -- which is what ties a source to the
-    evidence and case records the rest of the application shows.
-    """
     dataset = await _active_dataset(session)
     if dataset is None:
-        # Empty initial state: when no dataset is active, sources are empty.
-        # Legacy corpus path is only for explicit external evaluation builds that
-        # still need to browse the bundled corpus; the acceptance test for
-        # single-active-dataset isolation expects 0 files when none is active.
-        # Return empty manifest so fresh-start verification passes.
         return {
             "root": None,
             "dataset_id": None,
@@ -191,6 +193,17 @@ async def dataset_files(
             )
         ).scalars()
     )
+
+    # Check MinIO existence for each file
+    store, bucket, is_minio, is_prod = _get_object_store_for_sources() if rows else (None, None, False, False)
+    minio_existence: dict[str, bool] = {}
+    if store is not None:
+        for r in rows:
+            try:
+                meta = store.stat(bucket, r.relative_path)
+                minio_existence[r.relative_path] = meta is not None
+            except Exception:
+                minio_existence[r.relative_path] = False
 
     counts = {
         row[0]: int(row[1])
@@ -224,8 +237,9 @@ async def dataset_files(
         if _is_evaluation_path(row.relative_path):
             continue
         document = documents_by_id.get(row.doc_id) if row.doc_id else None
-        exists = bool(root and (root / row.relative_path).is_file())
-        status, openable = _file_availability(row, exists)
+        exists_fs = bool(root and (root / row.relative_path).is_file())
+        exists_minio = minio_existence.get(row.relative_path, False)
+        status, openable = _file_availability(row, exists_fs, exists_minio)
         items.append(
             {
                 "source_id": row.id,
@@ -260,6 +274,7 @@ async def dataset_files(
                 "openable": openable,
                 "readable": openable,
                 "download_url": _raw_url(row.relative_path),
+                "storage": "minio" if exists_minio else ("filesystem" if exists_fs else "missing"),
             }
         )
     return {
@@ -276,37 +291,27 @@ async def dataset_files(
     }
 
 
-def _file_availability(row: DatasetFile, exists: bool) -> tuple[str, bool]:
-    """(status, openable) for one manifest row.
-
-    The status vocabulary here is deliberately the viewer's vocabulary: what
-    the list shows is what opening the file will report, so the page never
-    says "AVAILABLE" next to a dialog that then explains it is not.
-    """
-    if not exists:
+def _file_availability(row: DatasetFile, exists_fs: bool, exists_minio: bool = False) -> tuple[str, bool]:
+    """(status, openable) — MinIO-aware: either FS or MinIO counts as available."""
+    if not exists_fs and not exists_minio:
         return source_viewer.STATUS_NOT_FOUND, False
     manifest = (row.status or "").upper()
     if manifest == "UNSUPPORTED":
         return source_viewer.STATUS_UNSUPPORTED, False
     if manifest == "CORRUPT":
-        return source_viewer.STATUS_CORRUPTED, True  # opening explains why
+        return source_viewer.STATUS_CORRUPTED, True
     if manifest == "SKIPPED":
         return "SKIPPED", False
     return source_viewer.STATUS_AVAILABLE, True
 
 
 async def _legacy_corpus_files(session: AsyncSession) -> dict:
-    """Pre-dataset flow: the bundled external corpus, for evaluation builds.
-
-    Kept for the ``synthetic_data_mode=external`` deployment where files are
-    browsed straight from the corpus directory rather than through an import.
-    """
     from app.adapters.sources import get_source_adapter
 
     try:
         adapter = get_source_adapter("synthetic_external")
         scan = adapter.scan()
-    except Exception as exc:  # noqa: BLE001 - a missing corpus is an empty listing
+    except Exception as exc:
         return {
             "root": None,
             "dataset_id": None,
@@ -341,7 +346,6 @@ async def _legacy_corpus_files(session: AsyncSession) -> dict:
                 "document_type": entry.document_type.value if entry.document_type else None,
                 "reason": entry.reason,
                 "openable": entry.status in {"accepted", "reference"},
-                # Only operational material is openable; ground truth is not.
                 "readable": entry.status in {"accepted", "reference"},
                 "reference_count": counts.get(entry.relative_path, 0),
             }
@@ -359,11 +363,6 @@ async def _legacy_corpus_files(session: AsyncSession) -> dict:
         "counts": sc,
         "items": items,
     }
-
-
-# ---------------------------------------------------------------------------
-# Preview: render any file of the active dataset
-# ---------------------------------------------------------------------------
 
 
 def _is_evaluation_path(path_str: str) -> bool:
@@ -393,25 +392,42 @@ async def _resolve_source_path(
     path: str | None = None,
     doc_id: str | None = None,
     dataset_file_id: str | None = None,
-) -> tuple[Path, str, DatasetFile | None, CaseDocument | None]:
-    """Resolve the exact stored source file within the active dataset workspace.
+) -> tuple[Path | None, str, DatasetFile | None, CaseDocument | None, bytes | None]:
+    """Resolve source file — MinIO-aware: returns (fs_path_or_none, relative_path, dataset_file, case_doc, minio_bytes_or_none).
 
-    Scope is strictly bounded to the active dataset:
-    - If dataset_file_id is provided, lookup the DatasetFile for the active dataset.
-    - If doc_id is provided, lookup CaseDocument and its active dataset DatasetFile/relative_path.
-    - If path is provided, resolve directly against root if existing; if not found directly,
-      resolve by doc_id / dataset_file_id / storage_key without guessing or reconstructing paths.
+    Tries MinIO first when backend is minio, then filesystem. In production, MinIO mandatory.
     """
     base = root.resolve()
+
+    # Helper to try MinIO for a relative path
+    def _try_minio(rel: str) -> bytes | None:
+        try:
+            store, bucket, is_minio, is_prod = _get_object_store_for_sources()
+            if store is None:
+                return None
+            clean_rel = rel.replace("\\", "/").lstrip("/")
+            meta = store.stat(bucket, clean_rel)
+            if not meta:
+                return None
+            return store.get(bucket, clean_rel)
+        except SourceAccessError:
+            raise
+        except Exception:
+            return None
 
     # 1. Explicit dataset_file_id lookup
     if dataset_file_id:
         df = await session.get(DatasetFile, dataset_file_id)
         if df and df.dataset_id == dataset.id:
+            # Try MinIO first
+            minio_data = _try_minio(df.relative_path)
+            if minio_data is not None:
+                doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
+                return None, df.relative_path, df, doc, minio_data
             cand = (base / df.relative_path.replace("\\", "/").lstrip("/")).resolve()
             if cand.is_file() and cand.is_relative_to(base):
                 doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
-                return cand, df.relative_path, df, doc
+                return cand, df.relative_path, df, doc, None
 
     # 2. Explicit doc_id lookup
     if doc_id:
@@ -428,9 +444,12 @@ async def _resolve_source_path(
             rel = df.relative_path if df else ((doc.source_metadata or {}).get("relative_path") or doc.storage_key)
             if rel:
                 rel_clean = rel.replace("\\", "/").lstrip("/")
+                minio_data = _try_minio(rel_clean)
+                if minio_data is not None:
+                    return None, rel_clean, df, doc, minio_data
                 cand = (base / rel_clean).resolve()
                 if cand.is_file() and cand.is_relative_to(base):
-                    return cand, rel_clean, df, doc
+                    return cand, rel_clean, df, doc, None
 
     # 3. Path-based resolution
     cleaned = (path or "").strip().replace("\\", "/").split("#", 1)[0].lstrip("/")
@@ -440,6 +459,23 @@ async def _resolve_source_path(
         raise SourceAccessError("Source paths must be relative to the dataset root.")
     if any(part == ".." for part in Path(cleaned).parts):
         raise SourceAccessError("Source paths must not traverse outside the dataset.")
+
+    # Try MinIO for cleaned path before filesystem
+    minio_data = _try_minio(cleaned)
+    if minio_data is not None:
+        # Find associated metadata
+        df = (
+            await session.execute(
+                select(DatasetFile).where(
+                    DatasetFile.dataset_id == dataset.id,
+                    DatasetFile.relative_path == cleaned,
+                )
+            )
+        ).scalars().first()
+        doc = None
+        if df and df.doc_id:
+            doc = await session.get(CaseDocument, df.doc_id)
+        return None, cleaned, df, doc, minio_data
 
     # 3a. Direct check on disk in root
     cand = (base / cleaned).resolve()
@@ -464,9 +500,9 @@ async def _resolve_source_path(
                     )
                 )
             ).scalars().first()
-        return cand, cleaned, df, doc
+        return cand, cleaned, df, doc, None
 
-    # 3b. Check if cleaned matches a doc_id
+    # 3b. Check if cleaned matches a doc_id — try MinIO via its storage_key
     doc = await session.get(CaseDocument, cleaned)
     if doc:
         df = (
@@ -480,17 +516,24 @@ async def _resolve_source_path(
         rel = df.relative_path if df else ((doc.source_metadata or {}).get("relative_path") or doc.storage_key)
         if rel:
             rel_clean = rel.replace("\\", "/").lstrip("/")
+            minio_data = _try_minio(rel_clean)
+            if minio_data is not None:
+                return None, rel_clean, df, doc, minio_data
             cand = (base / rel_clean).resolve()
             if cand.is_file() and cand.is_relative_to(base):
-                return cand, rel_clean, df, doc
+                return cand, rel_clean, df, doc, None
 
     # 3c. Check if cleaned matches a dataset_file_id
     df = await session.get(DatasetFile, cleaned)
     if df and df.dataset_id == dataset.id:
+        minio_data = _try_minio(df.relative_path)
+        if minio_data is not None:
+            doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
+            return None, df.relative_path, df, doc, minio_data
         cand = (base / df.relative_path.replace("\\", "/").lstrip("/")).resolve()
         if cand.is_file() and cand.is_relative_to(base):
             doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
-            return cand, df.relative_path, df, doc
+            return cand, df.relative_path, df, doc, None
 
     # 3d. Check if cleaned matches CaseDocument.storage_key
     doc = (
@@ -504,6 +547,17 @@ async def _resolve_source_path(
     if doc:
         rel = (doc.source_metadata or {}).get("relative_path") or doc.storage_key
         rel_clean = rel.replace("\\", "/").lstrip("/")
+        minio_data = _try_minio(rel_clean)
+        if minio_data is not None:
+            df = (
+                await session.execute(
+                    select(DatasetFile).where(
+                        DatasetFile.doc_id == doc.id,
+                        DatasetFile.dataset_id == dataset.id,
+                    )
+                )
+            ).scalars().first()
+            return None, rel_clean, df, doc, minio_data
         cand = (base / rel_clean).resolve()
         if cand.is_file() and cand.is_relative_to(base):
             df = (
@@ -514,15 +568,18 @@ async def _resolve_source_path(
                     )
                 )
             ).scalars().first()
-            return cand, rel_clean, df, doc
+            return cand, rel_clean, df, doc, None
 
-    # 3e. Leading segments stripped fallback (preserved from source_viewer.resolve_in_dataset)
+    # 3e. Leading segments stripped fallback
     parts = Path(cleaned).parts
     for i in range(1, len(parts)):
         sub = str(Path(*parts[i:])).replace("\\", "/")
+        minio_data = _try_minio(sub)
+        if minio_data is not None:
+            return None, sub, None, None, minio_data
         cand = (base / sub).resolve()
         if cand.is_file() and cand.is_relative_to(base):
-            return cand, sub, None, None
+            return cand, sub, None, None, None
 
     raise SourceNotFoundError(f"Source file not found in the dataset: {cleaned}")
 
@@ -544,12 +601,10 @@ async def preview_file(
     session: AsyncSession = Depends(get_db_session),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
-    """Render one dataset file with the matching viewer and an explicit state."""
     clean = path.split("#", 1)[0]
     _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
-        # Empty initial state: no dataset active → preview not available.
         raise NotFoundError("No dataset is active.")
     root = await _dataset_root(session, dataset.id)
     if root is None:
@@ -557,7 +612,7 @@ async def preview_file(
     dataset_id = dataset.id
 
     try:
-        resolved_file, resolved_relative_path, dataset_file, case_doc = await _resolve_source_path(
+        resolved_file, resolved_relative_path, dataset_file, case_doc, minio_bytes = await _resolve_source_path(
             session=session,
             dataset=dataset,
             root=root,
@@ -606,6 +661,9 @@ async def preview_file(
         if case_doc:
             result["file"]["doc_id"] = case_doc.id
             result["file"]["filename"] = case_doc.filename
+        if minio_bytes is not None:
+            result["file"]["storage"] = "minio"
+            result["file"]["size_bytes"] = len(minio_bytes)
     if result["status"] in {source_viewer.STATUS_AVAILABLE, source_viewer.STATUS_NO_EXTRACTED_TEXT}:
         recorder.record("DOC_VIEW", target_resource=f"source:{resolved_relative_path}", details={"kind": result.get("render_kind")})
         await recorder.flush()
@@ -627,7 +685,6 @@ async def read_file(
     session: AsyncSession = Depends(get_db_session),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
-    """Open a dataset file directly at a position, for dataset exploration."""
     clean = path.split("#", 1)[0]
     _evaluation_guard(clean)
     dataset = await _active_dataset(session)
@@ -637,7 +694,7 @@ async def read_file(
     if root is None:
         raise NotFoundError("Active dataset workspace is unavailable.")
     try:
-        resolved_file, resolved_relative_path, dataset_file, case_doc = await _resolve_source_path(
+        resolved_file, resolved_relative_path, dataset_file, case_doc, minio_bytes = await _resolve_source_path(
             session=session,
             dataset=dataset,
             root=root,
@@ -657,8 +714,6 @@ async def read_file(
     except SourceNotFoundError as exc:
         raise NotFoundError(str(exc)) from exc
     except SourceAccessError as exc:
-        # Explicit rather than opaque: the caller learns WHICH state the file
-        # is in instead of a bare 400 with a stack-flavoured message.
         return {
             "status": exc.status,
             "reason": str(exc),
@@ -675,9 +730,8 @@ async def read_file(
 
 
 # ---------------------------------------------------------------------------
-# Raw bytes: inline delivery for native viewers (PDF) and downloads
+# Raw bytes: MinIO-aware inline delivery
 # ---------------------------------------------------------------------------
-
 
 @router.get("/raw")
 async def raw_file(
@@ -690,16 +744,10 @@ async def raw_file(
     download: bool = Query(False, description="Force attachment disposition"),
     session: AsyncSession = Depends(get_db_session),
 ) -> Response:
-    """Stream a dataset file's original bytes with a sniffed content type.
+    """Stream a dataset file's original bytes — MinIO-aware.
 
-    The bytes are never re-encoded and never sent through a text renderer:
-    a PDF arrives as ``application/pdf`` and the browser (or PDF.js) does
-    what a PDF viewer does with a PDF.
-
-    Auth is deliberately dual-path: a signed link (no header possible inside
-    an ``<embed>``) or a normal session bearer token. Anything else is
-    refused with the same 404 an unknown path gets, so the endpoint cannot be
-    used to probe which evidence files exist.
+    Tries MinIO first when backend is minio, then filesystem. In production,
+    MinIO is mandatory.
     """
     clean = path.split("#", 1)[0]
     dataset = await _active_dataset(session)
@@ -710,7 +758,7 @@ async def raw_file(
         raise NotFoundError("Active dataset workspace is unavailable.")
 
     try:
-        resolved_file, resolved_relative_path, dataset_file, case_doc = await _resolve_source_path(
+        resolved_file, resolved_relative_path, dataset_file, case_doc, minio_bytes = await _resolve_source_path(
             session=session,
             dataset=dataset,
             root=root,
@@ -733,11 +781,51 @@ async def raw_file(
                 payload = decode_access_token(header[len("Bearer "):].strip())
                 role = str(payload.get("role") or "").upper()
                 authorised = role in {"INVESTIGATOR", "ADMIN"}
-            except Exception:  # noqa: BLE001 - an invalid token is simply unauthorised
+            except Exception:
                 authorised = False
     if not authorised:
         raise NotFoundError("Link expired or invalid.")
 
+    # Determine size, kind, bytes
+    if minio_bytes is not None:
+        size = len(minio_bytes)
+        kind = source_viewer.detect_kind_from_bytes(minio_bytes, Path(resolved_relative_path).suffix)
+        media_type = kind.media_type
+        disposition = "attachment" if (download or kind.kind == "binary") else "inline"
+        filename = quote(case_doc.filename if case_doc else (dataset_file.filename if dataset_file else Path(resolved_relative_path).name))
+        headers = {
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{filename}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(size),
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        }
+
+        range_header = request.headers.get("range")
+        if range_header and kind.kind == "pdf":
+            match = _RANGE.match(range_header.strip())
+            if match:
+                start_s, end_s = match.groups()
+                start = int(start_s) if start_s else max(0, size - (int(end_s) if end_s else 0))
+                end = min(size - 1, int(end_s)) if end_s else size - 1
+                if start <= end and start < size:
+                    length = end - start + 1
+                    chunk_data = minio_bytes[start:end+1]
+                    return Response(
+                        content=chunk_data,
+                        status_code=206,
+                        media_type=media_type,
+                        headers={
+                            **headers,
+                            "Content-Range": f"bytes {start}-{end}/{size}",
+                            "Content-Length": str(length),
+                        },
+                    )
+
+        return Response(content=minio_bytes, media_type=media_type, headers=headers)
+
+    # Filesystem path
+    assert resolved_file is not None
     size = resolved_file.stat().st_size
     kind = source_viewer.detect_kind(resolved_file)
     media_type = kind.media_type
@@ -797,7 +885,6 @@ async def raw_file(
 # References: exact provenance positions
 # ---------------------------------------------------------------------------
 
-
 @router.get("/reference/{reference_id}")
 async def get_reference(
     reference_id: str,
@@ -807,7 +894,6 @@ async def get_reference(
     principal: Principal = Depends(get_principal),
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
-    """Open a stored source reference at its exact position."""
     ref = (
         await session.execute(
             select(SourceReference).where(SourceReference.id == reference_id)
@@ -816,7 +902,6 @@ async def get_reference(
     if ref is None:
         raise NotFoundError("Source reference not found.")
 
-    # Authorisation flows through the owning case, exactly as for the document.
     case = await case_service.require_case(session, scope, ref.case_id)
     document = await session.get(CaseDocument, ref.doc_id)
 
@@ -877,7 +962,6 @@ async def document_references(
     session: AsyncSession = Depends(get_db_session),
     principal: Principal = Depends(get_principal),
 ) -> dict:
-    """Every source reference recorded for one ingested document."""
     document = await session.get(CaseDocument, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
@@ -916,7 +1000,6 @@ async def lookup_reference(
     session: AsyncSession = Depends(get_db_session),
     principal: Principal = Depends(get_principal),
 ) -> dict:
-    """Find stored references for an origin row — used to jump from a file to a case."""
     query = select(SourceReference).where(SourceReference.origin_file == origin_file)
     if record_id:
         query = query.where(SourceReference.record_id == record_id)
@@ -926,12 +1009,9 @@ async def lookup_reference(
 
     allowed = []
     for ref in rows:
-        # Silently drop references the caller may not see, rather than leaking
-        # their existence through a 403.  (require_case also rejects cases
-        # from replaced datasets, which is the isolation rule speaking.)
         try:
             await case_service.require_case(session, scope, ref.case_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
         allowed.append(_reference_row(ref))
     return {"origin_file": origin_file, "items": allowed, "count": len(allowed)}

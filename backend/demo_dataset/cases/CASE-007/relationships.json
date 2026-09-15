@@ -1,0 +1,184 @@
+[
+  {
+    "id": "PERSON-042-ASSOCIATE_OF-PERSON-036-case-007-demo",
+    "source": "PERSON-042",
+    "target": "PERSON-036",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-007-demo",
+    "confidence": 0.8131958519834458,
+    "evidence": "E-056",
+    "evidence_list": [
+      "E-056"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-036-RELATIVE_OF-PERSON-032-case-007-demo",
+    "source": "PERSON-036",
+    "target": "PERSON-032",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-007-demo",
+    "confidence": 0.6598985268693339,
+    "evidence": "E-057",
+    "evidence_list": [
+      "E-057"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-032-ARRESTED_WITH-PERSON-037-case-007-demo",
+    "source": "PERSON-032",
+    "target": "PERSON-037",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-007-demo",
+    "confidence": 0.8551943792826222,
+    "evidence": "E-058",
+    "evidence_list": [
+      "E-058"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-037-NAMED_ACCOMPLICE_OF-PERSON-031-case-007-demo",
+    "source": "PERSON-037",
+    "target": "PERSON-031",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-007-demo",
+    "confidence": 0.6571908728166749,
+    "evidence": "E-059",
+    "evidence_list": [
+      "E-059"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-031-TRANSFER_TO-PERSON-040-case-007-demo",
+    "source": "PERSON-031",
+    "target": "PERSON-040",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-007-demo",
+    "confidence": 0.7328094046151767,
+    "evidence": "E-060",
+    "evidence_list": [
+      "E-060"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-SHARED_PHONE-PERSON-038-case-007-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-038",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-007-demo",
+    "confidence": 0.9463331727228084,
+    "evidence": "E-061",
+    "evidence_list": [
+      "E-061"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-038-SHARED_ACCOUNT-PERSON-039-case-007-demo",
+    "source": "PERSON-038",
+    "target": "PERSON-039",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-007-demo",
+    "confidence": 0.8239999159489324,
+    "evidence": "E-062",
+    "evidence_list": [
+      "E-062"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-039-SHARED_VEHICLE-PERSON-035-case-007-demo",
+    "source": "PERSON-039",
+    "target": "PERSON-035",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-007-demo",
+    "confidence": 0.7949324103211262,
+    "evidence": "E-063",
+    "evidence_list": [
+      "E-063"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-035-SHARED_LOCATION-PERSON-041-case-007-demo",
+    "source": "PERSON-035",
+    "target": "PERSON-041",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-007-demo",
+    "confidence": 0.839614987846456,
+    "evidence": "E-064",
+    "evidence_list": [
+      "E-064"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-041-LOCATED_AT-PERSON-034-case-007-demo",
+    "source": "PERSON-041",
+    "target": "PERSON-034",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-007-demo",
+    "confidence": 0.8949981720664333,
+    "evidence": "E-065",
+    "evidence_list": [
+      "E-065"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-034-CALLED-PERSON-033-case-007-demo",
+    "source": "PERSON-034",
+    "target": "PERSON-033",
+    "rel_type": "CALLED",
+    "case_id": "case-007-demo",
+    "confidence": 0.8715999690411856,
+    "evidence": "E-066",
+    "evidence_list": [
+      "E-066"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-033-PARTICIPATED_IN-PERSON-042-case-007-demo",
+    "source": "PERSON-033",
+    "target": "PERSON-042",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-007-demo",
+    "confidence": 0.6801668251874365,
+    "evidence": "E-067",
+    "evidence_list": [
+      "E-067"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-042-USES_PHONE-PERSON-036-case-007-demo",
+    "source": "PERSON-042",
+    "target": "PERSON-036",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-007-demo",
+    "confidence": 0.6112350853664132,
+    "evidence": "E-068",
+    "evidence_list": [
+      "E-068"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-036-OWNS_VEHICLE-PERSON-032-case-007-demo",
+    "source": "PERSON-036",
+    "target": "PERSON-032",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-007-demo",
+    "confidence": 0.7104085668206787,
+    "evidence": "E-069",
+    "evidence_list": [
+      "E-069"
+    ],
+    "properties": {}
+  }
+]

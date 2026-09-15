@@ -1,0 +1,2823 @@
+[
+  {
+    "id": "PERSON-001-CALLED-PERSON-002-case-001-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-002",
+    "rel_type": "CALLED",
+    "case_id": "case-001-demo",
+    "confidence": 0.92,
+    "evidence": "E-042",
+    "evidence_list": [
+      "E-042",
+      "E-103"
+    ],
+    "properties": {
+      "display_type": "COMMUNICATION",
+      "call_count": 5,
+      "duration_s": 635
+    }
+  },
+  {
+    "id": "PERSON-001-PARTICIPATED_IN-PERSON-003-case-001-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-003",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-001-demo",
+    "confidence": 0.85,
+    "evidence": "E-071",
+    "evidence_list": [
+      "E-071"
+    ],
+    "properties": {
+      "display_type": "CO_LOCATION"
+    }
+  },
+  {
+    "id": "PERSON-002-PARTICIPATED_IN-PERSON-004-case-001-demo",
+    "source": "PERSON-002",
+    "target": "PERSON-004",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-001-demo",
+    "confidence": 0.78,
+    "evidence": "E-118",
+    "evidence_list": [
+      "E-118"
+    ],
+    "properties": {
+      "display_type": "SHARED_EVENT"
+    }
+  },
+  {
+    "id": "PERSON-002-ASSOCIATE_OF-PERSON-003-case-001-demo",
+    "source": "PERSON-002",
+    "target": "PERSON-003",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-001-demo",
+    "confidence": 0.71,
+    "evidence": "E-103",
+    "evidence_list": [
+      "E-103"
+    ],
+    "properties": {
+      "display_type": "COMMON_CONTACT"
+    }
+  },
+  {
+    "id": "PERSON-001-SHARED_LOCATION-PERSON-005-case-001-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-005",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-001-demo",
+    "confidence": 0.88,
+    "evidence": "E-042",
+    "evidence_list": [
+      "E-042",
+      "E-071"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-002-PARTICIPATED_IN-PERSON-005-case-001-demo",
+    "source": "PERSON-002",
+    "target": "PERSON-005",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-001-demo",
+    "confidence": 0.82,
+    "evidence": "E-103",
+    "evidence_list": [
+      "E-103"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-005-CALLED-PERSON-009-case-001-demo",
+    "source": "PERSON-005",
+    "target": "PERSON-009",
+    "rel_type": "CALLED",
+    "case_id": "case-001-demo",
+    "confidence": 0.79,
+    "evidence": "E-103",
+    "evidence_list": [
+      "E-103",
+      "E-118"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-009-ASSOCIATE_OF-PERSON-015-case-001-demo",
+    "source": "PERSON-009",
+    "target": "PERSON-015",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-001-demo",
+    "confidence": 0.75,
+    "evidence": "E-118",
+    "evidence_list": [
+      "E-118"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-015-SHARED_LOCATION-PERSON-020-case-001-demo",
+    "source": "PERSON-015",
+    "target": "PERSON-020",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-001-demo",
+    "confidence": 0.7,
+    "evidence": "E-042",
+    "evidence_list": [
+      "E-042"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-008-TRANSFER_TO-PERSON-006-case-002-demo",
+    "source": "PERSON-008",
+    "target": "PERSON-006",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-002-demo",
+    "confidence": 0.8237993794602593,
+    "evidence": "E-001",
+    "evidence_list": [
+      "E-001"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-006-USES_PHONE-PERSON-010-case-002-demo",
+    "source": "PERSON-006",
+    "target": "PERSON-010",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-002-demo",
+    "confidence": 0.6087537643279334,
+    "evidence": "E-002",
+    "evidence_list": [
+      "E-002"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-010-OWNS_VEHICLE-PERSON-007-case-002-demo",
+    "source": "PERSON-010",
+    "target": "PERSON-007",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-002-demo",
+    "confidence": 0.6962602614291917,
+    "evidence": "E-003",
+    "evidence_list": [
+      "E-003"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-007-SHARED_ACCOUNT-PERSON-012-case-002-demo",
+    "source": "PERSON-007",
+    "target": "PERSON-012",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-002-demo",
+    "confidence": 0.6781237583520879,
+    "evidence": "E-004",
+    "evidence_list": [
+      "E-004"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-012-TRANSFER_TO-PERSON-009-case-002-demo",
+    "source": "PERSON-012",
+    "target": "PERSON-009",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-002-demo",
+    "confidence": 0.8577649249574043,
+    "evidence": "E-005",
+    "evidence_list": [
+      "E-005"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-009-ASSOCIATE_OF-PERSON-011-case-002-demo",
+    "source": "PERSON-009",
+    "target": "PERSON-011",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-002-demo",
+    "confidence": 0.8368448205980189,
+    "evidence": "E-006",
+    "evidence_list": [
+      "E-006"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-011-SHARED_ACCOUNT-PERSON-001-case-002-demo",
+    "source": "PERSON-011",
+    "target": "PERSON-001",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-002-demo",
+    "confidence": 0.9122628486966958,
+    "evidence": "E-007",
+    "evidence_list": [
+      "E-007"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-ARRESTED_WITH-PERSON-008-case-002-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-008",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-002-demo",
+    "confidence": 0.6304285914202956,
+    "evidence": "E-008",
+    "evidence_list": [
+      "E-008"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-008-TRANSFER_TO-PERSON-006-case-002-demo",
+    "source": "PERSON-008",
+    "target": "PERSON-006",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-002-demo",
+    "confidence": 0.7476726368898446,
+    "evidence": "E-009",
+    "evidence_list": [
+      "E-009"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-015-LOCATED_AT-PERSON-013-case-003-demo",
+    "source": "PERSON-015",
+    "target": "PERSON-013",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-003-demo",
+    "confidence": 0.6104290268033246,
+    "evidence": "E-010",
+    "evidence_list": [
+      "E-010"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-013-OWNS_VEHICLE-PERSON-017-case-003-demo",
+    "source": "PERSON-013",
+    "target": "PERSON-017",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-003-demo",
+    "confidence": 0.6765232911812611,
+    "evidence": "E-011",
+    "evidence_list": [
+      "E-011"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-017-LOCATED_AT-PERSON-018-case-003-demo",
+    "source": "PERSON-017",
+    "target": "PERSON-018",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-003-demo",
+    "confidence": 0.7768743508361768,
+    "evidence": "E-012",
+    "evidence_list": [
+      "E-012"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-018-MEMBER_OF-PERSON-012-case-003-demo",
+    "source": "PERSON-018",
+    "target": "PERSON-012",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-003-demo",
+    "confidence": 0.6092875893893522,
+    "evidence": "E-013",
+    "evidence_list": [
+      "E-013"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-012-LOCATED_AT-PERSON-016-case-003-demo",
+    "source": "PERSON-012",
+    "target": "PERSON-016",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-003-demo",
+    "confidence": 0.669593177740327,
+    "evidence": "E-014",
+    "evidence_list": [
+      "E-014"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-016-RELATIVE_OF-PERSON-014-case-003-demo",
+    "source": "PERSON-016",
+    "target": "PERSON-014",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-003-demo",
+    "confidence": 0.827459553222833,
+    "evidence": "E-015",
+    "evidence_list": [
+      "E-015"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-014-LOCATED_AT-PERSON-011-case-003-demo",
+    "source": "PERSON-014",
+    "target": "PERSON-011",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-003-demo",
+    "confidence": 0.7907295182111258,
+    "evidence": "E-016",
+    "evidence_list": [
+      "E-016"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-011-NAMED_ACCOMPLICE_OF-PERSON-015-case-003-demo",
+    "source": "PERSON-011",
+    "target": "PERSON-015",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-003-demo",
+    "confidence": 0.6771542177142438,
+    "evidence": "E-017",
+    "evidence_list": [
+      "E-017"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-015-LOCATED_AT-PERSON-013-case-003-demo",
+    "source": "PERSON-015",
+    "target": "PERSON-013",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-003-demo",
+    "confidence": 0.806242989356568,
+    "evidence": "E-018",
+    "evidence_list": [
+      "E-018"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-013-SHARED_PHONE-PERSON-017-case-003-demo",
+    "source": "PERSON-013",
+    "target": "PERSON-017",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-003-demo",
+    "confidence": 0.8833006598372393,
+    "evidence": "E-019",
+    "evidence_list": [
+      "E-019"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-019-OWNS_VEHICLE-PERSON-022-case-004-demo",
+    "source": "PERSON-019",
+    "target": "PERSON-022",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-004-demo",
+    "confidence": 0.6022745658873213,
+    "evidence": "E-020",
+    "evidence_list": [
+      "E-020"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-022-OWNS_ACCOUNT-PERSON-023-case-004-demo",
+    "source": "PERSON-022",
+    "target": "PERSON-023",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-004-demo",
+    "confidence": 0.8820367381414826,
+    "evidence": "E-021",
+    "evidence_list": [
+      "E-021"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-023-MEMBER_OF-PERSON-020-case-004-demo",
+    "source": "PERSON-023",
+    "target": "PERSON-020",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-004-demo",
+    "confidence": 0.8443487882458793,
+    "evidence": "E-022",
+    "evidence_list": [
+      "E-022"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-020-ASSOCIATE_OF-PERSON-021-case-004-demo",
+    "source": "PERSON-020",
+    "target": "PERSON-021",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-004-demo",
+    "confidence": 0.7190876807812971,
+    "evidence": "E-023",
+    "evidence_list": [
+      "E-023"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-021-RELATIVE_OF-PERSON-017-case-004-demo",
+    "source": "PERSON-021",
+    "target": "PERSON-017",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-004-demo",
+    "confidence": 0.6544178249341235,
+    "evidence": "E-024",
+    "evidence_list": [
+      "E-024"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-017-ARRESTED_WITH-PERSON-018-case-004-demo",
+    "source": "PERSON-017",
+    "target": "PERSON-018",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-004-demo",
+    "confidence": 0.9350245752723734,
+    "evidence": "E-025",
+    "evidence_list": [
+      "E-025"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-018-NAMED_ACCOMPLICE_OF-PERSON-024-case-004-demo",
+    "source": "PERSON-018",
+    "target": "PERSON-024",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-004-demo",
+    "confidence": 0.7178080907894193,
+    "evidence": "E-026",
+    "evidence_list": [
+      "E-026"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-024-TRANSFER_TO-PERSON-016-case-004-demo",
+    "source": "PERSON-024",
+    "target": "PERSON-016",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-004-demo",
+    "confidence": 0.6324610451830518,
+    "evidence": "E-027",
+    "evidence_list": [
+      "E-027"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-016-SHARED_PHONE-PERSON-019-case-004-demo",
+    "source": "PERSON-016",
+    "target": "PERSON-019",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-004-demo",
+    "confidence": 0.6338507318917124,
+    "evidence": "E-028",
+    "evidence_list": [
+      "E-028"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-019-SHARED_ACCOUNT-PERSON-022-case-004-demo",
+    "source": "PERSON-019",
+    "target": "PERSON-022",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-004-demo",
+    "confidence": 0.8966230282216109,
+    "evidence": "E-029",
+    "evidence_list": [
+      "E-029"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-022-SHARED_VEHICLE-PERSON-023-case-004-demo",
+    "source": "PERSON-022",
+    "target": "PERSON-023",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-004-demo",
+    "confidence": 0.8113041109784118,
+    "evidence": "E-030",
+    "evidence_list": [
+      "E-030"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-022-CALLED-PERSON-023-case-005-demo",
+    "source": "PERSON-022",
+    "target": "PERSON-023",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.882494895646033,
+    "evidence": "E-031",
+    "evidence_list": [
+      "E-031"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-023-CALLED-PERSON-030-case-005-demo",
+    "source": "PERSON-023",
+    "target": "PERSON-030",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.8554061253428362,
+    "evidence": "E-032",
+    "evidence_list": [
+      "E-032"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-030-CALLED-PERSON-025-case-005-demo",
+    "source": "PERSON-030",
+    "target": "PERSON-025",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.7876798320091453,
+    "evidence": "E-033",
+    "evidence_list": [
+      "E-033"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-025-CALLED-PERSON-021-case-005-demo",
+    "source": "PERSON-025",
+    "target": "PERSON-021",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.9405905173927797,
+    "evidence": "E-034",
+    "evidence_list": [
+      "E-034"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-021-CALLED-PERSON-029-case-005-demo",
+    "source": "PERSON-021",
+    "target": "PERSON-029",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.7324870320229236,
+    "evidence": "E-035",
+    "evidence_list": [
+      "E-035"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-029-CALLED-PERSON-026-case-005-demo",
+    "source": "PERSON-029",
+    "target": "PERSON-026",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.7932142209456294,
+    "evidence": "E-036",
+    "evidence_list": [
+      "E-036"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-026-CALLED-PERSON-028-case-005-demo",
+    "source": "PERSON-026",
+    "target": "PERSON-028",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.8902916324885481,
+    "evidence": "E-037",
+    "evidence_list": [
+      "E-037"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-028-CALLED-PERSON-024-case-005-demo",
+    "source": "PERSON-028",
+    "target": "PERSON-024",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.8164819133274861,
+    "evidence": "E-038",
+    "evidence_list": [
+      "E-038"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-024-CALLED-PERSON-027-case-005-demo",
+    "source": "PERSON-024",
+    "target": "PERSON-027",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.901597415108772,
+    "evidence": "E-039",
+    "evidence_list": [
+      "E-039"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-027-CALLED-PERSON-022-case-005-demo",
+    "source": "PERSON-027",
+    "target": "PERSON-022",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.8020732508398667,
+    "evidence": "E-040",
+    "evidence_list": [
+      "E-040"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-022-CALLED-PERSON-023-case-005-demo",
+    "source": "PERSON-022",
+    "target": "PERSON-023",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.8466001426752232,
+    "evidence": "E-041",
+    "evidence_list": [
+      "E-041"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-023-CALLED-PERSON-030-case-005-demo",
+    "source": "PERSON-023",
+    "target": "PERSON-030",
+    "rel_type": "CALLED",
+    "case_id": "case-005-demo",
+    "confidence": 0.6160385342794817,
+    "evidence": "E-042",
+    "evidence_list": [
+      "E-042"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-MEMBER_OF-PERSON-015-case-006-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-015",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-006-demo",
+    "confidence": 0.6797643964780413,
+    "evidence": "E-043",
+    "evidence_list": [
+      "E-043"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-015-ASSOCIATE_OF-PERSON-030-case-006-demo",
+    "source": "PERSON-015",
+    "target": "PERSON-030",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-006-demo",
+    "confidence": 0.7012857872607374,
+    "evidence": "E-044",
+    "evidence_list": [
+      "E-044"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-030-RELATIVE_OF-PERSON-025-case-006-demo",
+    "source": "PERSON-030",
+    "target": "PERSON-025",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-006-demo",
+    "confidence": 0.6279271919232696,
+    "evidence": "E-045",
+    "evidence_list": [
+      "E-045"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-025-ARRESTED_WITH-PERSON-040-case-006-demo",
+    "source": "PERSON-025",
+    "target": "PERSON-040",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-006-demo",
+    "confidence": 0.6814768102263605,
+    "evidence": "E-046",
+    "evidence_list": [
+      "E-046"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-NAMED_ACCOMPLICE_OF-PERSON-010-case-006-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-010",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-006-demo",
+    "confidence": 0.6353505002934051,
+    "evidence": "E-047",
+    "evidence_list": [
+      "E-047"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-010-TRANSFER_TO-PERSON-001-case-006-demo",
+    "source": "PERSON-010",
+    "target": "PERSON-001",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-006-demo",
+    "confidence": 0.6972907610885322,
+    "evidence": "E-048",
+    "evidence_list": [
+      "E-048"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-SHARED_PHONE-PERSON-015-case-006-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-015",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-006-demo",
+    "confidence": 0.82248955549254,
+    "evidence": "E-049",
+    "evidence_list": [
+      "E-049"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-015-SHARED_ACCOUNT-PERSON-030-case-006-demo",
+    "source": "PERSON-015",
+    "target": "PERSON-030",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-006-demo",
+    "confidence": 0.7276912626395294,
+    "evidence": "E-050",
+    "evidence_list": [
+      "E-050"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-030-SHARED_VEHICLE-PERSON-025-case-006-demo",
+    "source": "PERSON-030",
+    "target": "PERSON-025",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-006-demo",
+    "confidence": 0.7295633384909089,
+    "evidence": "E-051",
+    "evidence_list": [
+      "E-051"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-025-SHARED_LOCATION-PERSON-040-case-006-demo",
+    "source": "PERSON-025",
+    "target": "PERSON-040",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-006-demo",
+    "confidence": 0.6733274607700207,
+    "evidence": "E-052",
+    "evidence_list": [
+      "E-052"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-LOCATED_AT-PERSON-010-case-006-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-010",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-006-demo",
+    "confidence": 0.6934422377171896,
+    "evidence": "E-053",
+    "evidence_list": [
+      "E-053"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-010-CALLED-PERSON-001-case-006-demo",
+    "source": "PERSON-010",
+    "target": "PERSON-001",
+    "rel_type": "CALLED",
+    "case_id": "case-006-demo",
+    "confidence": 0.9278291056993728,
+    "evidence": "E-054",
+    "evidence_list": [
+      "E-054"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-PARTICIPATED_IN-PERSON-015-case-006-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-015",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-006-demo",
+    "confidence": 0.8268123848363077,
+    "evidence": "E-055",
+    "evidence_list": [
+      "E-055"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-042-ASSOCIATE_OF-PERSON-036-case-007-demo",
+    "source": "PERSON-042",
+    "target": "PERSON-036",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-007-demo",
+    "confidence": 0.8131958519834458,
+    "evidence": "E-056",
+    "evidence_list": [
+      "E-056"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-036-RELATIVE_OF-PERSON-032-case-007-demo",
+    "source": "PERSON-036",
+    "target": "PERSON-032",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-007-demo",
+    "confidence": 0.6598985268693339,
+    "evidence": "E-057",
+    "evidence_list": [
+      "E-057"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-032-ARRESTED_WITH-PERSON-037-case-007-demo",
+    "source": "PERSON-032",
+    "target": "PERSON-037",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-007-demo",
+    "confidence": 0.8551943792826222,
+    "evidence": "E-058",
+    "evidence_list": [
+      "E-058"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-037-NAMED_ACCOMPLICE_OF-PERSON-031-case-007-demo",
+    "source": "PERSON-037",
+    "target": "PERSON-031",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-007-demo",
+    "confidence": 0.6571908728166749,
+    "evidence": "E-059",
+    "evidence_list": [
+      "E-059"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-031-TRANSFER_TO-PERSON-040-case-007-demo",
+    "source": "PERSON-031",
+    "target": "PERSON-040",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-007-demo",
+    "confidence": 0.7328094046151767,
+    "evidence": "E-060",
+    "evidence_list": [
+      "E-060"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-SHARED_PHONE-PERSON-038-case-007-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-038",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-007-demo",
+    "confidence": 0.9463331727228084,
+    "evidence": "E-061",
+    "evidence_list": [
+      "E-061"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-038-SHARED_ACCOUNT-PERSON-039-case-007-demo",
+    "source": "PERSON-038",
+    "target": "PERSON-039",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-007-demo",
+    "confidence": 0.8239999159489324,
+    "evidence": "E-062",
+    "evidence_list": [
+      "E-062"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-039-SHARED_VEHICLE-PERSON-035-case-007-demo",
+    "source": "PERSON-039",
+    "target": "PERSON-035",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-007-demo",
+    "confidence": 0.7949324103211262,
+    "evidence": "E-063",
+    "evidence_list": [
+      "E-063"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-035-SHARED_LOCATION-PERSON-041-case-007-demo",
+    "source": "PERSON-035",
+    "target": "PERSON-041",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-007-demo",
+    "confidence": 0.839614987846456,
+    "evidence": "E-064",
+    "evidence_list": [
+      "E-064"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-041-LOCATED_AT-PERSON-034-case-007-demo",
+    "source": "PERSON-041",
+    "target": "PERSON-034",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-007-demo",
+    "confidence": 0.8949981720664333,
+    "evidence": "E-065",
+    "evidence_list": [
+      "E-065"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-034-CALLED-PERSON-033-case-007-demo",
+    "source": "PERSON-034",
+    "target": "PERSON-033",
+    "rel_type": "CALLED",
+    "case_id": "case-007-demo",
+    "confidence": 0.8715999690411856,
+    "evidence": "E-066",
+    "evidence_list": [
+      "E-066"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-033-PARTICIPATED_IN-PERSON-042-case-007-demo",
+    "source": "PERSON-033",
+    "target": "PERSON-042",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-007-demo",
+    "confidence": 0.6801668251874365,
+    "evidence": "E-067",
+    "evidence_list": [
+      "E-067"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-042-USES_PHONE-PERSON-036-case-007-demo",
+    "source": "PERSON-042",
+    "target": "PERSON-036",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-007-demo",
+    "confidence": 0.6112350853664132,
+    "evidence": "E-068",
+    "evidence_list": [
+      "E-068"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-036-OWNS_VEHICLE-PERSON-032-case-007-demo",
+    "source": "PERSON-036",
+    "target": "PERSON-032",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-007-demo",
+    "confidence": 0.7104085668206787,
+    "evidence": "E-069",
+    "evidence_list": [
+      "E-069"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-037-RELATIVE_OF-PERSON-040-case-008-demo",
+    "source": "PERSON-037",
+    "target": "PERSON-040",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-008-demo",
+    "confidence": 0.6937093065914959,
+    "evidence": "E-070",
+    "evidence_list": [
+      "E-070"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-ARRESTED_WITH-PERSON-038-case-008-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-038",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-008-demo",
+    "confidence": 0.6738439952552142,
+    "evidence": "E-071",
+    "evidence_list": [
+      "E-071"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-038-NAMED_ACCOMPLICE_OF-PERSON-039-case-008-demo",
+    "source": "PERSON-038",
+    "target": "PERSON-039",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-008-demo",
+    "confidence": 0.930018400017269,
+    "evidence": "E-072",
+    "evidence_list": [
+      "E-072"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-039-TRANSFER_TO-PERSON-041-case-008-demo",
+    "source": "PERSON-039",
+    "target": "PERSON-041",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-008-demo",
+    "confidence": 0.906728669265434,
+    "evidence": "E-073",
+    "evidence_list": [
+      "E-073"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-041-SHARED_PHONE-PERSON-036-case-008-demo",
+    "source": "PERSON-041",
+    "target": "PERSON-036",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-008-demo",
+    "confidence": 0.7101372582794673,
+    "evidence": "E-074",
+    "evidence_list": [
+      "E-074"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-036-SHARED_ACCOUNT-PERSON-037-case-008-demo",
+    "source": "PERSON-036",
+    "target": "PERSON-037",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-008-demo",
+    "confidence": 0.829403532853208,
+    "evidence": "E-075",
+    "evidence_list": [
+      "E-075"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-037-SHARED_VEHICLE-PERSON-040-case-008-demo",
+    "source": "PERSON-037",
+    "target": "PERSON-040",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-008-demo",
+    "confidence": 0.7384711653712325,
+    "evidence": "E-076",
+    "evidence_list": [
+      "E-076"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-SHARED_LOCATION-PERSON-038-case-008-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-038",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-008-demo",
+    "confidence": 0.9200916564091901,
+    "evidence": "E-077",
+    "evidence_list": [
+      "E-077"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-038-LOCATED_AT-PERSON-039-case-008-demo",
+    "source": "PERSON-038",
+    "target": "PERSON-039",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-008-demo",
+    "confidence": 0.7605981484055895,
+    "evidence": "E-078",
+    "evidence_list": [
+      "E-078"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-039-CALLED-PERSON-041-case-008-demo",
+    "source": "PERSON-039",
+    "target": "PERSON-041",
+    "rel_type": "CALLED",
+    "case_id": "case-008-demo",
+    "confidence": 0.6927080582743184,
+    "evidence": "E-079",
+    "evidence_list": [
+      "E-079"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-041-PARTICIPATED_IN-PERSON-036-case-008-demo",
+    "source": "PERSON-041",
+    "target": "PERSON-036",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-008-demo",
+    "confidence": 0.6863196276928942,
+    "evidence": "E-080",
+    "evidence_list": [
+      "E-080"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-036-USES_PHONE-PERSON-037-case-008-demo",
+    "source": "PERSON-036",
+    "target": "PERSON-037",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-008-demo",
+    "confidence": 0.7964788469571027,
+    "evidence": "E-081",
+    "evidence_list": [
+      "E-081"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-037-OWNS_VEHICLE-PERSON-040-case-008-demo",
+    "source": "PERSON-037",
+    "target": "PERSON-040",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-008-demo",
+    "confidence": 0.6919595629830273,
+    "evidence": "E-082",
+    "evidence_list": [
+      "E-082"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-040-OWNS_ACCOUNT-PERSON-038-case-008-demo",
+    "source": "PERSON-040",
+    "target": "PERSON-038",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-008-demo",
+    "confidence": 0.8046050965782392,
+    "evidence": "E-083",
+    "evidence_list": [
+      "E-083"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-038-MEMBER_OF-PERSON-039-case-008-demo",
+    "source": "PERSON-038",
+    "target": "PERSON-039",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-008-demo",
+    "confidence": 0.9142380092608668,
+    "evidence": "E-084",
+    "evidence_list": [
+      "E-084"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-049-NAMED_ACCOMPLICE_OF-PERSON-052-case-010-demo",
+    "source": "PERSON-049",
+    "target": "PERSON-052",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-010-demo",
+    "confidence": 0.739790176799139,
+    "evidence": "E-085",
+    "evidence_list": [
+      "E-085"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-052-TRANSFER_TO-PERSON-047-case-010-demo",
+    "source": "PERSON-052",
+    "target": "PERSON-047",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-010-demo",
+    "confidence": 0.6767622657050492,
+    "evidence": "E-086",
+    "evidence_list": [
+      "E-086"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-047-SHARED_PHONE-PERSON-053-case-010-demo",
+    "source": "PERSON-047",
+    "target": "PERSON-053",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-010-demo",
+    "confidence": 0.9491381622732886,
+    "evidence": "E-087",
+    "evidence_list": [
+      "E-087"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-053-SHARED_ACCOUNT-PERSON-051-case-010-demo",
+    "source": "PERSON-053",
+    "target": "PERSON-051",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-010-demo",
+    "confidence": 0.7783342027867626,
+    "evidence": "E-088",
+    "evidence_list": [
+      "E-088"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-051-SHARED_VEHICLE-PERSON-048-case-010-demo",
+    "source": "PERSON-051",
+    "target": "PERSON-048",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-010-demo",
+    "confidence": 0.6318182942608278,
+    "evidence": "E-089",
+    "evidence_list": [
+      "E-089"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-048-SHARED_LOCATION-PERSON-050-case-010-demo",
+    "source": "PERSON-048",
+    "target": "PERSON-050",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-010-demo",
+    "confidence": 0.6164907313986571,
+    "evidence": "E-090",
+    "evidence_list": [
+      "E-090"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-050-LOCATED_AT-PERSON-046-case-010-demo",
+    "source": "PERSON-050",
+    "target": "PERSON-046",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-010-demo",
+    "confidence": 0.6383771956227307,
+    "evidence": "E-091",
+    "evidence_list": [
+      "E-091"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-046-CALLED-PERSON-049-case-010-demo",
+    "source": "PERSON-046",
+    "target": "PERSON-049",
+    "rel_type": "CALLED",
+    "case_id": "case-010-demo",
+    "confidence": 0.8196061145960815,
+    "evidence": "E-092",
+    "evidence_list": [
+      "E-092"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-049-PARTICIPATED_IN-PERSON-052-case-010-demo",
+    "source": "PERSON-049",
+    "target": "PERSON-052",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-010-demo",
+    "confidence": 0.8772277775270374,
+    "evidence": "E-093",
+    "evidence_list": [
+      "E-093"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-052-USES_PHONE-PERSON-047-case-010-demo",
+    "source": "PERSON-052",
+    "target": "PERSON-047",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-010-demo",
+    "confidence": 0.7477559883798894,
+    "evidence": "E-094",
+    "evidence_list": [
+      "E-094"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-047-OWNS_VEHICLE-PERSON-053-case-010-demo",
+    "source": "PERSON-047",
+    "target": "PERSON-053",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-010-demo",
+    "confidence": 0.622234697153185,
+    "evidence": "E-095",
+    "evidence_list": [
+      "E-095"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-053-OWNS_ACCOUNT-PERSON-051-case-010-demo",
+    "source": "PERSON-053",
+    "target": "PERSON-051",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-010-demo",
+    "confidence": 0.7335667502772878,
+    "evidence": "E-096",
+    "evidence_list": [
+      "E-096"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-051-MEMBER_OF-PERSON-048-case-010-demo",
+    "source": "PERSON-051",
+    "target": "PERSON-048",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-010-demo",
+    "confidence": 0.9486424830840339,
+    "evidence": "E-097",
+    "evidence_list": [
+      "E-097"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-048-ASSOCIATE_OF-PERSON-050-case-010-demo",
+    "source": "PERSON-048",
+    "target": "PERSON-050",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-010-demo",
+    "confidence": 0.7851900207846979,
+    "evidence": "E-098",
+    "evidence_list": [
+      "E-098"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-050-RELATIVE_OF-PERSON-046-case-010-demo",
+    "source": "PERSON-050",
+    "target": "PERSON-046",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-010-demo",
+    "confidence": 0.9398774321647663,
+    "evidence": "E-099",
+    "evidence_list": [
+      "E-099"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-046-ARRESTED_WITH-PERSON-049-case-010-demo",
+    "source": "PERSON-046",
+    "target": "PERSON-049",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-010-demo",
+    "confidence": 0.9012728957820743,
+    "evidence": "E-100",
+    "evidence_list": [
+      "E-100"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-049-NAMED_ACCOMPLICE_OF-PERSON-052-case-010-demo",
+    "source": "PERSON-049",
+    "target": "PERSON-052",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-010-demo",
+    "confidence": 0.6040183576799869,
+    "evidence": "E-101",
+    "evidence_list": [
+      "E-101"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-052-TRANSFER_TO-PERSON-056-case-011-demo",
+    "source": "PERSON-052",
+    "target": "PERSON-056",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-011-demo",
+    "confidence": 0.8522526367760681,
+    "evidence": "E-102",
+    "evidence_list": [
+      "E-102"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-056-SHARED_PHONE-PERSON-059-case-011-demo",
+    "source": "PERSON-056",
+    "target": "PERSON-059",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-011-demo",
+    "confidence": 0.8385986291593012,
+    "evidence": "E-103",
+    "evidence_list": [
+      "E-103"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-059-SHARED_ACCOUNT-PERSON-053-case-011-demo",
+    "source": "PERSON-059",
+    "target": "PERSON-053",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-011-demo",
+    "confidence": 0.7879396156430782,
+    "evidence": "E-104",
+    "evidence_list": [
+      "E-104"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-053-SHARED_VEHICLE-PERSON-058-case-011-demo",
+    "source": "PERSON-053",
+    "target": "PERSON-058",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-011-demo",
+    "confidence": 0.6933888164833899,
+    "evidence": "E-105",
+    "evidence_list": [
+      "E-105"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-058-SHARED_LOCATION-PERSON-055-case-011-demo",
+    "source": "PERSON-058",
+    "target": "PERSON-055",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-011-demo",
+    "confidence": 0.8243366295029328,
+    "evidence": "E-106",
+    "evidence_list": [
+      "E-106"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-055-LOCATED_AT-PERSON-054-case-011-demo",
+    "source": "PERSON-055",
+    "target": "PERSON-054",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-011-demo",
+    "confidence": 0.6390432607585568,
+    "evidence": "E-107",
+    "evidence_list": [
+      "E-107"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-054-CALLED-PERSON-057-case-011-demo",
+    "source": "PERSON-054",
+    "target": "PERSON-057",
+    "rel_type": "CALLED",
+    "case_id": "case-011-demo",
+    "confidence": 0.7521678377341867,
+    "evidence": "E-108",
+    "evidence_list": [
+      "E-108"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-057-PARTICIPATED_IN-PERSON-051-case-011-demo",
+    "source": "PERSON-057",
+    "target": "PERSON-051",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-011-demo",
+    "confidence": 0.7588032972152222,
+    "evidence": "E-109",
+    "evidence_list": [
+      "E-109"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-SHARED_PHONE-PERSON-052-case-012-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-052",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-012-demo",
+    "confidence": 0.933835574632378,
+    "evidence": "E-110",
+    "evidence_list": [
+      "E-110"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-052-SHARED_ACCOUNT-PERSON-053-case-012-demo",
+    "source": "PERSON-052",
+    "target": "PERSON-053",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-012-demo",
+    "confidence": 0.9065485291323678,
+    "evidence": "E-111",
+    "evidence_list": [
+      "E-111"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-053-SHARED_VEHICLE-PERSON-050-case-012-demo",
+    "source": "PERSON-053",
+    "target": "PERSON-050",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-012-demo",
+    "confidence": 0.6921861677628818,
+    "evidence": "E-112",
+    "evidence_list": [
+      "E-112"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-050-SHARED_LOCATION-PERSON-051-case-012-demo",
+    "source": "PERSON-050",
+    "target": "PERSON-051",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-012-demo",
+    "confidence": 0.7752051395676044,
+    "evidence": "E-113",
+    "evidence_list": [
+      "E-113"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-051-LOCATED_AT-PERSON-001-case-012-demo",
+    "source": "PERSON-051",
+    "target": "PERSON-001",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-012-demo",
+    "confidence": 0.662528158185546,
+    "evidence": "E-114",
+    "evidence_list": [
+      "E-114"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-CALLED-PERSON-052-case-012-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-052",
+    "rel_type": "CALLED",
+    "case_id": "case-012-demo",
+    "confidence": 0.9194197437706871,
+    "evidence": "E-115",
+    "evidence_list": [
+      "E-115"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-052-PARTICIPATED_IN-PERSON-053-case-012-demo",
+    "source": "PERSON-052",
+    "target": "PERSON-053",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-012-demo",
+    "confidence": 0.9046814994428684,
+    "evidence": "E-116",
+    "evidence_list": [
+      "E-116"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-053-USES_PHONE-PERSON-050-case-012-demo",
+    "source": "PERSON-053",
+    "target": "PERSON-050",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-012-demo",
+    "confidence": 0.7044556770070215,
+    "evidence": "E-117",
+    "evidence_list": [
+      "E-117"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-050-OWNS_VEHICLE-PERSON-051-case-012-demo",
+    "source": "PERSON-050",
+    "target": "PERSON-051",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-012-demo",
+    "confidence": 0.8236323232031018,
+    "evidence": "E-118",
+    "evidence_list": [
+      "E-118"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-081-SHARED_ACCOUNT-PERSON-080-case-013-demo",
+    "source": "PERSON-081",
+    "target": "PERSON-080",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-013-demo",
+    "confidence": 0.8131395740033602,
+    "evidence": "E-119",
+    "evidence_list": [
+      "E-119"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-080-SHARED_VEHICLE-PERSON-081-case-013-demo",
+    "source": "PERSON-080",
+    "target": "PERSON-081",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-013-demo",
+    "confidence": 0.6534937439923721,
+    "evidence": "E-120",
+    "evidence_list": [
+      "E-120"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-066-TRANSFER_TO-PERSON-074-case-014-demo",
+    "source": "PERSON-066",
+    "target": "PERSON-074",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.8668787800263029,
+    "evidence": "E-121",
+    "evidence_list": [
+      "E-121"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-074-SHARED_LOCATION-PERSON-071-case-014-demo",
+    "source": "PERSON-074",
+    "target": "PERSON-071",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-014-demo",
+    "confidence": 0.788782660541869,
+    "evidence": "E-122",
+    "evidence_list": [
+      "E-122"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-071-LOCATED_AT-PERSON-067-case-014-demo",
+    "source": "PERSON-071",
+    "target": "PERSON-067",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-014-demo",
+    "confidence": 0.8725192675206954,
+    "evidence": "E-123",
+    "evidence_list": [
+      "E-123"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-067-CALLED-PERSON-072-case-014-demo",
+    "source": "PERSON-067",
+    "target": "PERSON-072",
+    "rel_type": "CALLED",
+    "case_id": "case-014-demo",
+    "confidence": 0.7856237852683121,
+    "evidence": "E-124",
+    "evidence_list": [
+      "E-124"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-072-TRANSFER_TO-PERSON-077-case-014-demo",
+    "source": "PERSON-072",
+    "target": "PERSON-077",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.6002001636447802,
+    "evidence": "E-125",
+    "evidence_list": [
+      "E-125"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-077-USES_PHONE-PERSON-069-case-014-demo",
+    "source": "PERSON-077",
+    "target": "PERSON-069",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-014-demo",
+    "confidence": 0.7134546199516355,
+    "evidence": "E-126",
+    "evidence_list": [
+      "E-126"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-069-OWNS_VEHICLE-PERSON-076-case-014-demo",
+    "source": "PERSON-069",
+    "target": "PERSON-076",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-014-demo",
+    "confidence": 0.6068168598350413,
+    "evidence": "E-127",
+    "evidence_list": [
+      "E-127"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-076-OWNS_ACCOUNT-PERSON-075-case-014-demo",
+    "source": "PERSON-076",
+    "target": "PERSON-075",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-014-demo",
+    "confidence": 0.925184515692616,
+    "evidence": "E-128",
+    "evidence_list": [
+      "E-128"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-075-TRANSFER_TO-PERSON-073-case-014-demo",
+    "source": "PERSON-075",
+    "target": "PERSON-073",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.9075526572381145,
+    "evidence": "E-129",
+    "evidence_list": [
+      "E-129"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-073-ASSOCIATE_OF-PERSON-068-case-014-demo",
+    "source": "PERSON-073",
+    "target": "PERSON-068",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-014-demo",
+    "confidence": 0.8910829352764127,
+    "evidence": "E-130",
+    "evidence_list": [
+      "E-130"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-068-RELATIVE_OF-PERSON-070-case-014-demo",
+    "source": "PERSON-068",
+    "target": "PERSON-070",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-014-demo",
+    "confidence": 0.7076299438909315,
+    "evidence": "E-131",
+    "evidence_list": [
+      "E-131"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-070-ARRESTED_WITH-PERSON-066-case-014-demo",
+    "source": "PERSON-070",
+    "target": "PERSON-066",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-014-demo",
+    "confidence": 0.6202738082729656,
+    "evidence": "E-132",
+    "evidence_list": [
+      "E-132"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-066-TRANSFER_TO-PERSON-074-case-014-demo",
+    "source": "PERSON-066",
+    "target": "PERSON-074",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.9073033597214142,
+    "evidence": "E-133",
+    "evidence_list": [
+      "E-133"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-074-TRANSFER_TO-PERSON-071-case-014-demo",
+    "source": "PERSON-074",
+    "target": "PERSON-071",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.9314323058542979,
+    "evidence": "E-134",
+    "evidence_list": [
+      "E-134"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-071-SHARED_PHONE-PERSON-067-case-014-demo",
+    "source": "PERSON-071",
+    "target": "PERSON-067",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-014-demo",
+    "confidence": 0.6299787082237576,
+    "evidence": "E-135",
+    "evidence_list": [
+      "E-135"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-067-SHARED_ACCOUNT-PERSON-072-case-014-demo",
+    "source": "PERSON-067",
+    "target": "PERSON-072",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-014-demo",
+    "confidence": 0.7700966621608147,
+    "evidence": "E-136",
+    "evidence_list": [
+      "E-136"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-072-TRANSFER_TO-PERSON-077-case-014-demo",
+    "source": "PERSON-072",
+    "target": "PERSON-077",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.6242243814639342,
+    "evidence": "E-137",
+    "evidence_list": [
+      "E-137"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-077-SHARED_LOCATION-PERSON-069-case-014-demo",
+    "source": "PERSON-077",
+    "target": "PERSON-069",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-014-demo",
+    "confidence": 0.866210757840031,
+    "evidence": "E-138",
+    "evidence_list": [
+      "E-138"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-069-LOCATED_AT-PERSON-076-case-014-demo",
+    "source": "PERSON-069",
+    "target": "PERSON-076",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-014-demo",
+    "confidence": 0.8680420502574457,
+    "evidence": "E-139",
+    "evidence_list": [
+      "E-139"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-076-CALLED-PERSON-075-case-014-demo",
+    "source": "PERSON-076",
+    "target": "PERSON-075",
+    "rel_type": "CALLED",
+    "case_id": "case-014-demo",
+    "confidence": 0.644937012574917,
+    "evidence": "E-140",
+    "evidence_list": [
+      "E-140"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-075-TRANSFER_TO-PERSON-073-case-014-demo",
+    "source": "PERSON-075",
+    "target": "PERSON-073",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.766348832334556,
+    "evidence": "E-141",
+    "evidence_list": [
+      "E-141"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-073-USES_PHONE-PERSON-068-case-014-demo",
+    "source": "PERSON-073",
+    "target": "PERSON-068",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-014-demo",
+    "confidence": 0.7924312577232303,
+    "evidence": "E-142",
+    "evidence_list": [
+      "E-142"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-068-OWNS_VEHICLE-PERSON-070-case-014-demo",
+    "source": "PERSON-068",
+    "target": "PERSON-070",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-014-demo",
+    "confidence": 0.6927698201290207,
+    "evidence": "E-143",
+    "evidence_list": [
+      "E-143"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-070-OWNS_ACCOUNT-PERSON-066-case-014-demo",
+    "source": "PERSON-070",
+    "target": "PERSON-066",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-014-demo",
+    "confidence": 0.90535156437984,
+    "evidence": "E-144",
+    "evidence_list": [
+      "E-144"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-066-TRANSFER_TO-PERSON-074-case-014-demo",
+    "source": "PERSON-066",
+    "target": "PERSON-074",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.7480982790703103,
+    "evidence": "E-145",
+    "evidence_list": [
+      "E-145"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-074-ASSOCIATE_OF-PERSON-071-case-014-demo",
+    "source": "PERSON-074",
+    "target": "PERSON-071",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-014-demo",
+    "confidence": 0.6741293719047287,
+    "evidence": "E-146",
+    "evidence_list": [
+      "E-146"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-071-RELATIVE_OF-PERSON-067-case-014-demo",
+    "source": "PERSON-071",
+    "target": "PERSON-067",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-014-demo",
+    "confidence": 0.7887536310728104,
+    "evidence": "E-147",
+    "evidence_list": [
+      "E-147"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-067-ARRESTED_WITH-PERSON-072-case-014-demo",
+    "source": "PERSON-067",
+    "target": "PERSON-072",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-014-demo",
+    "confidence": 0.8554758741814916,
+    "evidence": "E-148",
+    "evidence_list": [
+      "E-148"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-072-TRANSFER_TO-PERSON-077-case-014-demo",
+    "source": "PERSON-072",
+    "target": "PERSON-077",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.6704028721863935,
+    "evidence": "E-149",
+    "evidence_list": [
+      "E-149"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-077-TRANSFER_TO-PERSON-069-case-014-demo",
+    "source": "PERSON-077",
+    "target": "PERSON-069",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-014-demo",
+    "confidence": 0.7091007019553132,
+    "evidence": "E-150",
+    "evidence_list": [
+      "E-150"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-074-CALLED-PERSON-072-case-015-demo",
+    "source": "PERSON-074",
+    "target": "PERSON-072",
+    "rel_type": "CALLED",
+    "case_id": "case-015-demo",
+    "confidence": 0.8,
+    "evidence": "E-151",
+    "evidence_list": [
+      "E-151"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-072-ASSOCIATE_OF-PERSON-076-case-015-demo",
+    "source": "PERSON-072",
+    "target": "PERSON-076",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-015-demo",
+    "confidence": 0.8200000000000001,
+    "evidence": "E-152",
+    "evidence_list": [
+      "E-152"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-082-CALLED-PERSON-080-case-016-demo",
+    "source": "PERSON-082",
+    "target": "PERSON-080",
+    "rel_type": "CALLED",
+    "case_id": "case-016-demo",
+    "confidence": 0.8,
+    "evidence": "E-153",
+    "evidence_list": [
+      "E-153"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-080-ASSOCIATE_OF-PERSON-081-case-016-demo",
+    "source": "PERSON-080",
+    "target": "PERSON-081",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-016-demo",
+    "confidence": 0.8200000000000001,
+    "evidence": "E-154",
+    "evidence_list": [
+      "E-154"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-081-CALLED-PERSON-079-case-016-demo",
+    "source": "PERSON-081",
+    "target": "PERSON-079",
+    "rel_type": "CALLED",
+    "case_id": "case-016-demo",
+    "confidence": 0.8400000000000001,
+    "evidence": "E-155",
+    "evidence_list": [
+      "E-155"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-082-CALLED-PERSON-084-case-017-demo",
+    "source": "PERSON-082",
+    "target": "PERSON-084",
+    "rel_type": "CALLED",
+    "case_id": "case-017-demo",
+    "confidence": 0.8,
+    "evidence": "E-156",
+    "evidence_list": [
+      "E-156"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-084-ASSOCIATE_OF-PERSON-087-case-017-demo",
+    "source": "PERSON-084",
+    "target": "PERSON-087",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-017-demo",
+    "confidence": 0.8200000000000001,
+    "evidence": "E-157",
+    "evidence_list": [
+      "E-157"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-087-CALLED-PERSON-083-case-017-demo",
+    "source": "PERSON-087",
+    "target": "PERSON-083",
+    "rel_type": "CALLED",
+    "case_id": "case-017-demo",
+    "confidence": 0.8400000000000001,
+    "evidence": "E-158",
+    "evidence_list": [
+      "E-158"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-083-ASSOCIATE_OF-PERSON-081-case-017-demo",
+    "source": "PERSON-083",
+    "target": "PERSON-081",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-017-demo",
+    "confidence": 0.8600000000000001,
+    "evidence": "E-159",
+    "evidence_list": [
+      "E-159"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-093-PARTICIPATED_IN-PERSON-087-case-018-demo",
+    "source": "PERSON-093",
+    "target": "PERSON-087",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-018-demo",
+    "confidence": 0.948302274831313,
+    "evidence": "E-160",
+    "evidence_list": [
+      "E-160"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-087-USES_PHONE-PERSON-091-case-018-demo",
+    "source": "PERSON-087",
+    "target": "PERSON-091",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-018-demo",
+    "confidence": 0.8274573201738087,
+    "evidence": "E-161",
+    "evidence_list": [
+      "E-161"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-091-OWNS_VEHICLE-PERSON-094-case-018-demo",
+    "source": "PERSON-091",
+    "target": "PERSON-094",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-018-demo",
+    "confidence": 0.7533350293700763,
+    "evidence": "E-162",
+    "evidence_list": [
+      "E-162"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-094-OWNS_ACCOUNT-PERSON-092-case-018-demo",
+    "source": "PERSON-094",
+    "target": "PERSON-092",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-018-demo",
+    "confidence": 0.7811515443624567,
+    "evidence": "E-163",
+    "evidence_list": [
+      "E-163"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-092-MEMBER_OF-PERSON-088-case-018-demo",
+    "source": "PERSON-092",
+    "target": "PERSON-088",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-018-demo",
+    "confidence": 0.642351468553893,
+    "evidence": "E-164",
+    "evidence_list": [
+      "E-164"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-088-ASSOCIATE_OF-PERSON-089-case-018-demo",
+    "source": "PERSON-088",
+    "target": "PERSON-089",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-018-demo",
+    "confidence": 0.678644067961045,
+    "evidence": "E-165",
+    "evidence_list": [
+      "E-165"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-089-RELATIVE_OF-PERSON-090-case-018-demo",
+    "source": "PERSON-089",
+    "target": "PERSON-090",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-018-demo",
+    "confidence": 0.7183299467516093,
+    "evidence": "E-166",
+    "evidence_list": [
+      "E-166"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-090-ARRESTED_WITH-PERSON-086-case-018-demo",
+    "source": "PERSON-090",
+    "target": "PERSON-086",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-018-demo",
+    "confidence": 0.8059080514600316,
+    "evidence": "E-167",
+    "evidence_list": [
+      "E-167"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-086-NAMED_ACCOMPLICE_OF-PERSON-093-case-018-demo",
+    "source": "PERSON-086",
+    "target": "PERSON-093",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-018-demo",
+    "confidence": 0.6805401564088019,
+    "evidence": "E-168",
+    "evidence_list": [
+      "E-168"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-093-TRANSFER_TO-PERSON-087-case-018-demo",
+    "source": "PERSON-093",
+    "target": "PERSON-087",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-018-demo",
+    "confidence": 0.6770760845580458,
+    "evidence": "E-169",
+    "evidence_list": [
+      "E-169"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-087-SHARED_PHONE-PERSON-091-case-018-demo",
+    "source": "PERSON-087",
+    "target": "PERSON-091",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-018-demo",
+    "confidence": 0.6248475801031613,
+    "evidence": "E-170",
+    "evidence_list": [
+      "E-170"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-091-SHARED_ACCOUNT-PERSON-094-case-018-demo",
+    "source": "PERSON-091",
+    "target": "PERSON-094",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-018-demo",
+    "confidence": 0.8208860350445346,
+    "evidence": "E-171",
+    "evidence_list": [
+      "E-171"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-094-SHARED_VEHICLE-PERSON-092-case-018-demo",
+    "source": "PERSON-094",
+    "target": "PERSON-092",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-018-demo",
+    "confidence": 0.680129624333904,
+    "evidence": "E-172",
+    "evidence_list": [
+      "E-172"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-092-SHARED_LOCATION-PERSON-088-case-018-demo",
+    "source": "PERSON-092",
+    "target": "PERSON-088",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-018-demo",
+    "confidence": 0.9168970045521447,
+    "evidence": "E-173",
+    "evidence_list": [
+      "E-173"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-088-LOCATED_AT-PERSON-089-case-018-demo",
+    "source": "PERSON-088",
+    "target": "PERSON-089",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-018-demo",
+    "confidence": 0.9008723900888113,
+    "evidence": "E-174",
+    "evidence_list": [
+      "E-174"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-098-USES_PHONE-PERSON-093-case-019-demo",
+    "source": "PERSON-098",
+    "target": "PERSON-093",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-019-demo",
+    "confidence": 0.6248000724610286,
+    "evidence": "E-175",
+    "evidence_list": [
+      "E-175"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-093-OWNS_VEHICLE-PERSON-095-case-019-demo",
+    "source": "PERSON-093",
+    "target": "PERSON-095",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-019-demo",
+    "confidence": 0.6833016220291483,
+    "evidence": "E-176",
+    "evidence_list": [
+      "E-176"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-095-OWNS_ACCOUNT-PERSON-097-case-019-demo",
+    "source": "PERSON-095",
+    "target": "PERSON-097",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-019-demo",
+    "confidence": 0.8341422224036982,
+    "evidence": "E-177",
+    "evidence_list": [
+      "E-177"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-097-MEMBER_OF-PERSON-096-case-019-demo",
+    "source": "PERSON-097",
+    "target": "PERSON-096",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-019-demo",
+    "confidence": 0.6749828825796534,
+    "evidence": "E-178",
+    "evidence_list": [
+      "E-178"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-096-ASSOCIATE_OF-PERSON-094-case-019-demo",
+    "source": "PERSON-096",
+    "target": "PERSON-094",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-019-demo",
+    "confidence": 0.6463091470537587,
+    "evidence": "E-179",
+    "evidence_list": [
+      "E-179"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-094-RELATIVE_OF-PERSON-092-case-019-demo",
+    "source": "PERSON-094",
+    "target": "PERSON-092",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-019-demo",
+    "confidence": 0.9274299842032347,
+    "evidence": "E-180",
+    "evidence_list": [
+      "E-180"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-092-ARRESTED_WITH-PERSON-100-case-019-demo",
+    "source": "PERSON-092",
+    "target": "PERSON-100",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-019-demo",
+    "confidence": 0.7998650826638496,
+    "evidence": "E-181",
+    "evidence_list": [
+      "E-181"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-100-NAMED_ACCOMPLICE_OF-PERSON-091-case-019-demo",
+    "source": "PERSON-100",
+    "target": "PERSON-091",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-019-demo",
+    "confidence": 0.7654348592091279,
+    "evidence": "E-182",
+    "evidence_list": [
+      "E-182"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-091-TRANSFER_TO-PERSON-099-case-019-demo",
+    "source": "PERSON-091",
+    "target": "PERSON-099",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-019-demo",
+    "confidence": 0.8746167985017637,
+    "evidence": "E-183",
+    "evidence_list": [
+      "E-183"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-099-SHARED_PHONE-PERSON-098-case-019-demo",
+    "source": "PERSON-099",
+    "target": "PERSON-098",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-019-demo",
+    "confidence": 0.8826239492183252,
+    "evidence": "E-184",
+    "evidence_list": [
+      "E-184"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-098-SHARED_ACCOUNT-PERSON-093-case-019-demo",
+    "source": "PERSON-098",
+    "target": "PERSON-093",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-019-demo",
+    "confidence": 0.6666434700266571,
+    "evidence": "E-185",
+    "evidence_list": [
+      "E-185"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-093-SHARED_VEHICLE-PERSON-095-case-019-demo",
+    "source": "PERSON-093",
+    "target": "PERSON-095",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-019-demo",
+    "confidence": 0.6339257849800881,
+    "evidence": "E-186",
+    "evidence_list": [
+      "E-186"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-095-SHARED_LOCATION-PERSON-097-case-019-demo",
+    "source": "PERSON-095",
+    "target": "PERSON-097",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-019-demo",
+    "confidence": 0.7508679138422321,
+    "evidence": "E-187",
+    "evidence_list": [
+      "E-187"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-097-LOCATED_AT-PERSON-096-case-019-demo",
+    "source": "PERSON-097",
+    "target": "PERSON-096",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-019-demo",
+    "confidence": 0.7482525180569722,
+    "evidence": "E-188",
+    "evidence_list": [
+      "E-188"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-096-CALLED-PERSON-094-case-019-demo",
+    "source": "PERSON-096",
+    "target": "PERSON-094",
+    "rel_type": "CALLED",
+    "case_id": "case-019-demo",
+    "confidence": 0.7634586338128362,
+    "evidence": "E-189",
+    "evidence_list": [
+      "E-189"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-094-PARTICIPATED_IN-PERSON-092-case-019-demo",
+    "source": "PERSON-094",
+    "target": "PERSON-092",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-019-demo",
+    "confidence": 0.8551765473109476,
+    "evidence": "E-190",
+    "evidence_list": [
+      "E-190"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-098-OWNS_VEHICLE-PERSON-001-case-020-demo",
+    "source": "PERSON-098",
+    "target": "PERSON-001",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-020-demo",
+    "confidence": 0.8356775915526555,
+    "evidence": "E-191",
+    "evidence_list": [
+      "E-191"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-OWNS_ACCOUNT-PERSON-005-case-020-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-005",
+    "rel_type": "OWNS_ACCOUNT",
+    "case_id": "case-020-demo",
+    "confidence": 0.9444578239780881,
+    "evidence": "E-192",
+    "evidence_list": [
+      "E-192"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-005-MEMBER_OF-PERSON-003-case-020-demo",
+    "source": "PERSON-005",
+    "target": "PERSON-003",
+    "rel_type": "MEMBER_OF",
+    "case_id": "case-020-demo",
+    "confidence": 0.6344462549031856,
+    "evidence": "E-193",
+    "evidence_list": [
+      "E-193"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-003-ASSOCIATE_OF-PERSON-097-case-020-demo",
+    "source": "PERSON-003",
+    "target": "PERSON-097",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-020-demo",
+    "confidence": 0.740917448735794,
+    "evidence": "E-194",
+    "evidence_list": [
+      "E-194"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-097-RELATIVE_OF-PERSON-006-case-020-demo",
+    "source": "PERSON-097",
+    "target": "PERSON-006",
+    "rel_type": "RELATIVE_OF",
+    "case_id": "case-020-demo",
+    "confidence": 0.7187559118882371,
+    "evidence": "E-195",
+    "evidence_list": [
+      "E-195"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-006-ARRESTED_WITH-PERSON-096-case-020-demo",
+    "source": "PERSON-006",
+    "target": "PERSON-096",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-020-demo",
+    "confidence": 0.9015853877234768,
+    "evidence": "E-196",
+    "evidence_list": [
+      "E-196"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-096-NAMED_ACCOMPLICE_OF-PERSON-004-case-020-demo",
+    "source": "PERSON-096",
+    "target": "PERSON-004",
+    "rel_type": "NAMED_ACCOMPLICE_OF",
+    "case_id": "case-020-demo",
+    "confidence": 0.6870297168720999,
+    "evidence": "E-197",
+    "evidence_list": [
+      "E-197"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-004-TRANSFER_TO-PERSON-002-case-020-demo",
+    "source": "PERSON-004",
+    "target": "PERSON-002",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-020-demo",
+    "confidence": 0.666573117954284,
+    "evidence": "E-198",
+    "evidence_list": [
+      "E-198"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-002-SHARED_PHONE-PERSON-100-case-020-demo",
+    "source": "PERSON-002",
+    "target": "PERSON-100",
+    "rel_type": "SHARED_PHONE",
+    "case_id": "case-020-demo",
+    "confidence": 0.7570147417415961,
+    "evidence": "E-199",
+    "evidence_list": [
+      "E-199"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-100-SHARED_ACCOUNT-PERSON-099-case-020-demo",
+    "source": "PERSON-100",
+    "target": "PERSON-099",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-020-demo",
+    "confidence": 0.7476585739420414,
+    "evidence": "E-200",
+    "evidence_list": [
+      "E-200"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-099-SHARED_VEHICLE-PERSON-098-case-020-demo",
+    "source": "PERSON-099",
+    "target": "PERSON-098",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-020-demo",
+    "confidence": 0.6974908006334292,
+    "evidence": "E-201",
+    "evidence_list": [
+      "E-201"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-098-SHARED_LOCATION-PERSON-001-case-020-demo",
+    "source": "PERSON-098",
+    "target": "PERSON-001",
+    "rel_type": "SHARED_LOCATION",
+    "case_id": "case-020-demo",
+    "confidence": 0.6874322567587352,
+    "evidence": "E-202",
+    "evidence_list": [
+      "E-202"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-LOCATED_AT-PERSON-005-case-020-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-005",
+    "rel_type": "LOCATED_AT",
+    "case_id": "case-020-demo",
+    "confidence": 0.9231429597466044,
+    "evidence": "E-203",
+    "evidence_list": [
+      "E-203"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-005-CALLED-PERSON-003-case-020-demo",
+    "source": "PERSON-005",
+    "target": "PERSON-003",
+    "rel_type": "CALLED",
+    "case_id": "case-020-demo",
+    "confidence": 0.7550957607687099,
+    "evidence": "E-204",
+    "evidence_list": [
+      "E-204"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-003-PARTICIPATED_IN-PERSON-097-case-020-demo",
+    "source": "PERSON-003",
+    "target": "PERSON-097",
+    "rel_type": "PARTICIPATED_IN",
+    "case_id": "case-020-demo",
+    "confidence": 0.9014721866666406,
+    "evidence": "E-205",
+    "evidence_list": [
+      "E-205"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-097-USES_PHONE-PERSON-006-case-020-demo",
+    "source": "PERSON-097",
+    "target": "PERSON-006",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-020-demo",
+    "confidence": 0.7926138593574468,
+    "evidence": "E-206",
+    "evidence_list": [
+      "E-206"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-006-OWNS_VEHICLE-PERSON-096-case-020-demo",
+    "source": "PERSON-006",
+    "target": "PERSON-096",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-020-demo",
+    "confidence": 0.6177059153337084,
+    "evidence": "E-207",
+    "evidence_list": [
+      "E-207"
+    ],
+    "properties": {}
+  }
+]

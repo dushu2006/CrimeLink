@@ -1,4 +1,4 @@
-"""Reading dataset source files for human eyes.
+"""Reading dataset source files for human eyes — MinIO-aware.
 
 Two jobs, one module:
 
@@ -21,6 +21,12 @@ evidence URL can never turn into an arbitrary filesystem read.  Files
 belonging to an inactive dataset are not reachable through the active
 dataset's root -- which is exactly how a replaced corpus used to stay
 openable after it was supposed to be gone.
+
+MinIO-aware: In production, files live in MinIO (bucket documents) with
+deterministic keys evidence/E-042/original.pdf. The viewer tries MinIO first
+when backend is minio, then falls back to filesystem workspace copy (seed
+copies files there for fallback). In production, MinIO is mandatory — if
+MinIO is configured but unavailable, it fails loudly, no silent Local fallback.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import csv
 import io
 import json
 import mimetypes
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -123,11 +130,23 @@ def detect_kind(path: Path) -> FileKind:
         raise SourceAccessError(
             f"the file could not be read ({exc})", status=STATUS_NOT_FOUND
         ) from exc
+    return _detect_kind_from_bytes_and_suffix(head, path.suffix, path)
 
+
+def detect_kind_from_bytes(data: bytes, suffix: str = "") -> FileKind:
+    """Sniff type from bytes (MinIO path)."""
+    head = data[:8192]
+    return _detect_kind_from_bytes_and_suffix(head, suffix, None, data)
+
+
+def _detect_kind_from_bytes_and_suffix(head: bytes, suffix: str, path: Path | None = None, full_data: bytes | None = None) -> FileKind:
     for signature, kind, media_type in _MAGIC:
         if head.startswith(signature):
             if kind == "ooxml":
-                return _sniff_ooxml(path)
+                if path is not None:
+                    return _sniff_ooxml(path)
+                else:
+                    return _sniff_ooxml_bytes(full_data or head)
             if kind == "ole":
                 return FileKind(
                     "binary",
@@ -137,13 +156,13 @@ def detect_kind(path: Path) -> FileKind:
                 )
             return FileKind(kind, media_type)
 
-    suffix = path.suffix.lower()
-    if suffix in _CSV_SUFFIXES:
+    sfx = suffix.lower()
+    if sfx in _CSV_SUFFIXES:
         return FileKind("csv", "text/csv; charset=utf-8")
-    if suffix in _JSON_SUFFIXES:
+    if sfx in _JSON_SUFFIXES:
         return FileKind("json", "application/json; charset=utf-8")
-    if suffix in _TEXT_SUFFIXES:
-        return FileKind("text", _text_media(suffix))
+    if sfx in _TEXT_SUFFIXES:
+        return FileKind("text", _text_media(sfx))
     # Unknown: only classify as text when it demonstrably decodes as text.
     if b"\x00" in head:
         return FileKind("binary", "application/octet-stream")
@@ -151,7 +170,7 @@ def detect_kind(path: Path) -> FileKind:
         head.decode("utf-8")
     except UnicodeDecodeError:
         return FileKind("binary", "application/octet-stream")
-    return FileKind("text", _text_media(suffix))
+    return FileKind("text", _text_media(sfx))
 
 
 def _sniff_ooxml(path: Path) -> FileKind:
@@ -170,9 +189,144 @@ def _sniff_ooxml(path: Path) -> FileKind:
     return FileKind("binary", "application/zip", "ZIP archive")
 
 
+def _sniff_ooxml_bytes(data: bytes) -> FileKind:
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            names = package.namelist()
+    except Exception as exc:  # noqa: BLE001
+        return FileKind(
+            "binary", "application/zip", f"ZIP container could not be read ({exc})"
+        )
+    for marker, kind, media_type in _OOXML_MARKERS:
+        if any(name.startswith(marker) for name in names[:4000]):
+            return FileKind(kind, media_type)
+    return FileKind("binary", "application/zip", "ZIP archive")
+
+
 def _text_media(suffix: str) -> str:
     guessed = mimetypes.guess_type(f"file{suffix}")[0]
     return f"{guessed or 'text/plain'}; charset=utf-8"
+
+
+# ---------------------------------------------------------------------------
+# MinIO helpers — mandatory in production
+# ---------------------------------------------------------------------------
+
+def _get_object_store_info():
+    """Return (store, bucket, is_minio, is_prod) with mandatory MinIO check in prod."""
+    from app.config import get_settings
+    settings = get_settings()
+    is_prod = settings.profile == "production" or settings.environment == "production"
+    backend = settings.effective_object_store_backend
+
+    if backend == "minio":
+        try:
+            from app.adapters.objectstore.minio_store import MinioObjectStore
+            store = MinioObjectStore(settings)
+            return store, settings.minio_bucket_documents, True, is_prod
+        except Exception as exc:
+            if is_prod:
+                # MinIO mandatory in production — fail loudly, no silent Local fallback
+                log.error("source_viewer.minio_unavailable_in_production", error=str(exc))
+                raise SourceAccessError(
+                    f"Object storage unavailable in production: {exc}",
+                    status=STATUS_NOT_FOUND,
+                ) from exc
+            # In dev, fallback to local
+            from app.adapters.objectstore.local import LocalObjectStore
+            try:
+                store = LocalObjectStore(settings)
+                return store, settings.minio_bucket_documents, False, is_prod
+            except Exception:
+                return None, settings.minio_bucket_documents, False, is_prod
+    else:
+        if is_prod:
+            log.error("source_viewer.minio_mandatory_in_production", backend=backend)
+            raise SourceAccessError(
+                "MinIO is mandatory in production but backend is not minio — refusing Local fallback",
+                status=STATUS_NOT_FOUND,
+            )
+        try:
+            from app.adapters.objectstore.local import LocalObjectStore
+            store = LocalObjectStore(settings)
+            return store, settings.minio_bucket_documents, False, is_prod
+        except Exception:
+            return None, settings.minio_bucket_documents, False, is_prod
+
+
+def _try_get_from_minio(relative_path: str) -> bytes | None:
+    """Try to fetch file bytes from object store (MinIO or Local). Returns None if not found."""
+    try:
+        store, bucket, is_minio, is_prod = _get_object_store_info()
+        if store is None:
+            return None
+        # Clean path
+        cleaned = relative_path.strip().replace("\\", "/").split("#", 1)[0].lstrip("/")
+        if not cleaned:
+            return None
+        try:
+            meta = store.stat(bucket, cleaned)
+            if not meta:
+                return None
+            data = store.get(bucket, cleaned)
+            if data:
+                log.info("source_viewer.minio_hit", path=cleaned, size=len(data), backend="minio" if is_minio else "local")
+                return data
+        except Exception as exc:
+            # In prod, if MinIO is backend and we fail to get, log but don't fallback silently if object should exist
+            # For NOT_FOUND, return None to allow filesystem fallback
+            from app.errors import NotFoundError as AppNotFoundError
+            if isinstance(exc, AppNotFoundError):
+                return None
+            if is_prod and is_minio:
+                log.warning("source_viewer.minio_get_failed_in_prod", path=cleaned, error=str(exc))
+                # Don't raise for missing file, but if MinIO itself is down, the earlier _get_object_store_info would have raised
+                return None
+            log.debug("source_viewer.store_get_failed", path=cleaned, error=str(exc))
+            return None
+    except SourceAccessError:
+        raise
+    except Exception as exc:
+        log.debug("source_viewer.store_unavailable", error=str(exc))
+        return None
+    return None
+
+
+def get_bytes_for_path(relative_path: str, root: Path | None = None) -> tuple[bytes | None, Path | None]:
+    """
+    Resolve file bytes with MinIO priority, then filesystem.
+    Returns (bytes, path) where one may be None.
+    In production, MinIO is tried first and is mandatory — if MinIO backend but unavailable, raises.
+    """
+    cleaned = relative_path.strip().replace("\\", "/").split("#", 1)[0].lstrip("/")
+    # 1. Try object store (MinIO in prod)
+    try:
+        data = _try_get_from_minio(cleaned)
+        if data is not None:
+            return data, None
+    except SourceAccessError:
+        raise
+
+    # 2. Try filesystem (workspace copy)
+    if root is not None:
+        try:
+            p = resolve_in_dataset(cleaned, root=root)
+            if p.exists():
+                return None, p
+        except (SourceNotFoundError, SourceAccessError):
+            pass
+    else:
+        # Try active dataset root and legacy roots
+        try:
+            p = resolve_in_dataset(cleaned, root=None)
+            if p.exists():
+                return None, p
+        except (SourceNotFoundError, SourceAccessError):
+            pass
+
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -357,25 +511,36 @@ def read_csv_window(
     relative: str = "",
     delimiter: str = ",",
 ) -> SourceWindow:
-    """Read a window of CSV/TSV rows around ``row`` (1-based, header = line 1).
-
-    ``offset`` starts a page at that row number (used with ``limit`` for
-    "load more" tables); ``row`` centres a small context window instead.
-    """
+    """Read a window of CSV/TSV rows around ``row`` (1-based, header = line 1)."""
     from app.domain.models import ORIGIN_COLUMN
 
     text = path.read_text(encoding="utf-8-sig", errors="replace")
+    return _read_csv_window_from_text(text, path.stat().st_size, row=row, context=context, limit=limit, offset=offset, relative=relative, delimiter=delimiter)
+
+
+def _read_csv_window_from_text(
+    text: str,
+    size_bytes: int,
+    *,
+    row: int | None = None,
+    context: int = DEFAULT_CONTEXT,
+    limit: int | None = None,
+    offset: int | None = None,
+    relative: str = "",
+    delimiter: str = ",",
+) -> SourceWindow:
+    from app.domain.models import ORIGIN_COLUMN
+
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     try:
         header = next(reader)
     except StopIteration:
         header = []
-    # The origin column is CrimeLink bookkeeping; investigators never see it.
     keep = [i for i, name in enumerate(header) if name != ORIGIN_COLUMN]
     columns = [header[i] for i in keep]
 
     all_rows = list(reader)
-    total_lines = len(all_rows) + 1  # +1 for the header
+    total_lines = len(all_rows) + 1
 
     if offset is not None and limit is not None:
         start = max(2, int(offset))
@@ -399,7 +564,7 @@ def read_csv_window(
         rows.append({"row": line_no, "values": values})
 
     return SourceWindow(
-        file=relative or path.name,
+        file=relative,
         source_type="csv",
         total_units=total_lines,
         unit_label="row",
@@ -410,8 +575,22 @@ def read_csv_window(
         rows=rows,
         lines=[],
         truncated=(end - start + 1) < (total_lines - 1),
-        size_bytes=path.stat().st_size,
+        size_bytes=size_bytes,
     )
+
+
+def read_csv_window_from_bytes(
+    data: bytes,
+    *,
+    row: int | None = None,
+    context: int = DEFAULT_CONTEXT,
+    limit: int | None = None,
+    offset: int | None = None,
+    relative: str = "",
+    delimiter: str = ",",
+) -> SourceWindow:
+    text = data.decode("utf-8-sig", errors="replace")
+    return _read_csv_window_from_text(text, len(data), row=row, context=context, limit=limit, offset=offset, relative=relative, delimiter=delimiter)
 
 
 def list_sheets(path: Path) -> list[str]:
@@ -428,6 +607,18 @@ def list_sheets(path: Path) -> list[str]:
             pass
 
 
+def list_sheets_from_bytes(data: bytes) -> list[str]:
+    import openpyxl
+    workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True)
+    try:
+        return list(workbook.sheetnames)
+    finally:
+        try:
+            workbook.close()
+        except Exception:
+            pass
+
+
 def read_xlsx_window(
     path: Path,
     *,
@@ -438,12 +629,7 @@ def read_xlsx_window(
     relative: str = "",
     sheet: str | None = None,
 ) -> SourceWindow:
-    """Read a window of rows from an XLSX workbook around ``row``.
-
-    ``sheet`` selects a named worksheet (first sheet by default).  Values are
-    stringified, never re-typed: dates and numbers arrive as openpyxl renders
-    them so the viewer shows the workbook, not an interpretation of it.
-    """
+    """Read a window of rows from an XLSX workbook around ``row``."""
     import openpyxl
     from app.domain.models import ORIGIN_COLUMN
 
@@ -477,7 +663,7 @@ def read_xlsx_window(
         except Exception:  # noqa: BLE001
             pass
 
-    total_lines = len(all_rows) + 1  # +1 for header
+    total_lines = len(all_rows) + 1
 
     if offset is not None and limit is not None:
         start = max(2, int(offset))
@@ -522,6 +708,86 @@ def read_xlsx_window(
     )
 
 
+def read_xlsx_window_from_bytes(
+    data: bytes,
+    *,
+    row: int | None = None,
+    context: int = DEFAULT_CONTEXT,
+    limit: int | None = None,
+    offset: int | None = None,
+    relative: str = "",
+    sheet: str | None = None,
+) -> SourceWindow:
+    import openpyxl
+    from app.domain.models import ORIGIN_COLUMN
+
+    workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        names = list(workbook.sheetnames)
+        target = (
+            workbook[sheet]
+            if sheet and sheet in names
+            else (workbook.active or workbook.worksheets[0])
+        )
+        sheet_name = target.title
+        iterator = target.iter_rows(values_only=True)
+        try:
+            raw_header = next(iterator)
+        except StopIteration:
+            raw_header = ()
+        header = [
+            str(c).strip() if c is not None else f"column_{idx + 1}"
+            for idx, c in enumerate(raw_header)
+        ]
+        keep = [i for i, name in enumerate(header) if name != ORIGIN_COLUMN]
+        columns = [header[i] for i in keep]
+        all_rows = [list(r) for r in iterator]
+    finally:
+        try:
+            workbook.close()
+        except Exception:
+            pass
+
+    total_lines = len(all_rows) + 1
+    if offset is not None and limit is not None:
+        start = max(2, int(offset))
+        end = min(total_lines, start + max(1, int(limit)) - 1)
+    elif limit is not None:
+        start, end = 1, min(total_lines, max(2, limit + 1))
+    else:
+        start, end = _clamp_window(row, total_lines, context)
+        if start < 2:
+            start = 2 if total_lines > 1 else 1
+    if end - start + 1 > MAX_WINDOW:
+        end = start + MAX_WINDOW - 1
+
+    rows = []
+    for line_no in range(max(2, start), end + 1):
+        raw = all_rows[line_no - 2] if line_no - 2 < len(all_rows) else []
+        values = {
+            columns[pos]: (str(raw[idx]).strip() if idx < len(raw) and raw[idx] is not None else "")
+            for pos, idx in enumerate(keep)
+        }
+        rows.append({"row": line_no, "values": values})
+
+    return SourceWindow(
+        file=relative,
+        source_type="table",
+        total_units=total_lines,
+        unit_label="row",
+        start=start,
+        end=end,
+        highlight=[row] if row else [],
+        columns=columns,
+        rows=rows,
+        lines=[],
+        truncated=(end - start + 1) < (total_lines - 1),
+        size_bytes=len(data),
+        sheets=names,
+        sheet=sheet_name,
+    )
+
+
 def read_text_window(
     path: Path,
     *,
@@ -532,11 +798,22 @@ def read_text_window(
     limit: int | None = None,
     relative: str = "",
 ) -> SourceWindow:
-    """Read a window of text lines around the highlighted range.
-
-    Only ever called on files :func:`detect_kind` has proven to be text.
-    """
+    """Read a window of text lines around the highlighted range."""
     content = path.read_text(encoding="utf-8", errors="replace")
+    return _read_text_window_from_content(content, path.stat().st_size, line_start=line_start, line_end=line_end, context=context, offset=offset, limit=limit, relative=relative)
+
+
+def _read_text_window_from_content(
+    content: str,
+    size_bytes: int,
+    *,
+    line_start: int | None = None,
+    line_end: int | None = None,
+    context: int = DEFAULT_CONTEXT,
+    offset: int | None = None,
+    limit: int | None = None,
+    relative: str = "",
+) -> SourceWindow:
     all_lines = content.splitlines()
     total = len(all_lines)
 
@@ -561,7 +838,7 @@ def read_text_window(
         if 0 < number <= total
     ]
     return SourceWindow(
-        file=relative or path.name,
+        file=relative,
         source_type="txt",
         total_units=total,
         unit_label="line",
@@ -572,20 +849,38 @@ def read_text_window(
         rows=[],
         lines=lines,
         truncated=(end - start + 1) < total,
-        size_bytes=path.stat().st_size,
+        size_bytes=size_bytes,
     )
+
+
+def read_text_window_from_bytes(
+    data: bytes,
+    *,
+    line_start: int | None = None,
+    line_end: int | None = None,
+    context: int = DEFAULT_CONTEXT,
+    offset: int | None = None,
+    limit: int | None = None,
+    relative: str = "",
+) -> SourceWindow:
+    content = data.decode("utf-8", errors="replace")
+    return _read_text_window_from_content(content, len(data), line_start=line_start, line_end=line_end, context=context, offset=offset, limit=limit, relative=relative)
 
 
 def read_json_window(path: Path, *, relative: str = "") -> SourceWindow:
     """Render a JSON document as addressable text lines."""
     raw = path.read_text(encoding="utf-8", errors="replace")
+    return _read_json_window_from_text(raw, path.stat().st_size, relative=relative)
+
+
+def _read_json_window_from_text(raw: str, size_bytes: int, *, relative: str = "") -> SourceWindow:
     try:
         pretty = json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
     except ValueError:
         pretty = raw
     all_lines = pretty.splitlines()[:MAX_WINDOW]
     return SourceWindow(
-        file=relative or path.name,
+        file=relative,
         source_type="json",
         total_units=len(pretty.splitlines()),
         unit_label="line",
@@ -596,17 +891,17 @@ def read_json_window(path: Path, *, relative: str = "") -> SourceWindow:
         rows=[],
         lines=[{"line": i, "text": t} for i, t in enumerate(all_lines, start=1)],
         truncated=len(all_lines) < len(pretty.splitlines()),
-        size_bytes=path.stat().st_size,
+        size_bytes=size_bytes,
     )
 
 
-def read_document_window(path: Path, *, relative: str = "") -> SourceWindow:
-    """Render a PDF/DOCX/PPTX as readable lines via its real parser.
+def read_json_window_from_bytes(data: bytes, *, relative: str = "") -> SourceWindow:
+    raw = data.decode("utf-8", errors="replace")
+    return _read_json_window_from_text(raw, len(data), relative=relative)
 
-    This is the fallback view for citations (references address a page/line,
-    not a byte offset); the rich preview at :func:`preview` is what the
-    Sources page uses to *render* the document.
-    """
+
+def read_document_window(path: Path, *, relative: str = "") -> SourceWindow:
+    """Render a PDF/DOCX/PPTX as readable lines via its real parser."""
     from app.datasets import readers
 
     try:
@@ -621,8 +916,11 @@ def read_document_window(path: Path, *, relative: str = "") -> SourceWindow:
             "the document contains no extractable text (it may be a scan)",
             status=STATUS_NO_EXTRACTED_TEXT,
         )
+    return _document_window_from_parsed(parsed, relative, path.stat().st_size)
+
+
+def _document_window_from_parsed(parsed, relative: str, size_bytes: int) -> SourceWindow:
     if parsed.pages and len(parsed.pages) > 1:
-        # Keep the page structure visible: label lines with their page.
         lines: list[dict[str, Any]] = []
         number = 1
         for page_index, page in enumerate(parsed.pages[:MAX_PDF_PAGES], start=1):
@@ -644,7 +942,7 @@ def read_document_window(path: Path, *, relative: str = "") -> SourceWindow:
             for i, t in enumerate(all_lines[:MAX_WINDOW], start=1)
         ]
     return SourceWindow(
-        file=relative or path.name,
+        file=relative,
         source_type="document",
         total_units=len(parsed.text.splitlines()),
         unit_label="line",
@@ -655,8 +953,36 @@ def read_document_window(path: Path, *, relative: str = "") -> SourceWindow:
         rows=[],
         lines=lines,
         truncated=len(lines) < len(parsed.text.splitlines()),
-        size_bytes=path.stat().st_size,
+        size_bytes=size_bytes,
     )
+
+
+def read_document_window_from_bytes(data: bytes, suffix: str, *, relative: str = "") -> SourceWindow:
+    """Render PDF/DOCX/PPTX from bytes (MinIO path)."""
+    from app.datasets import readers
+    # Write to temp file for readers that expect Path
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
+        parsed = readers.read_text(tmp_path)
+    except readers.UnreadableSource as exc:
+        status = exc.code if exc.code in {
+            "UNSUPPORTED", "CORRUPTED", "NOT_FOUND", "NO_EXTRACTED_TEXT"
+        } else STATUS_EXTRACTION_FAILED
+        raise SourceAccessError(exc.reason, status=status) from exc
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+
+    if not parsed.text.strip():
+        raise SourceAccessError(
+            "the document contains no extractable text (it may be a scan)",
+            status=STATUS_NO_EXTRACTED_TEXT,
+        )
+    return _document_window_from_parsed(parsed, relative, len(data))
 
 
 def read_window(
@@ -671,68 +997,117 @@ def read_window(
     root: Path | None = None,
     sheet: str | None = None,
 ) -> SourceWindow:
-    """Open any supported dataset file at the requested position.
+    """Open any supported dataset file at the requested position — MinIO-aware.
 
+    Tries MinIO first (when backend is minio), then filesystem workspace copy.
     The renderer is chosen from the file's bytes: a PDF never reaches a text
-    decoder here, which is the whole "%PDF-1.3 on screen" class of bugs.
+    decoder here.
     """
-    path = resolve_in_dataset(relative_path, root=root)
     clean = relative_path.split("#", 1)[0]
-    kind = detect_kind(path)
-    if kind.kind == "pdf" or kind.kind in {"docx", "pptx"} or (
-        kind.kind == "binary" and path.suffix.lower() == ".doc"
-    ):
-        return read_document_window(path, relative=clean)
-    if kind.kind == "csv" or (kind.kind == "binary" and path.suffix.lower() in _CSV_SUFFIXES):
-        return read_csv_window(
-            path,
-            row=row,
+    # Try object store first
+    data, fs_path = get_bytes_for_path(clean, root=root)
+
+    if data is not None:
+        # MinIO/local object store path
+        suffix = Path(clean).suffix.lower()
+        kind = detect_kind_from_bytes(data, suffix)
+        if kind.kind == "pdf" or kind.kind in {"docx", "pptx"} or (
+            kind.kind == "binary" and suffix == ".doc"
+        ):
+            return read_document_window_from_bytes(data, suffix, relative=clean)
+        if kind.kind == "csv" or (kind.kind == "binary" and suffix in _CSV_SUFFIXES):
+            return read_csv_window_from_bytes(
+                data,
+                row=row,
+                context=context,
+                limit=limit,
+                offset=offset,
+                relative=clean,
+                delimiter="\t" if suffix == ".tsv" else ",",
+            )
+        if kind.kind == "xlsx":
+            return read_xlsx_window_from_bytes(
+                data, row=row, context=context, limit=limit, offset=offset,
+                relative=clean, sheet=sheet,
+            )
+        if kind.kind == "json":
+            return read_json_window_from_bytes(data, relative=clean)
+        if kind.kind == "image":
+            raise SourceAccessError(
+                "this is an image; open the file itself to view it",
+                status=STATUS_UNSUPPORTED,
+            )
+        if kind.kind == "binary":
+            raise SourceAccessError(
+                kind.detail or "binary files are never decoded as text; open or download the file",
+                status=STATUS_UNSUPPORTED,
+            )
+        return read_text_window_from_bytes(
+            data,
+            line_start=line_start,
+            line_end=line_end,
             context=context,
-            limit=limit,
             offset=offset,
+            limit=limit,
             relative=clean,
-            delimiter="\t" if path.suffix.lower() == ".tsv" else ",",
         )
-    if kind.kind == "xlsx":
-        return read_xlsx_window(
-            path, row=row, context=context, limit=limit, offset=offset,
-            relative=clean, sheet=sheet,
+
+    # Filesystem path
+    if fs_path is not None:
+        path = fs_path
+        kind = detect_kind(path)
+        if kind.kind == "pdf" or kind.kind in {"docx", "pptx"} or (
+            kind.kind == "binary" and path.suffix.lower() == ".doc"
+        ):
+            return read_document_window(path, relative=clean)
+        if kind.kind == "csv" or (kind.kind == "binary" and path.suffix.lower() in _CSV_SUFFIXES):
+            return read_csv_window(
+                path,
+                row=row,
+                context=context,
+                limit=limit,
+                offset=offset,
+                relative=clean,
+                delimiter="\t" if path.suffix.lower() == ".tsv" else ",",
+            )
+        if kind.kind == "xlsx":
+            return read_xlsx_window(
+                path, row=row, context=context, limit=limit, offset=offset,
+                relative=clean, sheet=sheet,
+            )
+        if kind.kind == "json":
+            return read_json_window(path, relative=clean)
+        if kind.kind == "image":
+            raise SourceAccessError(
+                "this is an image; open the file itself to view it",
+                status=STATUS_UNSUPPORTED,
+            )
+        if kind.kind == "binary":
+            raise SourceAccessError(
+                kind.detail or "binary files are never decoded as text; open or download the file",
+                status=STATUS_UNSUPPORTED,
+            )
+        return read_text_window(
+            path,
+            line_start=line_start,
+            line_end=line_end,
+            context=context,
+            offset=offset,
+            limit=limit,
+            relative=clean,
         )
-    if kind.kind == "json":
-        return read_json_window(path, relative=clean)
-    if kind.kind == "image":
-        raise SourceAccessError(
-            "this is an image; open the file itself to view it",
-            status=STATUS_UNSUPPORTED,
-        )
-    if kind.kind == "binary":
-        raise SourceAccessError(
-            kind.detail or "binary files are never decoded as text; open or download the file",
-            status=STATUS_UNSUPPORTED,
-        )
-    return read_text_window(
-        path,
-        line_start=line_start,
-        line_end=line_end,
-        context=context,
-        offset=offset,
-        limit=limit,
-        relative=clean,
-    )
+
+    # Not found in either MinIO or filesystem
+    raise SourceNotFoundError(f"Source file not found in the dataset: {clean}")
 
 
 # ---------------------------------------------------------------------------
-# Preview: the renderer decision used by the Sources page
+# Preview: the renderer decision used by the Sources page — MinIO-aware
 # ---------------------------------------------------------------------------
 
 
 def extract_docx_blocks(path: Path) -> list[dict[str, Any]]:
-    """Structured, readable content of a DOCX: paragraphs and tables.
-
-    Basic structure is preserved -- headings stay headings, tables stay
-    tables -- because "the text of the document with all layout lost" is a
-    worse preview than the one a court would expect from an exhibit viewer.
-    """
+    """Structured, readable content of a DOCX: paragraphs and tables."""
     import docx  # type: ignore[import-untyped]
 
     document = docx.Document(str(path))
@@ -746,7 +1121,34 @@ def extract_docx_blocks(path: Path) -> list[dict[str, Any]]:
         if "heading" in style or style == "title":
             kind = "heading"
         depth = 1
-        for token in style.replace("heading ", "").strip():
+        for token in style.replace("heading ", " ").strip():
+            if token.isdigit():
+                depth = int(token)
+                break
+        blocks.append({"type": kind, "level": depth if kind == "heading" else None, "text": text})
+    for table_index, table in enumerate(document.tables):
+        rows = []
+        for row in table.rows:
+            rows.append([cell.text.strip() for cell in row.cells])
+        if rows:
+            blocks.append({"type": "table", "index": table_index, "rows": rows})
+    return blocks
+
+
+def extract_docx_blocks_from_bytes(data: bytes) -> list[dict[str, Any]]:
+    import docx
+    document = docx.Document(io.BytesIO(data))
+    blocks: list[dict[str, Any]] = []
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        style = (paragraph.style.name or "").lower() if paragraph.style is not None else ""
+        kind = "paragraph"
+        if "heading" in style or style == "title":
+            kind = "heading"
+        depth = 1
+        for token in style.replace("heading ", " ").strip():
             if token.isdigit():
                 depth = int(token)
                 break
@@ -777,23 +1179,17 @@ def preview(
 ) -> dict[str, Any]:
     """Decide what a file is, render it with the matching renderer, report why not.
 
+    MinIO-aware: tries MinIO first when backend is minio, then filesystem.
     The result always carries an explicit ``status`` and a ``render_kind`` the
-    frontend maps to exactly one viewer.  Nothing in here decodes binary as
-    UTF-8 and hopes: the browser gets raw bytes (with an honest content type)
-    for native rendering, and parsed content for documents we can extract.
+    frontend maps to exactly one viewer.
     """
     clean = (relative_path or "").split("#", 1)[0]
+
+    # Try to get bytes/path
+    data: bytes | None = None
+    fs_path: Path | None = None
     try:
-        path = resolve_in_dataset(relative_path, root=root)
-    except SourceNotFoundError as exc:
-        return {
-            "status": STATUS_NOT_FOUND,
-            "reason": str(exc),
-            "openable": False,
-            "render_kind": "none",
-            "file": {"path": clean},
-            "window": None,
-        }
+        data, fs_path = get_bytes_for_path(clean, root=root)
     except SourceAccessError as exc:
         return {
             "status": exc.status,
@@ -804,15 +1200,52 @@ def preview(
             "window": None,
         }
 
-    kind = detect_kind(path)
-    meta = {
-        "path": clean,
-        "filename": path.name,
-        "extension": path.suffix.lower(),
-        "media_type": kind.media_type,
-        "size_bytes": path.stat().st_size,
-        "dataset_id": dataset_id,
-    }
+    if data is None and fs_path is None:
+        return {
+            "status": STATUS_NOT_FOUND,
+            "reason": f"Source file not found in the dataset: {clean}",
+            "openable": False,
+            "render_kind": "none",
+            "file": {"path": clean},
+            "window": None,
+        }
+
+    # Determine kind and meta
+    if data is not None:
+        suffix = Path(clean).suffix.lower()
+        kind = detect_kind_from_bytes(data, suffix)
+        meta = {
+            "path": clean,
+            "filename": Path(clean).name,
+            "extension": suffix,
+            "media_type": kind.media_type,
+            "size_bytes": len(data),
+            "dataset_id": dataset_id,
+            "storage": "minio" if _get_object_store_info()[2] else "local",
+        }
+    else:
+        assert fs_path is not None
+        try:
+            kind = detect_kind(fs_path)
+        except SourceAccessError as exc:
+            return {
+                "status": exc.status,
+                "reason": str(exc),
+                "openable": False,
+                "render_kind": "none",
+                "file": {"path": clean},
+                "window": None,
+            }
+        meta = {
+            "path": clean,
+            "filename": fs_path.name,
+            "extension": fs_path.suffix.lower(),
+            "media_type": kind.media_type,
+            "size_bytes": fs_path.stat().st_size,
+            "dataset_id": dataset_id,
+            "storage": "filesystem",
+        }
+
     result: dict[str, Any] = {
         "status": STATUS_AVAILABLE,
         "reason": kind.detail or None,
@@ -830,16 +1263,28 @@ def preview(
 
     try:
         if kind.kind == "pdf":
-            result.update(_preview_pdf(path))
+            if data is not None:
+                result.update(_preview_pdf_from_bytes(data))
+            else:
+                assert fs_path is not None
+                result.update(_preview_pdf(fs_path))
             return result
         if kind.kind == "docx":
-            result["document_blocks"] = extract_docx_blocks(path)
+            if data is not None:
+                result["document_blocks"] = extract_docx_blocks_from_bytes(data)
+            else:
+                assert fs_path is not None
+                result["document_blocks"] = extract_docx_blocks(fs_path)
             if not result["document_blocks"]:
                 result["status"] = STATUS_NO_EXTRACTED_TEXT
                 result["reason"] = "the document contains no readable text"
             return result
         if kind.kind == "pptx":
-            result["slides"] = _preview_pptx(path)
+            if data is not None:
+                result["slides"] = _preview_pptx_from_bytes(data)
+            else:
+                assert fs_path is not None
+                result["slides"] = _preview_pptx(fs_path)
             if all(not slide["lines"] for slide in result["slides"]):
                 result["status"] = STATUS_NO_EXTRACTED_TEXT
                 result["reason"] = (
@@ -847,40 +1292,75 @@ def preview(
                 )
             return result
         if kind.kind == "xlsx":
-            result["sheets"] = list_sheets(path)
-            result["window"] = read_xlsx_window(
-                path, row=row, context=context, limit=limit, offset=offset,
-                relative=clean, sheet=sheet,
-            ).to_dict()
+            if data is not None:
+                result["sheets"] = list_sheets_from_bytes(data)
+                result["window"] = read_xlsx_window_from_bytes(
+                    data, row=row, context=context, limit=limit, offset=offset,
+                    relative=clean, sheet=sheet,
+                ).to_dict()
+            else:
+                assert fs_path is not None
+                result["sheets"] = list_sheets(fs_path)
+                result["window"] = read_xlsx_window(
+                    fs_path, row=row, context=context, limit=limit, offset=offset,
+                    relative=clean, sheet=sheet,
+                ).to_dict()
             result["sheet"] = (result["window"] or {}).get("sheet")
             return result
         if kind.kind == "csv":
-            result["window"] = read_csv_window(
-                path,
-                row=row,
-                context=context,
-                limit=limit,
-                offset=offset,
-                relative=clean,
-                delimiter="\t" if path.suffix.lower() == ".tsv" else ",",
-            ).to_dict()
+            if data is not None:
+                result["window"] = read_csv_window_from_bytes(
+                    data,
+                    row=row,
+                    context=context,
+                    limit=limit,
+                    offset=offset,
+                    relative=clean,
+                    delimiter="\t" if Path(clean).suffix.lower() == ".tsv" else ",",
+                ).to_dict()
+            else:
+                assert fs_path is not None
+                result["window"] = read_csv_window(
+                    fs_path,
+                    row=row,
+                    context=context,
+                    limit=limit,
+                    offset=offset,
+                    relative=clean,
+                    delimiter="\t" if fs_path.suffix.lower() == ".tsv" else ",",
+                ).to_dict()
             return result
         if kind.kind == "json":
-            result["window"] = read_json_window(path, relative=clean).to_dict()
+            if data is not None:
+                result["window"] = read_json_window_from_bytes(data, relative=clean).to_dict()
+            else:
+                assert fs_path is not None
+                result["window"] = read_json_window(fs_path, relative=clean).to_dict()
             return result
         if kind.kind == "text":
-            result["window"] = read_text_window(
-                path,
-                line_start=line_start,
-                line_end=line_end,
-                context=context,
-                offset=offset,
-                limit=limit,
-                relative=clean,
-            ).to_dict()
+            if data is not None:
+                result["window"] = read_text_window_from_bytes(
+                    data,
+                    line_start=line_start,
+                    line_end=line_end,
+                    context=context,
+                    offset=offset,
+                    limit=limit,
+                    relative=clean,
+                ).to_dict()
+            else:
+                assert fs_path is not None
+                result["window"] = read_text_window(
+                    fs_path,
+                    line_start=line_start,
+                    line_end=line_end,
+                    context=context,
+                    offset=offset,
+                    limit=limit,
+                    relative=clean,
+                ).to_dict()
             return result
         if kind.kind == "image":
-            # The browser itself is the renderer; raw bytes carry the type.
             return result
         result["status"] = STATUS_UNSUPPORTED
         result["openable"] = False
@@ -921,8 +1401,6 @@ def _preview_pdf(path: Path) -> dict[str, Any]:
     note = None
     status = STATUS_AVAILABLE
     if parsed.empty:
-        # The PDF itself is still perfectly renderable -- say so, and keep the
-        # page images available rather than reporting "no evidence".
         status = STATUS_NO_EXTRACTED_TEXT
         note = (
             "no text layer (image-only PDF, e.g. a scan) -- the pages render "
@@ -941,6 +1419,48 @@ def _preview_pdf(path: Path) -> dict[str, Any]:
     }
 
 
+def _preview_pdf_from_bytes(data: bytes) -> dict[str, Any]:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise SourceAccessError("the PDF parser is not installed", status=STATUS_UNSUPPORTED) from exc
+
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        pages_text = []
+        for page in reader.pages:
+            try:
+                pages_text.append(page.extract_text() or "")
+            except Exception:
+                pages_text.append("")
+        page_count = len(pages_text)
+        empty = not "".join(pages_text).strip()
+    except Exception as exc:
+        raise SourceAccessError(f"the PDF could not be parsed ({type(exc).__name__}: {exc})", status=STATUS_CORRUPTED) from exc
+
+    pages = [
+        {"page": index, "text": txt[:MAX_PAGE_CHARS]}
+        for index, txt in enumerate(pages_text[:MAX_PDF_PAGES], start=1)
+    ]
+    note = None
+    status = STATUS_AVAILABLE
+    if empty:
+        status = STATUS_NO_EXTRACTED_TEXT
+        note = "no text layer (image-only PDF, e.g. a scan) -- the pages render visually below"
+
+    return {
+        "status": status,
+        "reason": note,
+        "render_kind": "pdf",
+        "pdf": {
+            "page_count": page_count,
+            "text_available": not empty,
+            "pages": pages,
+            "truncated": page_count > MAX_PDF_PAGES,
+        },
+    }
+
+
 def _preview_pptx(path: Path) -> list[dict[str, Any]]:
     from app.datasets import readers
 
@@ -951,6 +1471,71 @@ def _preview_pptx(path: Path) -> list[dict[str, Any]]:
         raise SourceAccessError(exc.reason, status=status) from exc
     slides = []
     for index, page in enumerate(parsed.pages, start=1):
+        lines = [line for line in page.splitlines() if line.strip()]
+        slides.append(
+            {
+                "index": index,
+                "title": lines[0] if lines else f"Slide {index}",
+                "lines": [line.strip() for line in lines[1:200]],
+            }
+        )
+    return slides
+
+
+def _preview_pptx_from_bytes(data: bytes) -> list[dict[str, Any]]:
+    import zipfile
+    from xml.etree import ElementTree
+
+    namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            slide_names = sorted(
+                (
+                    name
+                    for name in package.namelist()
+                    if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+                ),
+                key=lambda name: int(
+                    "".join(ch for ch in name.rsplit("/", 1)[-1] if ch.isdigit()) or 0
+                ),
+            )
+            note_names = {
+                name.rsplit("/", 1)[-1].replace("notesSlide", "slide"): name
+                for name in package.namelist()
+                if name.startswith("ppt/notesSlides/notesSlide")
+            }
+            pages: list[str] = []
+            for name in slide_names:
+                try:
+                    root = ElementTree.fromstring(package.read(name))
+                except Exception:
+                    pages.append("")
+                    continue
+                texts = [
+                    element.text
+                    for element in root.iter(f"{namespace}t")
+                    if element.text and element.text.strip()
+                ]
+                notes_name = note_names.get(name.rsplit("/", 1)[-1])
+                if notes_name:
+                    try:
+                        notes_root = ElementTree.fromstring(package.read(notes_name))
+                        texts += [
+                            element.text
+                            for element in notes_root.iter(f"{namespace}t")
+                            if element.text and element.text.strip()
+                        ]
+                    except Exception:
+                        pass
+                pages.append("\n".join(texts))
+    except zipfile.BadZipFile as exc:
+        raise SourceAccessError(f"the PPTX could not be parsed ({type(exc).__name__}: {exc})", code="CORRUPTED") from exc
+
+    if not pages:
+        raise SourceAccessError("the presentation contains no slides", status=STATUS_NO_EXTRACTED_TEXT)
+
+    slides = []
+    for index, page in enumerate(pages, start=1):
         lines = [line for line in page.splitlines() if line.strip()]
         slides.append(
             {

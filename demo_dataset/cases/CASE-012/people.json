@@ -1,0 +1,67 @@
+[
+  {
+    "id": "PERSON-001",
+    "name": "Vivaan Patel",
+    "label": "Person",
+    "role": "Associate",
+    "age": 21,
+    "properties": {
+      "role": "Associate",
+      "age": 21,
+      "display_name": "Vivaan Patel",
+      "full_name": "Vivaan Patel"
+    }
+  },
+  {
+    "id": "PERSON-050",
+    "name": "Lakshmi Choudhary",
+    "label": "Person",
+    "role": "Subject",
+    "age": 25,
+    "properties": {
+      "role": "Subject",
+      "age": 25,
+      "display_name": "Lakshmi Choudhary",
+      "full_name": "Lakshmi Choudhary"
+    }
+  },
+  {
+    "id": "PERSON-051",
+    "name": "Karthik Kapoor",
+    "label": "Person",
+    "role": "Associate",
+    "age": 26,
+    "properties": {
+      "role": "Associate",
+      "age": 26,
+      "display_name": "Karthik Kapoor",
+      "full_name": "Karthik Kapoor"
+    }
+  },
+  {
+    "id": "PERSON-052",
+    "name": "Srinivas Rathore",
+    "label": "Person",
+    "role": "Witness",
+    "age": 27,
+    "properties": {
+      "role": "Witness",
+      "age": 27,
+      "display_name": "Srinivas Rathore",
+      "full_name": "Srinivas Rathore"
+    }
+  },
+  {
+    "id": "PERSON-053",
+    "name": "Ravi Reddy",
+    "label": "Person",
+    "role": "Contact",
+    "age": 28,
+    "properties": {
+      "role": "Contact",
+      "age": 28,
+      "display_name": "Ravi Reddy",
+      "full_name": "Ravi Reddy"
+    }
+  }
+]

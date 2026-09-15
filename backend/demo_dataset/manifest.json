@@ -1,0 +1,38 @@
+{
+  "name": "CrimeLink Production Demo Dataset v1",
+  "version": "1.0",
+  "created_at": "2026-09-15T14:27:18.167853",
+  "description": "Production-style persistent demo with 20 interconnected cases",
+  "counts": {
+    "cases": 20,
+    "people": 100,
+    "relationships": 216,
+    "evidence": 300,
+    "sources": 120,
+    "timeline_events": 258,
+    "investigations": 10
+  },
+  "hero_case": "CR-1024",
+  "cases": [
+    "CR-1024",
+    "CR-1025",
+    "CR-1026",
+    "CR-1027",
+    "CR-1028",
+    "CR-1029",
+    "CR-1030",
+    "CR-1031",
+    "CR-1032",
+    "CR-1033",
+    "CR-1034",
+    "CR-1035",
+    "CR-1036",
+    "CR-1037",
+    "CR-1038",
+    "CR-1039",
+    "CR-1040",
+    "CR-1041",
+    "CR-1042",
+    "CR-1043"
+  ]
+}

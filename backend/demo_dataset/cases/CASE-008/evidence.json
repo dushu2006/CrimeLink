@@ -1,0 +1,164 @@
+[
+  {
+    "evidence_id": "E-070",
+    "case_id": "case-008-demo",
+    "filename": "E-070_call_record.csv",
+    "storage_key": "evidence/E-070/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "CDR",
+    "title": "Call Record E-070"
+  },
+  {
+    "evidence_id": "E-072",
+    "case_id": "case-008-demo",
+    "filename": "E-072_fir.pdf",
+    "storage_key": "evidence/E-072/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-072"
+  },
+  {
+    "evidence_id": "E-073",
+    "case_id": "case-008-demo",
+    "filename": "E-073_charge_sheet.pdf",
+    "storage_key": "evidence/E-073/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-073"
+  },
+  {
+    "evidence_id": "E-074",
+    "case_id": "case-008-demo",
+    "filename": "E-074_surveillance_report.pdf",
+    "storage_key": "evidence/E-074/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-074"
+  },
+  {
+    "evidence_id": "E-075",
+    "case_id": "case-008-demo",
+    "filename": "E-075_transaction_report.csv",
+    "storage_key": "evidence/E-075/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-075"
+  },
+  {
+    "evidence_id": "E-076",
+    "case_id": "case-008-demo",
+    "filename": "E-076_scene_report.pdf",
+    "storage_key": "evidence/E-076/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-076"
+  },
+  {
+    "evidence_id": "E-077",
+    "case_id": "case-008-demo",
+    "filename": "E-077_intelligence_report.pdf",
+    "storage_key": "evidence/E-077/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "INTELLIGENCE_REPORT",
+    "title": "INTELLIGENCE_REPORT E-077"
+  },
+  {
+    "evidence_id": "E-078",
+    "case_id": "case-008-demo",
+    "filename": "E-078_financial.pdf",
+    "storage_key": "evidence/E-078/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FINANCIAL",
+    "title": "FINANCIAL E-078"
+  },
+  {
+    "evidence_id": "E-079",
+    "case_id": "case-008-demo",
+    "filename": "E-079_evidence.pdf",
+    "storage_key": "evidence/E-079/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "EVIDENCE",
+    "title": "EVIDENCE E-079"
+  },
+  {
+    "evidence_id": "E-080",
+    "case_id": "case-008-demo",
+    "filename": "E-080_call_record.csv",
+    "storage_key": "evidence/E-080/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "CDR",
+    "title": "Call Record E-080"
+  },
+  {
+    "evidence_id": "E-081",
+    "case_id": "case-008-demo",
+    "filename": "E-081_charge_sheet.pdf",
+    "storage_key": "evidence/E-081/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-081"
+  },
+  {
+    "evidence_id": "E-082",
+    "case_id": "case-008-demo",
+    "filename": "E-082_surveillance_report.pdf",
+    "storage_key": "evidence/E-082/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-082"
+  },
+  {
+    "evidence_id": "E-083",
+    "case_id": "case-008-demo",
+    "filename": "E-083_witness_statement.pdf",
+    "storage_key": "evidence/E-083/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "WITNESS_STATEMENT",
+    "title": "WITNESS_STATEMENT E-083"
+  },
+  {
+    "evidence_id": "E-084",
+    "case_id": "case-008-demo",
+    "filename": "E-084_scene_report.pdf",
+    "storage_key": "evidence/E-084/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-084"
+  },
+  {
+    "evidence_id": "E-244",
+    "case_id": "case-008-demo",
+    "filename": "E-244_scene_report.pdf",
+    "storage_key": "evidence/E-244/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-244"
+  },
+  {
+    "evidence_id": "E-275",
+    "case_id": "case-008-demo",
+    "filename": "E-275_transaction_report.csv",
+    "storage_key": "evidence/E-275/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-275"
+  },
+  {
+    "evidence_id": "E-281",
+    "case_id": "case-008-demo",
+    "filename": "E-281_charge_sheet.pdf",
+    "storage_key": "evidence/E-281/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-281"
+  },
+  {
+    "evidence_id": "E-296",
+    "case_id": "case-008-demo",
+    "filename": "E-296_fir.pdf",
+    "storage_key": "evidence/E-296/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-296"
+  }
+]
