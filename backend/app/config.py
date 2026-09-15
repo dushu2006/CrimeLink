@@ -181,6 +181,11 @@ class Settings(BaseSettings):
     # fail with an AttributeError before it ever reached a provider.
     ai_max_context_nodes: int = 300
     ai_max_context_edges: int = 600
+    #: Total character budget for document text included in AI context.
+    #: Previously every document (up to 3000 chars each) was sent unconditionally,
+    #: so a 50-doc case produced 150k chars of document text alone.
+    #: This caps the *total* document characters, not per-document.
+    ai_max_context_doc_chars: int = 30000
     #: Default hop depth used when retrieving context around a target entity.
     ai_retrieval_depth: int = 2
     #: Retries for a transient provider failure (timeouts, 5xx, rate limits).
@@ -195,6 +200,9 @@ class Settings(BaseSettings):
     ai_interactive_max_retries: int = 1
     ai_interactive_max_context_nodes: int = 100
     ai_interactive_max_context_edges: int = 200
+    #: Interactive override for total document char budget — keeps the
+    #: investigator-facing path comfortably within model timeout.
+    ai_interactive_max_context_doc_chars: int = 15000
 
     # ------------------------------------------------------ synthetic corpus
     synthetic_corpus_enabled: bool = False

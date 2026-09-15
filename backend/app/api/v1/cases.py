@@ -143,17 +143,87 @@ async def timeline(
     from_ts: str | None = None,
     to_ts: str | None = None,
     participant: str | None = None,
+    event_type: str | None = Query(None, description="Filter by event type"),
+    location: str | None = Query(None, description="Filter by location"),
+    evidence_type: str | None = Query(None, description="Filter by evidence type"),
+    entity: str | None = Query(None, description="Filter by entity name"),
     limit: int = Query(500, ge=1, le=2000),
 ) -> dict:
-    from app.services.graph_service import GraphService
+    from app.services.timeline_analysis import get_enhanced_timeline
 
-    events = await GraphService().timeline(
+    # If enhanced filters are used, use enhanced service
+    if event_type or location or evidence_type or entity:
+        events = await get_enhanced_timeline(
+            session,
+            scope,
+            case_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            participant=participant,
+            event_type=event_type,
+            location=location,
+            evidence_type=evidence_type,
+            entity=entity,
+            limit=limit,
+        )
+    else:
+        from app.services.graph_service import GraphService
+
+        events = await GraphService().timeline(
+            session,
+            scope,
+            case_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            participant=participant,
+            limit=limit,
+        )
+    return {"case_id": case_id, "events": events, "count": len(events)}
+
+
+class TimelineAnalyzeRequest(BaseModel):
+    from_ts: str | None = None
+    to_ts: str | None = None
+    question: str | None = Field(None, max_length=500, description="Question about the time window")
+
+
+@router.post("/{case_id}/timeline/analyze")
+@audited(
+    "TIMELINE_ANALYZE",
+    target=lambda result, **kw: f"case:{kw.get('case_id')}",
+    case_id=lambda result, **kw: kw.get("case_id"),
+    details=lambda result, **kw: {
+        "from_ts": kw.get("payload").from_ts if kw.get("payload") else None,
+        "to_ts": kw.get("payload").to_ts if kw.get("payload") else None,
+    },
+)
+async def analyze_timeline(
+    case_id: str,
+    payload: TimelineAnalyzeRequest,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN")),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    from app.services.timeline_analysis import analyze_timeline_window
+
+    return await analyze_timeline_window(
         session,
         scope,
         case_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        participant=participant,
-        limit=limit,
+        from_ts=payload.from_ts,
+        to_ts=payload.to_ts,
+        question=payload.question,
     )
-    return {"case_id": case_id, "events": events, "count": len(events)}
+
+
+@router.get("/{case_id}/dashboard")
+async def case_dashboard(
+    case_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    from app.services.case_dashboard import get_case_dashboard
+
+    return await get_case_dashboard(session, scope, case_id)

@@ -79,6 +79,16 @@ QUARANTINE_DEPTH = Gauge(
     "crimelink_quarantine_documents", "Documents in quarantine", registry=REGISTRY
 )
 AUDIT_ROWS = Gauge("crimelink_audit_rows", "Rows in the hash-chained audit log", registry=REGISTRY)
+AUDIT_VERIFICATION_FAILURES = Counter(
+    "crimelink_audit_verification_failures_total",
+    "Audit hash chain verification failures (should always be 0)",
+    registry=REGISTRY,
+)
+DB_HEALTH = Gauge(
+    "crimelink_db_health_ok",
+    "1 if database/graph/broker health checks pass, 0 if any fail",
+    registry=REGISTRY,
+)
 
 _lock = threading.Lock()
 _stage_timers: dict[str, float] = {}
@@ -101,13 +111,20 @@ def observe_stage_end(stage: str) -> None:
 
 
 def refresh_gauges() -> None:
-    """Recompute DB/graph-derived gauges on scrape."""
+    """Recompute DB/graph-derived gauges on scrape.
+
+    This is called on every /metrics scrape (15s). It must never raise.
+    """
+    graph_ok = False
+    db_ok = False
+
     try:
         from app.container import get_container
 
         stats = get_container().graph_store.stats()
         GRAPH_NODES.set(float(stats.get("nodes", 0)))
         GRAPH_EDGES.set(float(stats.get("edges", 0)))
+        graph_ok = True
     except Exception:  # noqa: BLE001 - metrics must never break the scrape
         pass
 
@@ -115,6 +132,7 @@ def refresh_gauges() -> None:
         from sqlalchemy import func, select
 
         from app.db.models import (
+            AuditLog,
             CaseDocument,
             DetectedPattern,
             EntityResolutionItem,
@@ -153,7 +171,19 @@ def refresh_gauges() -> None:
                 )
             ).scalar() or 0
             QUARANTINE_DEPTH.set(float(quarantined))
+            audit_rows = session.execute(select(func.count(AuditLog.id))).scalar() or 0
+            AUDIT_ROWS.set(float(audit_rows))
+            db_ok = True
     except Exception:  # noqa: BLE001
+        pass
+
+    # DB health gauge: 1 if both graph and DB queries succeeded, 0 otherwise
+    # This is what DatabaseHealthUnhealthy alert watches. Real health endpoint
+    # (/health/ready) does more thorough checks, but this gauge is sufficient for
+    # Prometheus alerting and is updated on every scrape.
+    try:
+        DB_HEALTH.set(1.0 if (graph_ok and db_ok) else 0.0)
+    except Exception:
         pass
 
 

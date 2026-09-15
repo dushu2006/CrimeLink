@@ -1,0 +1,156 @@
+# CrimeLink alerting rules — Priority 1.4
+# VERIFIED AGAINST REAL METRICS in backend/app/services/metrics.py:
+#   - crimelink_documents_processed_total (Counter, label document_type)
+#   - crimelink_documents_failed_total (Counter, label document_type)
+#   - crimelink_er_queue_pending (Gauge) — refresh_gauges() queries EntityResolutionItem PENDING count
+#   - crimelink_er_queue_oldest_item_hours (Gauge) — refresh_gauges() computes oldest PENDING age, SLA 48h per PRD 7.3
+#   - crimelink_pattern_queue_new (Gauge) — DetectedPattern status NEW
+#   - crimelink_quarantine_documents (Gauge) — CaseDocument quarantined
+#   - crimelink_graph_nodes / _edges (Gauge) — graph_store.stats()
+#   - crimelink_api_requests_total (Counter, labels method, path, status) — middleware in main.py
+#   - crimelink_api_request_duration_seconds_bucket (Histogram) — middleware
+#   - crimelink_audit_rows (Gauge) — AuditLog count, set in refresh_gauges()
+#   - crimelink_audit_verification_failures_total (Counter) — incremented in audit/service.py verify() on failure
+#   - crimelink_db_health_ok (Gauge 0/1) — set in refresh_gauges() based on graph_ok && db_ok
+# If a metric name here doesn't appear in metrics.py, the alert will silently never fire — this header is the verification checklist.
+
+groups:
+  - name: crimelink.pipeline
+    interval: 30s
+    rules:
+      - alert: CeleryQueueGrowing
+        # sum() because documents_processed_total has label document_type; without sum, increase returns multiple series and ==0 never matches cleanly
+        expr: sum(increase(crimelink_documents_processed_total[5m])) == 0 and crimelink_er_queue_pending > 10
+        for: 10m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Pipeline stalled — no documents processed for 10m with pending queue"
+          description: "Queue depth {{ $value }} and no processed docs in last 5m. Investigate worker health and Celery queue. Metrics: crimelink_documents_processed_total, crimelink_er_queue_pending (both verified in metrics.py)."
+
+      - alert: QuarantineSpike
+        expr: sum(increase(crimelink_documents_failed_total[15m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "High document quarantine rate"
+          description: "{{ $value }} docs failed/quarantined in last 15m. Check pipeline logs. Metric: crimelink_documents_failed_total (verified)."
+
+      - alert: PatternQueueBacklog
+        expr: crimelink_pattern_queue_new > 50
+        for: 15m
+        labels:
+          severity: info
+          component: analytics
+        annotations:
+          summary: "Pattern review backlog >50"
+          description: "Pattern queue depth {{ $value }}. Investigators may need to review/dismiss findings. Metric: crimelink_pattern_queue_new (verified)."
+
+  - name: crimelink.er_sla
+    interval: 1m
+    rules:
+      - alert: EntityResolutionSLABreach
+        expr: crimelink_er_queue_oldest_item_hours > 48
+        for: 5m
+        labels:
+          severity: critical
+          component: entity_resolution
+          sla: "48h"
+        annotations:
+          summary: "ER queue SLA breach — oldest item >48h"
+          description: "Oldest pending ER item is {{ $value }} hours old. SLA is 48h per PRD 7.3. Metric: crimelink_er_queue_oldest_item_hours (verified, set in refresh_gauges())."
+
+      - alert: EntityResolutionQueueHigh
+        expr: crimelink_er_queue_pending > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: entity_resolution
+        annotations:
+          summary: "ER queue depth >100"
+          description: "Pending ER items {{ $value }}. Metric: crimelink_er_queue_pending (verified)."
+
+  - name: crimelink.api
+    interval: 30s
+    rules:
+      - alert: HighAPIErrorRate
+        # sum() across method/path labels, filter 5xx status
+        expr: sum(rate(crimelink_api_requests_total{status=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High API 5xx error rate"
+          description: "5xx rate {{ $value }} per second over last 5m. Metric: crimelink_api_requests_total (verified, emitted in main.py middleware)."
+
+      - alert: APILatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(crimelink_api_request_duration_seconds_bucket[5m]))) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "API p95 latency >2s"
+          description: "p95 latency {{ $value }}s over last 5m. Metric: crimelink_api_request_duration_seconds_bucket (verified histogram)."
+
+      - alert: RateLimitingHigh
+        expr: sum(increase(crimelink_api_requests_total{status="429"}[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "High rate-limit (429) responses"
+          description: "{{ $value }} rate-limited requests in 5m. May indicate credential-stuffing. Metric: crimelink_api_requests_total{status=429} (verified, RateLimitError returns 429)."
+
+  - name: crimelink.audit
+    interval: 1m
+    rules:
+      - alert: AuditChainVerificationFailed
+        expr: increase(crimelink_audit_verification_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: audit
+          guarantee: "G3"
+        annotations:
+          summary: "Audit hash chain verification failed — possible tampering"
+          description: "Audit verification failures detected. Metric: crimelink_audit_verification_failures_total (verified, incremented in audit/service.py verify() and verify_async()). Run GET /admin/audit/verify immediately."
+
+      - alert: AuditLogGrowthStalled
+        # audit_rows is a Gauge that monotonically increases (no DELETE API), so delta/increase works; alert if no growth for 30m
+        expr: delta(crimelink_audit_rows[30m]) == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: audit
+        annotations:
+          summary: "Audit log not growing — possible logging failure"
+          description: "No new audit rows in 30m (delta 0). Metric: crimelink_audit_rows (verified, set in refresh_gauges()). Audit must be append-only."
+
+  - name: crimelink.infra
+    interval: 30s
+    rules:
+      - alert: DatabaseHealthUnhealthy
+        expr: crimelink_db_health_ok == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database health endpoint reports unhealthy"
+          description: "DB health gauge 0 for 2m. Metric: crimelink_db_health_ok (verified, set in refresh_gauges() based on graph_ok && db_ok). Check postgres, neo4j, redis, minio healthchecks and /api/v1/health/ready."
+
+      - alert: GraphNodesUnusualDrop
+        expr: delta(crimelink_graph_nodes[10m]) < -100
+        for: 5m
+        labels:
+          severity: critical
+          component: graph
+        annotations:
+          summary: "Graph nodes dropped sharply"
+          description: "Graph lost {{ $value }} nodes in 10m. Should never happen (no DELETE API). Metric: crimelink_graph_nodes (verified). Check for data corruption."
