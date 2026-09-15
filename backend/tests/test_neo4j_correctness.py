@@ -10,7 +10,15 @@ import re
 
 import pytest
 
-from app.adapters.graph.neo4j import CONSTRAINTS, Neo4jGraphStore, _PK_LABELS, _FULLTEXT_LABELS
+from app.adapters.graph.neo4j import (
+    CASE_PROJECTION,
+    CONSTRAINTS,
+    MULTI_CASE_PROJECTION,
+    SEARCH_FALLBACK,
+    Neo4jGraphStore,
+    _FULLTEXT_LABELS,
+    _PK_LABELS,
+)
 from app.domain.enums import EntityType
 
 
@@ -69,6 +77,23 @@ class TestExpandQueryDepthLiteral:
         assert q1 != q2
         assert "*1..1" in q1
         assert "*1..3" in q2
+
+
+# ---- WS 1.2: projection predicates use Neo4j-compatible negation ---------
+
+class TestProjectionPredicates:
+    """Projection queries must use prefix NOT for negated membership tests."""
+
+    @pytest.mark.parametrize(
+        "query",
+        (CASE_PROJECTION, MULTI_CASE_PROJECTION, SEARCH_FALLBACK),
+    )
+    def test_entity_type_exclusion_is_prefix_not(self, query):
+        # Neo4j Cypher does not accept the SQL-style ``value NOT IN list``
+        # spelling.  The equivalent prefix form parses on supported Neo4j 5
+        # versions and preserves the null-safe coalesce behavior.
+        assert " NOT IN " not in query
+        assert "NOT (coalesce(n.entity_type, '') IN ['DOCUMENT', 'EVIDENCE'])" in query
 
 
 # ---- WS 1.2: constraints have proper label scope -------------------------
