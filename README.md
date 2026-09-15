@@ -297,17 +297,44 @@ before bootstrapping:
 [CrimeLink] PostgreSQL is reachable at localhost:5432.
 ```
 
-If a service is genuinely down you get an actionable message instead of a DNS
-error — `PostgreSQL is not running (localhost:5432). Start the CrimeLink
-infrastructure services and retry: docker compose -f docker-compose.infra.yml
-up -d` — and the launch stops. Nothing is bypassed, and the launcher never runs
-`down`, never removes a volume and never calls `reset_demo`.
+If a service is genuinely down the launch stops *before* the bootstrap, with the
+services that failed and the command that fixes them — no traceback, no
+half-written database:
+
+```text
+[CrimeLink] PostgreSQL is not reachable at localhost:5432.
+
+[CrimeLink] ERROR: Required infrastructure is not running.
+
+  PostgreSQL : localhost:5432  [NOT REACHABLE]
+  Neo4j      : localhost:7687  [NOT REACHABLE]
+  MinIO      : localhost:9000  [NOT REACHABLE]
+  Redis      : localhost:6379  [NOT REACHABLE]
+
+Start the CrimeLink infrastructure services and retry:
+    docker compose -f docker-compose.infra.yml up -d
+or let this launcher start them for you:
+    python run.py --start-infra
+Check what is running with:
+    docker compose -f docker-compose.infra.yml ps
+Existing containers, volumes and the persisted demo dataset are left untouched.
+```
+
+Nothing is bypassed, and the launcher never runs `down`, never removes a volume
+and never calls `reset_demo`.
 
 Useful overrides: `CRIMELINK_INFRA_HOST`, `CRIMELINK_POSTGRES_HOST_PORT`
 (and `_NEO4J_/_MINIO_/_REDIS_`), `--runtime-context host|docker|production`,
-`--infra-timeout`. When the stack is already running, `run.py` reads the actual
-published ports back from Docker (`docker port crimelink-postgres 5432`) rather
-than assuming them; an explicit value in `.env` still wins.
+`--infra-timeout` (seconds to wait for infrastructure; default 120),
+`--reinstall` (force a backend `pip` and frontend `npm` reinstall). When the
+stack is already running, `run.py` reads the actual published ports back from
+Docker (`docker port crimelink-postgres 5432`) rather than assuming them; an
+explicit value in `.env` still wins.
+
+`CRIMELINK_POSTGRES_HOST_PORT` and friends set the target of the Compose-name
+rewrite. If your DSN names a host that is not a Compose service (for example
+`localhost:5432`), that DSN is used exactly as written — by the launcher and by
+`app.config` alike — and the port override does not apply.
 
 ### Manual start (without run.py)
 
