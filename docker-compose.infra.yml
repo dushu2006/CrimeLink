@@ -6,9 +6,12 @@
 # That is exactly why `python run.py` on Windows cannot resolve the DNS name
 # `postgres` — the name exists on the Compose network, not on the host.
 #
-# This file starts the same four services, with the same images, credentials,
+# This file starts the same four services, with the same credentials,
 # healthchecks and volumes, but with their ports published on the host so
-# native Python (run.py, pytest, alembic, psql) can reach them:
+# native Python (run.py, pytest, alembic, psql) can reach them. MinIO is pulled
+# from Quay because the Docker Hub `minio/minio` repository is denied in some
+# Docker environments, while the equivalent pinned release is available from
+# Quay:
 #
 #   docker compose -f docker-compose.infra.yml up -d        # start (idempotent)
 #   docker compose -f docker-compose.infra.yml ps           # status
@@ -122,7 +125,7 @@ services:
   # 4. Object store (write-once) — S3 API (9000) and console (9001)
   # ---------------------------------------------------------------------------
   minio:
-    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: crimelink-minio
     command: server /data --console-address ":9001"
     environment:
@@ -134,7 +137,7 @@ services:
       - "${CRIMELINK_INFRA_BIND_ADDRESS:-127.0.0.1}:${CRIMELINK_MINIO_HOST_PORT:-9000}:9000"
       - "${CRIMELINK_INFRA_BIND_ADDRESS:-127.0.0.1}:${CRIMELINK_MINIO_CONSOLE_HOST_PORT:-9001}:9001"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "mc", "ready", "local"]
       interval: 15s
       timeout: 5s
       retries: 10
