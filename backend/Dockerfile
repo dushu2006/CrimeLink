@@ -48,6 +48,10 @@ COPY --from=build /opt/venv /opt/venv
 WORKDIR /srv/crimelink
 COPY --chown=crimelink:crimelink app ./app
 COPY --chown=crimelink:crimelink scripts ./scripts
+# The demo corpus ships in the image on purpose: scripts/seed_demo.py reads it
+# (and generate_demo_dataset regenerates it only when absent), so a container
+# can seed a fresh deployment without a bind mount or an extra download.
+COPY --chown=crimelink:crimelink demo_dataset ./demo_dataset
 COPY --chown=crimelink:crimelink alembic ./alembic
 COPY --chown=crimelink:crimelink alembic.ini ./alembic.ini
 COPY --chown=crimelink:crimelink pyproject.toml ./pyproject.toml

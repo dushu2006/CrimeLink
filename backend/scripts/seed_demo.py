@@ -993,7 +993,14 @@ def seed_neo4j():
                             p.confidence = 0.95,
                             p.dataset_id = $dataset_id,
                             p.canonical_id = $id,
-                            p.entity_type = 'PERSON'
+                            p.entity_type = 'PERSON',
+                            // Projection flags: Neo4j raises
+                            // UnknownPropertyKeyWarning for every projection
+                            // that reads a property key no node carries, so the
+                            // seed writes them like the graph adapter does.
+                            p.is_active = true,
+                            p.is_document_artifact = false,
+                            p.staging = false
                         """,
                         id=person["id"],
                         label=person.get("label", "Person"),
@@ -1019,7 +1026,10 @@ def seed_neo4j():
                             e.case_id = $case_id,
                             e.dataset_id = $dataset_id,
                             e.canonical_id = $id,
-                            e.entity_type = 'EVENT'
+                            e.entity_type = 'EVENT',
+                            e.is_active = true,
+                            e.is_document_artifact = false,
+                            e.staging = false
                         """,
                         id=tl["id"],
                         title=tl["title"],

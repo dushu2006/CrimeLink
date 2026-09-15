@@ -30,10 +30,22 @@ target_metadata = Base.metadata
 
 
 def _url() -> str:
-    """Resolve the sync database URL (Alembic is a synchronous tool)."""
+    """Resolve the sync database URL (Alembic is a synchronous tool).
+
+    Resolution order — never a hard-coded URL:
+
+    1. ``CRIMELINK_ALEMBIC_URL`` (explicit operator override for tooling);
+    2. ``sqlalchemy.url`` when a config was supplied in-process (this is how
+       ``app.db.upgrade`` pins migrations to the same database the application
+       uses, including a URL forced by the test suite);
+    3. the application settings, so app, workers and migrations cannot drift.
+    """
     override = os.environ.get("CRIMELINK_ALEMBIC_URL")
     if override:
         return override
+    configured = config.get_main_option("sqlalchemy.url")
+    if configured:
+        return configured
     settings = get_settings()
     if settings.effective_relational_backend == "postgres":
         return settings.postgres_dsn_sync

@@ -92,10 +92,19 @@ const METRIC_HEADINGS: Record<string, string> = {
   pagerank: "PageRank",
 };
 
-export default function NetworkAnalysisPanel() {
-  const [mode, setMode] = useState<NetworkScopeMode>("master");
+export type NetworkAnalysisPanelProps = {
+  /**
+   * Case id carried by the URL (``?case=…``).  When present the panel opens
+   * on CASE NETWORK with that case already selected, so drilling into a case
+   * never lands on the cross-case master scope by accident.
+   */
+  initialCaseId?: string;
+};
+
+export function NetworkAnalysisPanel({ initialCaseId }: NetworkAnalysisPanelProps = {}) {
+  const [mode, setMode] = useState<NetworkScopeMode>(initialCaseId ? "case" : "master");
   const [cases, setCases] = useState<CaseSummary[] | null>(null);
-  const [caseId, setCaseId] = useState<string>("");
+  const [caseId, setCaseId] = useState<string>(initialCaseId ?? "");
   const [persons, setPersons] = useState<MasterPersonTarget[] | null>(null);
   const [personKey, setPersonKey] = useState<string>("");
 
@@ -117,13 +126,26 @@ export default function NetworkAnalysisPanel() {
 
   const pollRef = useRef<number | null>(null);
 
+  // A case-scoped URL always wins: adopt it (and its scope) when it changes.
+  useEffect(() => {
+    if (!initialCaseId) return;
+    setMode("case");
+    setCaseId(initialCaseId);
+  }, [initialCaseId]);
+
   // ---- context selectors -------------------------------------------------
   useEffect(() => {
     if (mode === "case" && cases === null) {
       listCases()
         .then((res) => {
           setCases(res.items);
-          setCaseId((current) => current || (res.items[0]?.id ?? ""));
+          setCaseId((current) => {
+            // Keep a valid explicit choice (URL or user); otherwise fall back
+            // to the URL case and only then to the first case in the dataset.
+            if (current && res.items.some((c) => c.id === current)) return current;
+            if (initialCaseId && res.items.some((c) => c.id === initialCaseId)) return initialCaseId;
+            return current || (res.items[0]?.id ?? "");
+          });
         })
         .catch((err: Error) => setError(err.message));
     }
@@ -894,3 +916,6 @@ function CrossCaseSection({ analysis }: { analysis: NetworkAnalysisResult }) {
     </section>
   );
 }
+
+// Default export kept for the lazy/Suspense call sites that already use it.
+export default NetworkAnalysisPanel;

@@ -35,12 +35,28 @@ _sync_sessionmaker: sessionmaker[Session] | None = None
 _forced_url: str | None = None
 
 
+def _with_driver(url: str, driver: str) -> str:
+    """Point a *bare* ``postgresql://`` URL at the driver this application uses.
+
+    A hosting platform hands out its connection string without a driver name
+    (Render's ``fromDatabase.connectionString`` is exactly
+    ``postgresql://user:password@host:port/database``).  SQLAlchemy reads that as
+    psycopg2, which cannot drive the async engine, so the driver is added here
+    instead of requiring every deployment to hand-edit the scheme.  A URL that
+    already names a driver is returned untouched.
+    """
+    for scheme in ("postgresql://", "postgres://"):
+        if url.startswith(scheme):
+            return f"postgresql+{driver}://" + url[len(scheme):]
+    return url
+
+
 def async_url(settings: Settings | None = None) -> str:
     settings = settings or get_settings()
     if _forced_url:
         return _forced_url
     if settings.effective_relational_backend == "postgres":
-        return settings.postgres_dsn
+        return _with_driver(settings.postgres_dsn, "asyncpg")
     return settings.sqlite_url
 
 
@@ -49,7 +65,7 @@ def sync_url(settings: Settings | None = None) -> str:
     if _forced_url:
         return _forced_url.replace("+aiosqlite", "").replace("+asyncpg", "+psycopg2")
     if settings.effective_relational_backend == "postgres":
-        return settings.postgres_dsn_sync
+        return _with_driver(settings.postgres_dsn_sync, "psycopg2")
     return settings.sqlite_url_sync
 
 
