@@ -1,0 +1,54 @@
+[
+  {
+    "id": "PERSON-082-CALLED-PERSON-084-case-017-demo",
+    "source": "PERSON-082",
+    "target": "PERSON-084",
+    "rel_type": "CALLED",
+    "case_id": "case-017-demo",
+    "confidence": 0.8,
+    "evidence": "E-156",
+    "evidence_list": [
+      "E-156"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-084-ASSOCIATE_OF-PERSON-087-case-017-demo",
+    "source": "PERSON-084",
+    "target": "PERSON-087",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-017-demo",
+    "confidence": 0.8200000000000001,
+    "evidence": "E-157",
+    "evidence_list": [
+      "E-157"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-087-CALLED-PERSON-083-case-017-demo",
+    "source": "PERSON-087",
+    "target": "PERSON-083",
+    "rel_type": "CALLED",
+    "case_id": "case-017-demo",
+    "confidence": 0.8400000000000001,
+    "evidence": "E-158",
+    "evidence_list": [
+      "E-158"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-083-ASSOCIATE_OF-PERSON-081-case-017-demo",
+    "source": "PERSON-083",
+    "target": "PERSON-081",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-017-demo",
+    "confidence": 0.8600000000000001,
+    "evidence": "E-159",
+    "evidence_list": [
+      "E-159"
+    ],
+    "properties": {}
+  }
+]

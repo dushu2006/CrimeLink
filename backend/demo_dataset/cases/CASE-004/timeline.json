@@ -1,0 +1,190 @@
+[
+  {
+    "id": "EVENT-0030",
+    "case_id": "case-004-demo",
+    "event_type": "MEETING",
+    "title": "Event EVENT-0030 \u2014 CR-1027",
+    "timestamp": "2026-06-17T23:00:00",
+    "location": "Location 1 \u2014 CR-1027",
+    "participants": [
+      "PERSON-019",
+      "PERSON-022"
+    ],
+    "description": "Timeline event EVENT-0030 for case CR-1027 involving PERSON-019, PERSON-022"
+  },
+  {
+    "id": "EVENT-0031",
+    "case_id": "case-004-demo",
+    "event_type": "CALL",
+    "title": "Event EVENT-0031 \u2014 CR-1027",
+    "timestamp": "2026-04-19T20:00:00",
+    "location": "Location 2 \u2014 CR-1027",
+    "participants": [
+      "PERSON-022"
+    ],
+    "description": "Timeline event EVENT-0031 for case CR-1027 involving PERSON-022"
+  },
+  {
+    "id": "EVENT-0032",
+    "case_id": "case-004-demo",
+    "event_type": "TRANSACTION",
+    "title": "Event EVENT-0032 \u2014 CR-1027",
+    "timestamp": "2026-02-27T09:00:00",
+    "location": "Location 3 \u2014 CR-1027",
+    "participants": [
+      "PERSON-023",
+      "PERSON-020"
+    ],
+    "description": "Timeline event EVENT-0032 for case CR-1027 involving PERSON-023, PERSON-020"
+  },
+  {
+    "id": "EVENT-0033",
+    "case_id": "case-004-demo",
+    "event_type": "SURVEILLANCE",
+    "title": "Event EVENT-0033 \u2014 CR-1027",
+    "timestamp": "2026-01-26T09:00:00",
+    "location": "Location 4 \u2014 CR-1027",
+    "participants": [
+      "PERSON-020"
+    ],
+    "description": "Timeline event EVENT-0033 for case CR-1027 involving PERSON-020"
+  },
+  {
+    "id": "EVENT-0034",
+    "case_id": "case-004-demo",
+    "event_type": "INCIDENT",
+    "title": "Event EVENT-0034 \u2014 CR-1027",
+    "timestamp": "2026-06-05T19:00:00",
+    "location": "Location 5 \u2014 CR-1027",
+    "participants": [
+      "PERSON-021",
+      "PERSON-017"
+    ],
+    "description": "Timeline event EVENT-0034 for case CR-1027 involving PERSON-021, PERSON-017"
+  },
+  {
+    "id": "EVENT-0035",
+    "case_id": "case-004-demo",
+    "event_type": "MEETING",
+    "title": "Event EVENT-0035 \u2014 CR-1027",
+    "timestamp": "2026-04-21T06:00:00",
+    "location": "Location 6 \u2014 CR-1027",
+    "participants": [
+      "PERSON-017"
+    ],
+    "description": "Timeline event EVENT-0035 for case CR-1027 involving PERSON-017"
+  },
+  {
+    "id": "EVENT-0036",
+    "case_id": "case-004-demo",
+    "event_type": "CALL",
+    "title": "Event EVENT-0036 \u2014 CR-1027",
+    "timestamp": "2026-03-19T05:00:00",
+    "location": "Location 7 \u2014 CR-1027",
+    "participants": [
+      "PERSON-018",
+      "PERSON-024"
+    ],
+    "description": "Timeline event EVENT-0036 for case CR-1027 involving PERSON-018, PERSON-024"
+  },
+  {
+    "id": "EVENT-0037",
+    "case_id": "case-004-demo",
+    "event_type": "TRANSACTION",
+    "title": "Event EVENT-0037 \u2014 CR-1027",
+    "timestamp": "2026-07-02T22:00:00",
+    "location": "Location 8 \u2014 CR-1027",
+    "participants": [
+      "PERSON-024"
+    ],
+    "description": "Timeline event EVENT-0037 for case CR-1027 involving PERSON-024"
+  },
+  {
+    "id": "EVENT-0038",
+    "case_id": "case-004-demo",
+    "event_type": "SURVEILLANCE",
+    "title": "Event EVENT-0038 \u2014 CR-1027",
+    "timestamp": "2026-04-02T03:00:00",
+    "location": "Location 9 \u2014 CR-1027",
+    "participants": [
+      "PERSON-016",
+      "PERSON-019"
+    ],
+    "description": "Timeline event EVENT-0038 for case CR-1027 involving PERSON-016, PERSON-019"
+  },
+  {
+    "id": "EVENT-0039",
+    "case_id": "case-004-demo",
+    "event_type": "INCIDENT",
+    "title": "Event EVENT-0039 \u2014 CR-1027",
+    "timestamp": "2026-03-25T03:00:00",
+    "location": "Location 10 \u2014 CR-1027",
+    "participants": [
+      "PERSON-019"
+    ],
+    "description": "Timeline event EVENT-0039 for case CR-1027 involving PERSON-019"
+  },
+  {
+    "id": "EVENT-0040",
+    "case_id": "case-004-demo",
+    "event_type": "MEETING",
+    "title": "Event EVENT-0040 \u2014 CR-1027",
+    "timestamp": "2026-06-19T01:00:00",
+    "location": "Location 11 \u2014 CR-1027",
+    "participants": [
+      "PERSON-022",
+      "PERSON-023"
+    ],
+    "description": "Timeline event EVENT-0040 for case CR-1027 involving PERSON-022, PERSON-023"
+  },
+  {
+    "id": "EVENT-0041",
+    "case_id": "case-004-demo",
+    "event_type": "CALL",
+    "title": "Event EVENT-0041 \u2014 CR-1027",
+    "timestamp": "2026-07-12T08:00:00",
+    "location": "Location 12 \u2014 CR-1027",
+    "participants": [
+      "PERSON-023"
+    ],
+    "description": "Timeline event EVENT-0041 for case CR-1027 involving PERSON-023"
+  },
+  {
+    "id": "EVENT-0042",
+    "case_id": "case-004-demo",
+    "event_type": "TRANSACTION",
+    "title": "Event EVENT-0042 \u2014 CR-1027",
+    "timestamp": "2026-02-24T14:00:00",
+    "location": "Location 13 \u2014 CR-1027",
+    "participants": [
+      "PERSON-020",
+      "PERSON-021"
+    ],
+    "description": "Timeline event EVENT-0042 for case CR-1027 involving PERSON-020, PERSON-021"
+  },
+  {
+    "id": "EVENT-0043",
+    "case_id": "case-004-demo",
+    "event_type": "SURVEILLANCE",
+    "title": "Event EVENT-0043 \u2014 CR-1027",
+    "timestamp": "2026-06-15T05:00:00",
+    "location": "Location 14 \u2014 CR-1027",
+    "participants": [
+      "PERSON-021"
+    ],
+    "description": "Timeline event EVENT-0043 for case CR-1027 involving PERSON-021"
+  },
+  {
+    "id": "EVENT-0044",
+    "case_id": "case-004-demo",
+    "event_type": "INCIDENT",
+    "title": "Event EVENT-0044 \u2014 CR-1027",
+    "timestamp": "2026-02-05T11:00:00",
+    "location": "Location 15 \u2014 CR-1027",
+    "participants": [
+      "PERSON-017",
+      "PERSON-018"
+    ],
+    "description": "Timeline event EVENT-0044 for case CR-1027 involving PERSON-017, PERSON-018"
+  }
+]

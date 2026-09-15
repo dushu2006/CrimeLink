@@ -1,0 +1,146 @@
+[
+  {
+    "evidence_id": "E-010",
+    "case_id": "case-003-demo",
+    "filename": "E-010_call_record.csv",
+    "storage_key": "evidence/E-010/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "CDR",
+    "title": "Call Record E-010"
+  },
+  {
+    "evidence_id": "E-011",
+    "case_id": "case-003-demo",
+    "filename": "E-011_witness_statement.pdf",
+    "storage_key": "evidence/E-011/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "WITNESS_STATEMENT",
+    "title": "WITNESS_STATEMENT E-011"
+  },
+  {
+    "evidence_id": "E-012",
+    "case_id": "case-003-demo",
+    "filename": "E-012_scene_report.pdf",
+    "storage_key": "evidence/E-012/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-012"
+  },
+  {
+    "evidence_id": "E-013",
+    "case_id": "case-003-demo",
+    "filename": "E-013_intelligence_report.pdf",
+    "storage_key": "evidence/E-013/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "INTELLIGENCE_REPORT",
+    "title": "INTELLIGENCE_REPORT E-013"
+  },
+  {
+    "evidence_id": "E-014",
+    "case_id": "case-003-demo",
+    "filename": "E-014_financial.pdf",
+    "storage_key": "evidence/E-014/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FINANCIAL",
+    "title": "FINANCIAL E-014"
+  },
+  {
+    "evidence_id": "E-015",
+    "case_id": "case-003-demo",
+    "filename": "E-015_transaction_report.csv",
+    "storage_key": "evidence/E-015/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-015"
+  },
+  {
+    "evidence_id": "E-016",
+    "case_id": "case-003-demo",
+    "filename": "E-016_fir.pdf",
+    "storage_key": "evidence/E-016/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-016"
+  },
+  {
+    "evidence_id": "E-017",
+    "case_id": "case-003-demo",
+    "filename": "E-017_charge_sheet.pdf",
+    "storage_key": "evidence/E-017/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-017"
+  },
+  {
+    "evidence_id": "E-018",
+    "case_id": "case-003-demo",
+    "filename": "E-018_surveillance_report.pdf",
+    "storage_key": "evidence/E-018/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-018"
+  },
+  {
+    "evidence_id": "E-019",
+    "case_id": "case-003-demo",
+    "filename": "E-019_witness_statement.pdf",
+    "storage_key": "evidence/E-019/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "WITNESS_STATEMENT",
+    "title": "WITNESS_STATEMENT E-019"
+  },
+  {
+    "evidence_id": "E-118",
+    "case_id": "case-003-demo",
+    "filename": "E-118_surveillance_log.pdf",
+    "storage_key": "evidence/E-118/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "Surveillance Log E-118"
+  },
+  {
+    "evidence_id": "E-216",
+    "case_id": "case-003-demo",
+    "filename": "E-216_fir.pdf",
+    "storage_key": "evidence/E-216/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-216"
+  },
+  {
+    "evidence_id": "E-257",
+    "case_id": "case-003-demo",
+    "filename": "E-257_charge_sheet.pdf",
+    "storage_key": "evidence/E-257/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-257"
+  },
+  {
+    "evidence_id": "E-260",
+    "case_id": "case-003-demo",
+    "filename": "E-260_call_record.csv",
+    "storage_key": "evidence/E-260/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "CDR",
+    "title": "Call Record E-260"
+  },
+  {
+    "evidence_id": "E-274",
+    "case_id": "case-003-demo",
+    "filename": "E-274_surveillance_report.pdf",
+    "storage_key": "evidence/E-274/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-274"
+  },
+  {
+    "evidence_id": "E-298",
+    "case_id": "case-003-demo",
+    "filename": "E-298_surveillance_report.pdf",
+    "storage_key": "evidence/E-298/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-298"
+  }
+]

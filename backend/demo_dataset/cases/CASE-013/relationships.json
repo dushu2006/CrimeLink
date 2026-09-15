@@ -1,0 +1,28 @@
+[
+  {
+    "id": "PERSON-081-SHARED_ACCOUNT-PERSON-080-case-013-demo",
+    "source": "PERSON-081",
+    "target": "PERSON-080",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-013-demo",
+    "confidence": 0.8131395740033602,
+    "evidence": "E-119",
+    "evidence_list": [
+      "E-119"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-080-SHARED_VEHICLE-PERSON-081-case-013-demo",
+    "source": "PERSON-080",
+    "target": "PERSON-081",
+    "rel_type": "SHARED_VEHICLE",
+    "case_id": "case-013-demo",
+    "confidence": 0.6534937439923721,
+    "evidence": "E-120",
+    "evidence_list": [
+      "E-120"
+    ],
+    "properties": {}
+  }
+]

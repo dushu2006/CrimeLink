@@ -1,0 +1,106 @@
+[
+  {
+    "id": "PERSON-081",
+    "name": "Amit Kapoor",
+    "label": "Person",
+    "role": "Associate",
+    "age": 56,
+    "properties": {
+      "role": "Associate",
+      "age": 56,
+      "display_name": "Amit Kapoor",
+      "full_name": "Amit Kapoor"
+    }
+  },
+  {
+    "id": "PERSON-082",
+    "name": "Suresh Rathore",
+    "label": "Person",
+    "role": "Witness",
+    "age": 57,
+    "properties": {
+      "role": "Witness",
+      "age": 57,
+      "display_name": "Suresh Rathore",
+      "full_name": "Suresh Rathore"
+    }
+  },
+  {
+    "id": "PERSON-083",
+    "name": "Ramesh Reddy",
+    "label": "Person",
+    "role": "Contact",
+    "age": 58,
+    "properties": {
+      "role": "Contact",
+      "age": 58,
+      "display_name": "Ramesh Reddy",
+      "full_name": "Ramesh Reddy"
+    }
+  },
+  {
+    "id": "PERSON-084",
+    "name": "Vikram Ali",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 59,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 59,
+      "display_name": "Vikram Ali",
+      "full_name": "Vikram Ali"
+    }
+  },
+  {
+    "id": "PERSON-085",
+    "name": "Sanjay Chauhan",
+    "label": "Person",
+    "role": "Subject",
+    "age": 60,
+    "properties": {
+      "role": "Subject",
+      "age": 60,
+      "display_name": "Sanjay Chauhan",
+      "full_name": "Sanjay Chauhan"
+    }
+  },
+  {
+    "id": "PERSON-086",
+    "name": "Anil Yadav",
+    "label": "Person",
+    "role": "Associate",
+    "age": 61,
+    "properties": {
+      "role": "Associate",
+      "age": 61,
+      "display_name": "Anil Yadav",
+      "full_name": "Anil Yadav"
+    }
+  },
+  {
+    "id": "PERSON-087",
+    "name": "Sunil Gupta",
+    "label": "Person",
+    "role": "Witness",
+    "age": 62,
+    "properties": {
+      "role": "Witness",
+      "age": 62,
+      "display_name": "Sunil Gupta",
+      "full_name": "Sunil Gupta"
+    }
+  },
+  {
+    "id": "PERSON-088",
+    "name": "Rajesh Desai",
+    "label": "Person",
+    "role": "Contact",
+    "age": 63,
+    "properties": {
+      "role": "Contact",
+      "age": 63,
+      "display_name": "Rajesh Desai",
+      "full_name": "Rajesh Desai"
+    }
+  }
+]

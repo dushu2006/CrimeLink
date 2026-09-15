@@ -1,0 +1,74 @@
+[
+  {
+    "evidence_id": "E-102",
+    "case_id": "case-011-demo",
+    "filename": "E-102_financial.pdf",
+    "storage_key": "evidence/E-102/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FINANCIAL",
+    "title": "FINANCIAL E-102"
+  },
+  {
+    "evidence_id": "E-104",
+    "case_id": "case-011-demo",
+    "filename": "E-104_fir.pdf",
+    "storage_key": "evidence/E-104/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-104"
+  },
+  {
+    "evidence_id": "E-105",
+    "case_id": "case-011-demo",
+    "filename": "E-105_transaction_report.csv",
+    "storage_key": "evidence/E-105/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-105"
+  },
+  {
+    "evidence_id": "E-106",
+    "case_id": "case-011-demo",
+    "filename": "E-106_surveillance_report.pdf",
+    "storage_key": "evidence/E-106/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-106"
+  },
+  {
+    "evidence_id": "E-107",
+    "case_id": "case-011-demo",
+    "filename": "E-107_witness_statement.pdf",
+    "storage_key": "evidence/E-107/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "WITNESS_STATEMENT",
+    "title": "WITNESS_STATEMENT E-107"
+  },
+  {
+    "evidence_id": "E-108",
+    "case_id": "case-011-demo",
+    "filename": "E-108_scene_report.pdf",
+    "storage_key": "evidence/E-108/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-108"
+  },
+  {
+    "evidence_id": "E-109",
+    "case_id": "case-011-demo",
+    "filename": "E-109_intelligence_report.pdf",
+    "storage_key": "evidence/E-109/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "INTELLIGENCE_REPORT",
+    "title": "INTELLIGENCE_REPORT E-109"
+  },
+  {
+    "evidence_id": "E-242",
+    "case_id": "case-011-demo",
+    "filename": "E-242_surveillance_report.pdf",
+    "storage_key": "evidence/E-242/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-242"
+  }
+]

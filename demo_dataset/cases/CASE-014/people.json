@@ -1,0 +1,158 @@
+[
+  {
+    "id": "PERSON-066",
+    "name": "Mohammed Nair",
+    "label": "Person",
+    "role": "Associate",
+    "age": 41,
+    "properties": {
+      "role": "Associate",
+      "age": 41,
+      "display_name": "Mohammed Nair",
+      "full_name": "Mohammed Nair"
+    }
+  },
+  {
+    "id": "PERSON-067",
+    "name": "Atharv Ahmed",
+    "label": "Person",
+    "role": "Witness",
+    "age": 42,
+    "properties": {
+      "role": "Witness",
+      "age": 42,
+      "display_name": "Atharv Ahmed",
+      "full_name": "Atharv Ahmed"
+    }
+  },
+  {
+    "id": "PERSON-068",
+    "name": "Ayaan Malhotra",
+    "label": "Person",
+    "role": "Contact",
+    "age": 43,
+    "properties": {
+      "role": "Contact",
+      "age": 43,
+      "display_name": "Ayaan Malhotra",
+      "full_name": "Ayaan Malhotra"
+    }
+  },
+  {
+    "id": "PERSON-069",
+    "name": "Krishna Singh",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 44,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 44,
+      "display_name": "Krishna Singh",
+      "full_name": "Krishna Singh"
+    }
+  },
+  {
+    "id": "PERSON-070",
+    "name": "Saanvi Jain",
+    "label": "Person",
+    "role": "Subject",
+    "age": 45,
+    "properties": {
+      "role": "Subject",
+      "age": 45,
+      "display_name": "Saanvi Jain",
+      "full_name": "Saanvi Jain"
+    }
+  },
+  {
+    "id": "PERSON-071",
+    "name": "Ananya Khan",
+    "label": "Person",
+    "role": "Associate",
+    "age": 46,
+    "properties": {
+      "role": "Associate",
+      "age": 46,
+      "display_name": "Ananya Khan",
+      "full_name": "Ananya Khan"
+    }
+  },
+  {
+    "id": "PERSON-072",
+    "name": "Diya Srivastava",
+    "label": "Person",
+    "role": "Witness",
+    "age": 47,
+    "properties": {
+      "role": "Witness",
+      "age": 47,
+      "display_name": "Diya Srivastava",
+      "full_name": "Diya Srivastava"
+    }
+  },
+  {
+    "id": "PERSON-073",
+    "name": "Pari Verma",
+    "label": "Person",
+    "role": "Contact",
+    "age": 48,
+    "properties": {
+      "role": "Contact",
+      "age": 48,
+      "display_name": "Pari Verma",
+      "full_name": "Pari Verma"
+    }
+  },
+  {
+    "id": "PERSON-074",
+    "name": "Ishani Shah",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 49,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 49,
+      "display_name": "Ishani Shah",
+      "full_name": "Ishani Shah"
+    }
+  },
+  {
+    "id": "PERSON-075",
+    "name": "Anvi Rao",
+    "label": "Person",
+    "role": "Subject",
+    "age": 50,
+    "properties": {
+      "role": "Subject",
+      "age": 50,
+      "display_name": "Anvi Rao",
+      "full_name": "Anvi Rao"
+    }
+  },
+  {
+    "id": "PERSON-076",
+    "name": "Prisha Tiwari",
+    "label": "Person",
+    "role": "Associate",
+    "age": 51,
+    "properties": {
+      "role": "Associate",
+      "age": 51,
+      "display_name": "Prisha Tiwari",
+      "full_name": "Prisha Tiwari"
+    }
+  },
+  {
+    "id": "PERSON-077",
+    "name": "Myra Bhatt",
+    "label": "Person",
+    "role": "Witness",
+    "age": 52,
+    "properties": {
+      "role": "Witness",
+      "age": 52,
+      "display_name": "Myra Bhatt",
+      "full_name": "Myra Bhatt"
+    }
+  }
+]
