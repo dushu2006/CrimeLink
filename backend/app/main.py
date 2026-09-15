@@ -15,6 +15,7 @@ All business behaviour lives behind the API routers and services.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,6 +44,16 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.environment != "dev")
     settings.ensure_directories()
+
+    # Alembic owns the schema.  The application and the deploy hook run the very
+    # same upgrade (`python -m app.db.upgrade`, e.g. a Render pre-deploy command),
+    # so a container can never boot against a schema its code does not expect —
+    # and a pre-Alembic database is adopted on first start.  Once the database is
+    # at head this is a version-table read; it runs off the event loop because
+    # Alembic is synchronous.
+    from app.db.upgrade import upgrade_database
+
+    await asyncio.to_thread(upgrade_database, settings)
     await init_db()
 
     from app.container import get_container

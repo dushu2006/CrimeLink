@@ -1,0 +1,294 @@
+# CrimeLink — Render Blueprint (Infrastructure as Code)
+#
+# This file deploys the same stack `docker-compose.yml` runs, with the
+# repository's own images and commands:
+#
+#   crimelink-api     backend/Dockerfile   uvicorn app.main:create_app --factory
+#                                          (the image's CMD; health /api/v1/health/live)
+#   crimelink-web     frontend/Dockerfile  the investigator console (nginx, serves the
+#                                          Vite bundle and proxies /api server-side)
+#   crimelink-worker  backend/Dockerfile   celery worker -Q pipeline,analytics,maintenance
+#   crimelink-beat    backend/Dockerfile   celery beat (nightly analytics + audit anchoring)
+#   crimelink-postgres / crimelink-redis   Render-managed PostgreSQL 15 and Key Value
+#
+# Migrations are not left to the application: `preDeployCommand` runs
+# `python -m app.db.upgrade` (Alembic) after the build and before the new
+# version receives traffic, exactly like a DBA running `alembic upgrade head`.
+# The API also runs that same upgrade during startup, so a local Compose stack
+# cannot disagree with a deployment about the schema.
+#
+# Three values cannot be derived here because Render has no managed equivalent
+# and the address has to be read off the provider's console:
+#
+#   CRIMELINK_NEO4J_URI          bolt://<host>:<port>   (Neo4j Aura, self-hosted, ...)
+#   CRIMELINK_NEO4J_PASSWORD
+#   CRIMELINK_MINIO_ENDPOINT     <host>:<port>          (MinIO, S3-compatible gateway)
+#   CRIMELINK_MINIO_ACCESS_KEY / CRIMELINK_MINIO_SECRET_KEY / CRIMELINK_MINIO_SECURE
+#
+# They are marked `sync: false`: Render prompts for them while creating the
+# Blueprint and stores them encrypted, so no credential is ever written to this
+# file or to git.  `CRIMELINK_MINIO_SECURE` is "true" for an HTTPS/S3 endpoint
+# and "false" for a plain-HTTP MinIO.
+#
+# Every resource must stay in one region and one workspace: Render's private
+# network — the link from the console to the API and from the API to Postgres,
+# Key Value and anything else — only spans a single region of a single
+# workspace.  Plans are `starter` because free instance types have no private
+# services, no pre-deploy commands and no persistent PostgreSQL.
+
+# Pull-request previews would need their own graph database, object store and a
+# seeded dataset, so they are switched off deliberately.
+previews:
+  generation: off
+
+envVarGroups:
+  # Shared, non-secret runtime configuration.  Secrets and service references
+  # cannot live in an environment group (Render rejects `sync: false` and
+  # `fromService` there), so they are declared per service below.
+  - name: crimelink-runtime
+    envVars:
+      - key: CRIMELINK_PROFILE
+        value: production
+      - key: CRIMELINK_ENVIRONMENT
+        value: production
+      # Containers never guess where their dependencies are (see app/runtime.py).
+      - key: CRIMELINK_RUNTIME_CONTEXT
+        value: production
+      - key: CRIMELINK_RELATIONAL_BACKEND
+        value: postgres
+      - key: CRIMELINK_GRAPH_BACKEND
+        value: neo4j
+      - key: CRIMELINK_OBJECT_STORE_BACKEND
+        value: minio
+      - key: CRIMELINK_BROKER_BACKEND
+        value: celery
+      # One 256-bit secret shared by the API, the workers and the beat scheduler.
+      - key: CRIMELINK_SECRET_KEY
+        generateValue: true
+
+databases:
+  - name: crimelink-postgres
+    databaseName: crimelink
+    user: crimelink
+    # The Compose stack pins postgres:15.6-alpine; a managed instance runs the
+    # same major version.
+    postgresMajorVersion: "15"
+    plan: basic-256mb
+    region: singapore
+    # No external address: only services in this workspace can connect.  Add
+    # your IP in the Render dashboard when you need `psql` from a laptop.
+    ipAllowList: []
+
+services:
+  # ---------------------------------------------------------------- broker
+  # Celery broker + result backend.  `ipAllowList: []` keeps it off the public
+  # internet (Render requires the field for Key Value instances).
+  - type: keyvalue
+    name: crimelink-redis
+    plan: starter
+    region: singapore
+    ipAllowList: []
+    # Mirrors `redis-server --appendonly no --maxmemory-policy noeviction` in
+    # docker-compose.yml: a queued job must never be evicted under memory
+    # pressure, and the queue is not the system of record.
+    maxmemoryPolicy: noeviction
+    persistenceMode: off
+
+  # ------------------------------------------------------------------ API
+  # A private service: the console is the only public entry point, and it
+  # reaches the API over Render's private network.  Change `type` to `web` if
+  # you want the OpenAPI docs reachable from a browser directly.
+  - type: pserv
+    name: crimelink-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    region: singapore
+    healthCheckPath: /api/v1/health/live
+    # Alembic owns the schema.  This is the deploy gate: a migration failure
+    # stops the release instead of shipping code against an old schema.
+    preDeployCommand: python -m app.db.upgrade
+    # Runs once, after the first successful deploy: the demo corpus in the image
+    # is loaded into Postgres, Neo4j and MinIO.  The script is idempotent, so
+    # re-running it by hand from the Render shell is always safe.
+    initialDeployHook: python scripts/seed_demo.py
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: crimelink-runtime
+      # Render hands out a bare `postgresql://` connection string; the
+      # application adds the driver each engine needs (`+asyncpg`, `+psycopg2`)
+      # and Alembic uses the same URL, so there is one source of truth.
+      - key: CRIMELINK_POSTGRES_DSN
+        fromDatabase:
+          name: crimelink-postgres
+          property: connectionString
+      - key: CRIMELINK_POSTGRES_DSN_SYNC
+        fromDatabase:
+          name: crimelink-postgres
+          property: connectionString
+      - key: CRIMELINK_REDIS_URL
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CELERY_BROKER_URL
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CELERY_RESULT_BACKEND
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      # The browser only ever calls the console's origin (nginx proxies /api),
+      # so CORS is not exercised in this topology; production still refuses to
+      # boot with a wildcard, and this is the console's real URL.
+      - key: CRIMELINK_CORS_ORIGINS
+        fromService:
+          name: crimelink-web
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CRIMELINK_NEO4J_URI
+        sync: false
+      - key: CRIMELINK_NEO4J_PASSWORD
+        sync: false
+      - key: CRIMELINK_MINIO_ENDPOINT
+        sync: false
+      - key: CRIMELINK_MINIO_ACCESS_KEY
+        sync: false
+      - key: CRIMELINK_MINIO_SECRET_KEY
+        sync: false
+      - key: CRIMELINK_MINIO_SECURE
+        sync: false
+      # The image's CMD binds --port 8000; keep Render's routing expectation in
+      # step with it instead of relying on port auto-detection.
+      - key: PORT
+        value: 8000
+
+  # --------------------------------------------------------------- console
+  - type: web
+    name: crimelink-web
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: starter
+    region: singapore
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      # nginx renders this into `upstream crimelink_api` at container start.
+      # `hostport` is the API's private-network `host:port`, which Render derives
+      # from the service name (`crimelink-api` plus a suffix) and which can
+      # therefore not be baked into the image at build time.  The Compose stack
+      # leaves the image default (`api:8000`) in place.
+      - key: CRIMELINK_API_UPSTREAM
+        fromService:
+          name: crimelink-api
+          type: pserv
+          property: hostport
+      # nginx listens on 80 (its EXPOSE), so tell Render the same.
+      - key: PORT
+        value: 80
+
+  # ---------------------------------------------------------------- worker
+  - type: worker
+    name: crimelink-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    region: singapore
+    # Same command as the `worker` service in docker-compose.yml.
+    dockerCommand: celery -A app.adapters.broker.celery_app:celery_app worker -Q pipeline,analytics,maintenance --concurrency=2 --loglevel=INFO --max-tasks-per-child=50
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: crimelink-runtime
+      - key: CRIMELINK_POSTGRES_DSN
+        fromDatabase:
+          name: crimelink-postgres
+          property: connectionString
+      - key: CRIMELINK_POSTGRES_DSN_SYNC
+        fromDatabase:
+          name: crimelink-postgres
+          property: connectionString
+      - key: CRIMELINK_REDIS_URL
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CELERY_BROKER_URL
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CELERY_RESULT_BACKEND
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CORS_ORIGINS
+        fromService:
+          name: crimelink-web
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CRIMELINK_NEO4J_URI
+        sync: false
+      - key: CRIMELINK_NEO4J_PASSWORD
+        sync: false
+      - key: CRIMELINK_MINIO_ENDPOINT
+        sync: false
+      - key: CRIMELINK_MINIO_ACCESS_KEY
+        sync: false
+      - key: CRIMELINK_MINIO_SECRET_KEY
+        sync: false
+      - key: CRIMELINK_MINIO_SECURE
+        sync: false
+
+  # ------------------------------------------------------------- scheduler
+  # Nightly `crimelink.patterns.nightly` (01:30 UTC) and `crimelink.audit.anchor`
+  # (02:00 UTC) tasks — the same process docker-compose.yml runs as `beat`.
+  # Delete this service if you do not need the scheduled runs.
+  - type: worker
+    name: crimelink-beat
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    region: singapore
+    dockerCommand: celery -A app.adapters.broker.celery_app:celery_app beat --loglevel=INFO
+    autoDeployTrigger: commit
+    envVars:
+      - fromGroup: crimelink-runtime
+      - key: CRIMELINK_POSTGRES_DSN
+        fromDatabase:
+          name: crimelink-postgres
+          property: connectionString
+      - key: CRIMELINK_POSTGRES_DSN_SYNC
+        fromDatabase:
+          name: crimelink-postgres
+          property: connectionString
+      - key: CRIMELINK_REDIS_URL
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CELERY_BROKER_URL
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CELERY_RESULT_BACKEND
+        fromDatabase:
+          name: crimelink-redis
+          property: connectionString
+      - key: CRIMELINK_CORS_ORIGINS
+        fromService:
+          name: crimelink-web
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CRIMELINK_NEO4J_URI
+        sync: false
+      - key: CRIMELINK_NEO4J_PASSWORD
+        sync: false
+      - key: CRIMELINK_MINIO_ENDPOINT
+        sync: false
+      - key: CRIMELINK_MINIO_ACCESS_KEY
+        sync: false
+      - key: CRIMELINK_MINIO_SECRET_KEY
+        sync: false
+      - key: CRIMELINK_MINIO_SECURE
+        sync: false

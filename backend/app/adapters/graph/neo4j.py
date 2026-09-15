@@ -270,6 +270,61 @@ class Neo4jGraphStore:
 
         self._write(_apply)
         log.info("graph.neo4j.constraints_ok")
+        self._ensure_flag_property_keys()
+
+    #: Properties every projection reads, with the default each query assumes.
+    #: Neo4j issues ``UnknownPropertyKeyWarning`` for *any* query that reads a
+    #: property key no node in the database carries — which is how a graph built
+    #: by an older seed or an older build filled the API logs with warnings for
+    #: ``is_active`` / ``is_document_artifact`` / ``staging``.
+    FLAG_DEFAULTS: tuple[tuple[str, str], ...] = (
+        ("is_active", "true"),
+        ("is_document_artifact", "false"),
+        ("staging", "false"),
+    )
+
+    def _ensure_flag_property_keys(self) -> None:
+        """Backfill the projection flags on nodes written before they existed.
+
+        Runs once, when the store is built, and only touches nodes that are
+        missing a flag, so a healthy database pays a catalog lookup and nothing
+        else.  ``keys(n)`` is used instead of a static property read so the
+        check itself cannot produce the warning it is fixing.
+        """
+        flags = [name for name, _ in self.FLAG_DEFAULTS]
+        try:
+            present = set(
+                self._read(
+                    lambda tx: [
+                        record["propertyKey"]
+                        for record in tx.run(
+                            "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey"
+                        )
+                    ]
+                )
+            )
+            missing = [name for name in flags if name not in present]
+            if not missing:
+                return
+        except Exception:  # catalog procedure unavailable: fall back to the sweep
+            missing = flags
+
+        condition = " OR ".join(f"NOT '{name}' IN keys(n)" for name in missing)
+        assignments = ", ".join(
+            f"n.{name} = coalesce(n.{name}, {default})" for name, default in self.FLAG_DEFAULTS
+        )
+
+        def _backfill(tx):
+            record = tx.run(
+                f"MATCH (n) WHERE {condition} SET {assignments} RETURN count(n) AS nodes"
+            ).single()
+            return int(record["nodes"]) if record else 0
+
+        try:
+            backfilled = self._write(_backfill)
+            log.info("graph.neo4j.flags_backfilled", properties=missing, nodes=backfilled)
+        except Exception as exc:  # pragma: no cover - infra dependent
+            log.warning("graph.neo4j.flags_backfill_failed", error=str(exc))
 
     def close(self) -> None:
         self._driver.close()
@@ -296,6 +351,10 @@ class Neo4jGraphStore:
                 props = {k: _safe(v) for k, v in node.properties.items()}
                 props.setdefault("confidence", 1.0)
                 props.setdefault("is_active", True)
+                # Artifact nodes never reach this method (they are filtered
+                # above), so a default of False can only ever record the truth —
+                # and it keeps the property key present for the projections.
+                props.setdefault("is_document_artifact", False)
                 current = existing.get(node.provenance_key)
                 if current:
                     merged = _merge_node_props(dict(current), props)

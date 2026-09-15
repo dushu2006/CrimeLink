@@ -5,7 +5,7 @@ verification and seeding.
 
 Flow:
 1. wait_for_services (PostgreSQL/SQLite, Neo4j/Embedded, MinIO/Local, Redis/Inline)
-2. run_db_migrations (Alembic / SQLite schema sync / Base.metadata.create_all)
+2. run_db_migrations (Alembic upgrade head -> additive reconcile)
 3. check_demo_dataset_status:
    - "CORRECT"      -> do nothing (idempotent, non-destructive, fast)
    - "MISSING"      -> seed demo dataset (20 cases, 100 people, 216 rels, 300 evidence, INV-0042)
@@ -30,7 +30,7 @@ REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app import runtime
 from app.config import Settings, get_settings
@@ -375,26 +375,48 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
 # ---------------------------------------------------------------------------
 
 def run_db_migrations(settings: Settings | None = None) -> None:
-    """Ensure database schema tables, columns, constraints and extensions exist."""
+    """Bring the relational schema to Alembic ``head`` and verify it.
+
+    Alembic owns the schema: ``app.db.upgrade`` runs ``alembic upgrade head``
+    for a fresh database, an already-migrated one, and a pre-Alembic database
+    created by ``create_all`` in an older build (additive reconcile, then stamp
+    and upgrade) — the same entry point a Render pre-deploy hook uses, so a
+    container start and a deployment can never disagree about the schema.
+
+    The additive reconcile below is a *repair* pass, not the source of truth:
+    on a database the migrations just brought to ``head`` it must add nothing,
+    so anything it does add is logged as a warning.  A model that gained a table
+    or column without a matching revision would otherwise pass silently, which
+    is exactly how ``cases.classification does not exist`` reached production.
+    """
     settings = settings or get_settings()
     settings.ensure_directories()
     engine = get_sync_engine(settings)
+    backend = settings.effective_relational_backend
 
-    # Create all missing tables
-    Base.metadata.create_all(bind=engine)
+    from app.db.upgrade import upgrade_database
 
-    # Synchronize missing columns on all backends (SQLite and PostgreSQL)
+    report = upgrade_database(settings)
+    log.info("bootstrap.schema_at_head", detail=report.describe())
+
+    with engine.connect() as conn:
+        known = set(inspect(conn).get_table_names())
+    missing_tables = sorted(set(Base.metadata.tables) - known)
+    if missing_tables:
+        log.warning("bootstrap.schema_drift_repaired", missing_tables=missing_tables, backend=backend)
+        Base.metadata.create_all(bind=engine)
+
     with engine.connect() as conn:
         added = sync_database_columns(conn, Base.metadata)
         if added:
-            log.info("bootstrap.columns_synchronized", added=added, backend=settings.effective_relational_backend)
-        if settings.effective_relational_backend == "sqlite":
+            log.warning("bootstrap.columns_repaired", added=added, backend=backend)
+        if backend == "sqlite":
             upgraded = sync_sqlite_enum_constraints(conn, Base.metadata)
             if upgraded:
-                log.info("bootstrap.sqlite_enums_synchronized", upgraded=upgraded)
+                log.warning("bootstrap.sqlite_enums_repaired", upgraded=upgraded)
         conn.commit()
 
-    log.info("bootstrap.db_schema_ready", backend=settings.effective_relational_backend)
+    log.info("bootstrap.db_schema_ready", backend=backend, revision=report.revision, mode=report.mode)
 
 
 # ---------------------------------------------------------------------------

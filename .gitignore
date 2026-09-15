@@ -36,6 +36,10 @@ MANIFEST
 *.manifest
 *.spec
 
+# Vite leaves a timestamped copy of the config beside it while it loads;
+# two of these were committed by accident and shipped in the console image.
+vite.config.ts.timestamp-*
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
