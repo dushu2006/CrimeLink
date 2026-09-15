@@ -939,6 +939,7 @@ def seed_neo4j():
             if edges_to_add:
                 store.upsert_edges(edges_to_add)
                 print(f"  Added {len(edges_to_add)} relationships to embedded graph")
+            store.close()
             print("Neo4j (embedded) seeding complete")
             return True
         else:

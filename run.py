@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""One-command CrimeLink launcher (embedded / laptop profile).
+"""One-command CrimeLink launcher.
 
-First run installs Python and Node dependencies, starts the FastAPI backend
-and the Vite console, then opens a browser.  The database starts EMPTY —
-create the first administrator in the console.  No demo data is inserted.
+Installs Python and Node dependencies on first run, bootstraps storage and
+the persistent 20-case demo dataset idempotently, starts the FastAPI backend
+and Vite console, and opens a browser.
 
 Quick start::
 
     python run.py
     python run.py --reinstall     # force pip + npm again
     python run.py --no-browser
+    python run.py --reload        # auto-reload backend on code changes
 
-Requires Python 3.11+ and Node.js 18+ (with npm).  No Docker, Postgres, Neo4j,
-Redis or MinIO is needed for this profile.
+Profiles:
+- embedded (default): In-process SQLite, NetworkX graph, and LocalObjectStore.
+  Requires zero external containers.
+- production: PostgreSQL, Neo4j, MinIO, and Redis.
 
-Optional: set ``NVIDIA_API_KEY`` (or ``CRIMELINK_AI_API_KEY``) in ``.env`` to
-enable AI extraction/reasoning/explanation through NVIDIA NIM.  Without a key
-the system runs fully offline on the heuristic extractor and still produces a
-complete graph.
+Demo Dataset:
+- 20 Cases: CR-1024 through CR-1043
+- 100 People, 216 Relationships, 300 Evidence records, 120 Sources
+- 258 Timeline events, 10 Investigations (including INV-0042 hero)
+- Real verifiable PDFs & CSVs in object storage
 
-Troubleshooting Windows
------------------------
-The embedded profile uses loose NumPy / NetworkX pins so pip always picks a
-prebuilt wheel — you do NOT need Visual Studio Build Tools.  If ``pip`` still
-tries to compile NumPy from source, upgrade pip first::
-
-    python -m pip install --upgrade pip setuptools wheel
-    python run.py
+Demo Logins:
+- DEMO-ADMIN        / DemoAdmin@2026
+- DEMO-INVESTIGATOR / DemoInvestigator@2026
+- DEMO-VIEWER       / DemoViewer@2026
 """
 
 from __future__ import annotations
@@ -112,24 +112,27 @@ def load_dotenv(path: Path) -> None:
             os.environ[key] = value
 
 
-def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
-    """Force the no-containers profile and map the NVIDIA/AI keys the README documents."""
+def apply_environment(*, api_url: str, web_port: int) -> dict[str, str]:
+    """Configure environment variables for launcher execution."""
     load_dotenv(ROOT / ".env")
     load_dotenv(BACKEND / ".env")
 
-    nvidia = (os.environ.get("NVIDIA_API_KEY")
-              or os.environ.get("CRIMELINK_NIM_API_KEY")
-              or os.environ.get("CRIMELINK_AI_API_KEY"))
+    nvidia = (
+        os.environ.get("NVIDIA_API_KEY")
+        or os.environ.get("CRIMELINK_NIM_API_KEY")
+        or os.environ.get("CRIMELINK_AI_API_KEY")
+    )
     if nvidia:
         os.environ["NVIDIA_API_KEY"] = nvidia
         os.environ["CRIMELINK_NIM_API_KEY"] = nvidia
         os.environ.setdefault("CRIMELINK_AI_API_KEY", nvidia)
 
-    os.environ["CRIMELINK_PROFILE"] = "embedded"
-    os.environ["CRIMELINK_ENVIRONMENT"] = "dev"
-    os.environ["CRIMELINK_DEBUG"] = os.environ.get("CRIMELINK_DEBUG", "true")
-    os.environ["CRIMELINK_DATA_DIR"] = str(DATA_DIR)
-    os.environ["CRIMELINK_OBJECT_STORE_DIR"] = str(OBJECT_DIR)
+    profile = os.environ.get("CRIMELINK_PROFILE", "embedded")
+    os.environ["CRIMELINK_PROFILE"] = profile
+    os.environ.setdefault("CRIMELINK_ENVIRONMENT", "dev" if profile == "embedded" else "production")
+    os.environ.setdefault("CRIMELINK_DEBUG", "true" if profile == "embedded" else "false")
+    os.environ.setdefault("CRIMELINK_DATA_DIR", str(DATA_DIR))
+    os.environ.setdefault("CRIMELINK_OBJECT_STORE_DIR", str(OBJECT_DIR))
     os.environ["PYTHONPATH"] = str(BACKEND)
     os.environ["CRIMELINK_API"] = api_url
     os.environ.setdefault("CRIMELINK_SYNTHETIC_DATA_MODE", "external")
@@ -141,8 +144,8 @@ def apply_embedded_env(*, api_url: str, web_port: int) -> dict[str, str]:
         f"http://localhost:{web_port}",
         api_url,
     ])
-    # Security: never auto-generate demo data on startup.
     os.environ["CRIMELINK_SYNTHETIC_CORPUS_ENABLED"] = "false"
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     OBJECT_DIR.mkdir(parents=True, exist_ok=True)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
@@ -169,7 +172,10 @@ def require_python() -> str:
             )
             if probe.returncode == 0 and probe.stdout.strip():
                 selected = probe.stdout.strip()
-                info(f"Python {sys.version_info.major}.{sys.version_info.minor} detected; using Python 3.13 at {selected}.")
+                info(
+                    f"Python {sys.version_info.major}.{sys.version_info.minor} detected; "
+                    f"using Python 3.13 at {selected}."
+                )
                 return selected
 
     die(
@@ -192,7 +198,9 @@ def require_node() -> str:
             "  Windows: download LTS from https://nodejs.org/ and tick 'Add to PATH'."
         )
     try:
-        out = subprocess.check_output([node, "-v"], text=True, stderr=subprocess.STDOUT).strip().lstrip("v")
+        out = subprocess.check_output(
+            [node, "-v"], text=True, stderr=subprocess.STDOUT
+        ).strip().lstrip("v")
     except subprocess.CalledProcessError as exc:
         die(f"Could not run node: {exc.output or exc}")
     try:
@@ -283,9 +291,9 @@ def ensure_venv(interpreter: str, env: dict[str, str], reinstall: bool) -> Path:
 
     if need_install:
         info("Installing backend Python dependencies (first time can take a few minutes) …")
-        info("Upgrading pip/setuptools/wheel first so NumPy uses a prebuilt wheel on Windows.")
+        info("Upgrading pip/setuptools/wheel first so prebuilt wheels are preferred.")
         run([str(py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], env=env)
-        run([str(py), "-m", "pip", "install", str(BACKEND)], env=env)
+        run([str(py), "-m", "pip", "install", "-e", str(BACKEND)], env=env)
         marker.write_text("ok\n", encoding="utf-8")
         info("Backend dependencies installed.")
     else:
@@ -304,6 +312,19 @@ def ensure_frontend(npm: str, env: dict[str, str], reinstall: bool) -> None:
         info("Frontend dependencies installed.")
     else:
         info("frontend/node_modules already present — skipping npm install.")
+
+
+def run_bootstrap(py: Path, env: dict[str, str]) -> None:
+    """Execute idempotent service checks, DB migrations, and demo dataset bootstrap."""
+    info("Bootstrapping storage, database, and demo dataset …")
+    result = subprocess.run(
+        [str(py), "-m", "app.db.bootstrap"],
+        cwd=ROOT,
+        env=env,
+    )
+    if result.returncode != 0:
+        die(f"Bootstrap failed (exit code {result.returncode}). See error above.")
+    info("Bootstrap complete and verified.")
 
 
 def spawn(cmd: list[str], cwd: Path, env: dict[str, str], log_path: Path) -> subprocess.Popen:
@@ -364,28 +385,28 @@ def stop(proc: subprocess.Popen | None) -> None:
             pass
 
 
-def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
+def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str, profile: str) -> None:
     print()
     print("=" * 72)
-    print("  CrimeLink is running (embedded profile -- no containers).")
+    print(f"  CrimeLink is running ({profile} profile).")
     print()
     print(f"  Investigator console : {open_url}")
     print(f"  API                  : {api_url}")
     print(f"  Interactive API docs : {api_url}/api/docs")
     print()
-    print("  The database starts EMPTY. Create the administrator account in")
-    print("  the browser on first launch, then sign in with that badge number")
-    print("  and password.  No demo data is inserted automatically.")
+    print("  Preloaded Demo Accounts:")
+    print("    Administrator : DEMO-ADMIN        / DemoAdmin@2026")
+    print("    Investigator  : DEMO-INVESTIGATOR / DemoInvestigator@2026")
+    print("    Viewer        : DEMO-VIEWER       / DemoViewer@2026")
     print()
-    print("  Use jurisdiction SYN-DEV for the first administrator so imported")
-    print("  synthetic cases are visible. Then: Administration -> Dataset ->")
-    print("  Validate Dataset / Import Dataset.")
+    print("  Persistent Demo Dataset (DEMO-DATASET-001):")
+    print("    20 interconnected cases (CR-1024 to CR-1043), 100 people,")
+    print("    216 relationships, 300 evidence records, 120 sources,")
+    print("    258 timeline events, and 10 investigations.")
     print()
-    print("  Dataset path: backend/CrimeLink_Synthetic_Corpus_v1")
-    print("  Dataset: CrimeLink Synthetic Corpus v1 -- synthetic development data")
-    print("  CLI equivalent:")
-    print("    .venv/bin/python -m app.cli ingest-synthetic --mode external --dry-run")
-    print("    .venv/bin/python -m app.cli ingest-synthetic --mode external")
+    print("  Hero Investigation Workflow (CR-1024):")
+    print("    CR-1024 -> PERSON-001 <-> PERSON-002 -> Communication -> Why?")
+    print("    -> E-042 -> S-001 -> real PDF -> Timeline -> INV-0042")
     print()
     if nlp_key or ai_key:
         print("  NLP/AI: API key detected -- model extraction & AI gateway enabled.")
@@ -401,8 +422,10 @@ def banner(*, nlp_key: bool, ai_key: bool, open_url: str, api_url: str) -> None:
 def _check_env(env: dict[str, str]) -> None:
     """Surface actionable errors for common missing-config situations."""
     if env.get("CRIMELINK_SECRET_KEY", "").startswith("change-me"):
-        warn("CRIMELINK_SECRET_KEY is the placeholder value. This is fine for local"
-             " development; change it before exposing CrimeLink to a network.")
+        warn(
+            "CRIMELINK_SECRET_KEY is the placeholder value. This is fine for local"
+            " development; change it before exposing CrimeLink to a network."
+        )
 
 
 def main() -> int:
@@ -426,10 +449,13 @@ def main() -> int:
     if not BACKEND.is_dir() or not FRONTEND.is_dir():
         die("run.py must live at the CrimeLink repository root (next to backend/ and frontend/).")
 
-    env = apply_embedded_env(api_url=api_url, web_port=web_port)
+    env = apply_environment(api_url=api_url, web_port=web_port)
     _check_env(env)
     py = ensure_venv(interpreter, env, reinstall=args.reinstall)
     ensure_frontend(npm, env, reinstall=args.reinstall)
+
+    # Idempotent storage checks, migrations, and demo dataset bootstrap
+    run_bootstrap(py, env)
 
     for port, name in ((api_port, "API"), (web_port, "console")):
         if port_open(port):
@@ -491,7 +517,13 @@ def main() -> int:
 
         nlp_key = bool(env.get("CRIMELINK_NIM_API_KEY") or env.get("NVIDIA_API_KEY"))
         ai_key = bool(env.get("CRIMELINK_AI_API_KEY")) or nlp_key
-        banner(nlp_key=nlp_key, ai_key=ai_key, open_url=open_url, api_url=api_url)
+        banner(
+            nlp_key=nlp_key,
+            ai_key=ai_key,
+            open_url=open_url,
+            api_url=api_url,
+            profile=env.get("CRIMELINK_PROFILE", "embedded"),
+        )
 
         if not args.no_browser:
             info(f"Opening {open_url} in your browser …")

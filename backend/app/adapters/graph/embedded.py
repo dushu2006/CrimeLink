@@ -33,6 +33,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore
+
 import networkx as nx
 
 from app.config import Settings, get_settings
@@ -717,25 +727,21 @@ class EmbeddedGraphStore:
         if self._lock_file is not None:
             handle, self._lock_file = self._lock_file, None
             try:
-                if os.name == "nt":
-                    import msvcrt
-
+                if os.name == "nt" and msvcrt is not None:
                     try:
                         handle.seek(0)
                         msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                    except OSError:
+                    except Exception:
                         pass
-                else:
-                    import fcntl
-
+                elif fcntl is not None:
                     try:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                    except OSError:
+                    except Exception:
                         pass
             finally:
                 try:
                     handle.close()
-                except OSError:
+                except Exception:
                     pass
 
     def __del__(self) -> None:

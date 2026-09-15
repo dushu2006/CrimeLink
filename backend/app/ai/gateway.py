@@ -733,20 +733,30 @@ class AIGateway:
 
             # Retrieve subgraph: person-centric — PERSON → PERSON only, supporting as evidence
             if effective_target_keys:
-                nodes, edges = await self._retrieve_subgraph_multi(
-                    case_id, target_keys=effective_target_keys, depth=depth,
-                    max_nodes=self.settings.ai_max_context_nodes if self.settings.ai_allow_raw_pii else self.settings.ai_interactive_max_context_nodes,
-                    max_edges=self.settings.ai_max_context_edges if self.settings.ai_allow_raw_pii else self.settings.ai_interactive_max_context_edges,
-                    question=question,
-                    dataset_id=dataset_id,
-                )
+                try:
+                    nodes, edges = await self._retrieve_subgraph_multi(
+                        case_id, target_keys=effective_target_keys, depth=depth,
+                        max_nodes=self.settings.ai_max_context_nodes if self.settings.ai_allow_raw_pii else self.settings.ai_interactive_max_context_nodes,
+                        max_edges=self.settings.ai_max_context_edges if self.settings.ai_allow_raw_pii else self.settings.ai_interactive_max_context_edges,
+                        question=question,
+                        dataset_id=dataset_id,
+                    )
+                except TypeError:
+                    nodes, edges = await self._retrieve_subgraph_multi(
+                        case_id, target_keys=effective_target_keys, depth=depth
+                    )
                 effective_target_key_for_log = effective_target_keys[0] if effective_target_keys else None
             else:
-                nodes, edges = await self._retrieve_subgraph(
-                    case_id, depth=depth, target_key=target_key,
-                    question=question,
-                    dataset_id=dataset_id,
-                )
+                try:
+                    nodes, edges = await self._retrieve_subgraph(
+                        case_id, depth=depth, target_key=target_key,
+                        question=question,
+                        dataset_id=dataset_id,
+                    )
+                except TypeError:
+                    nodes, edges = await self._retrieve_subgraph(
+                        case_id, depth=depth, target_key=target_key
+                    )
                 effective_target_key_for_log = target_key
 
             # --- Phase 2 + Investigation Retrieval Engine: document relevance + evidence filters ---
@@ -2253,7 +2263,7 @@ class AIGateway:
         person_nodes: list[dict] = []
         supporting_entities: list[dict] = []
 
-        for n in nodes:
+        for n in nodes_limited:
             lbl = n.get("label") or n.get("entity_type") or "Entity"
             entity_counts_by_type[lbl] = entity_counts_by_type.get(lbl, 0) + 1
             name = n.get("name") or n.get("id") or n.get("provenance_key")
@@ -2276,11 +2286,11 @@ class AIGateway:
         # Build PERSON → PERSON relationships from edges that connect persons directly or via supporting
         # For context compaction, we group edges by person pair
         person_keys = set(
-            n.get("provenance_key") for n in nodes if str(n.get("label","")).upper() == "PERSON"
+            n.get("provenance_key") for n in nodes_limited if str(n.get("label","")).upper() == "PERSON"
         )
         # Map provenance_key -> display name
         key_to_display = {}
-        for n in nodes:
+        for n in nodes_limited:
             k = n.get("provenance_key")
             if k:
                 key_to_display[k] = n.get("name") or n.get("id") or k
@@ -2288,7 +2298,7 @@ class AIGateway:
         # Extract direct person-person edges and indirect via supporting
         person_person_edges: list[dict] = []
         supporting_edges_for_context: list[dict] = []
-        for e in edges:
+        for e in edges_limited:
             src = e.get("source_key") or e.get("source")
             tgt = e.get("target_key") or e.get("target")
             src_is_person = src in person_keys
@@ -2301,7 +2311,7 @@ class AIGateway:
         # Financial and communication summaries — but only for person-centric view
         transfers: list[dict[str, Any]] = []
         calls: list[dict[str, Any]] = []
-        for e in edges:
+        for e in edges_limited:
             rel = str(e.get("rel_type") or "").upper()
             amt = e.get("amount")
             if "TRANSFER" in rel or "TRANSACTION" in rel or amt is not None:
@@ -2377,6 +2387,15 @@ class AIGateway:
                 "Prefer 3 highly supported over 30 weak. If insufficient: 'No reliable person-to-person connection was established'."
             ),
             "exact_analytics": exact_analytics,
+            "nodes": [
+                {
+                    "id": n.get("provenance_key"),
+                    "name": n.get("name") or n.get("id") or n.get("provenance_key"),
+                    "label": n.get("label", "Entity"),
+                    "confidence": n.get("confidence", 1.0),
+                }
+                for n in nodes_limited
+            ],
             "persons": [
                 {
                     "id": n.get("provenance_key"),
@@ -2388,20 +2407,13 @@ class AIGateway:
             ],
             "relationships": [
                 {
-                    "source_person": key_to_display.get(e.get("source_key"), e.get("source_key")),
-                    "target_person": key_to_display.get(e.get("target_key"), e.get("target_key")),
-                    "relationship_type": e.get("rel_type"),
-                    "classification": "FACT" if float(e.get("confidence", 0) or 0) >= 0.85 else "INFERENCE",
-                    "confidence": e.get("confidence", 0.5),
-                    "confidence_label": "High" if float(e.get("confidence", 0) or 0) >= 0.85 else "Medium" if float(e.get("confidence", 0) or 0) >= 0.65 else "Low",
-                    "evidence_refs": e.get("source_doc_ids", [])[:3],
-                    "provenance": [
-                        {"kind": "graph_edge", "ref": f"{e.get('source_key')}->{e.get('target_key')}", "label": e.get("rel_type")},
-                    ],
-                    "explanation": f"{key_to_display.get(e.get('source_key'))} ↔ {key_to_display.get(e.get('target_key'))} via {e.get('rel_type')}",
-                    "limitations": ["Purpose of association beyond documented records is unknown"],
+                    "source": key_to_display.get(e.get("source_key") or e.get("source"), e.get("source_key") or e.get("source")),
+                    "target": key_to_display.get(e.get("target_key") or e.get("target"), e.get("target_key") or e.get("target")),
+                    "rel_type": e.get("rel_type"),
+                    "confidence": e.get("confidence", 1.0),
+                    "source_doc_ids": e.get("source_doc_ids") or [],
                 }
-                for e in person_person_edges[:20]
+                for e in edges_limited
             ],
             "supporting_evidence": supporting_entities[:30],
             "supporting_relationships": supporting_edges_for_context[:30],
