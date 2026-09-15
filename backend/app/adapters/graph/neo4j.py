@@ -104,7 +104,7 @@ CONSTRAINTS = _build_constraints()
 CASE_PROJECTION = """
 MATCH (n)
 WHERE $case_id IN n.case_ids
-  AND coalesce(n.entity_type, '') NOT IN ['DOCUMENT', 'EVIDENCE']
+  AND NOT (coalesce(n.entity_type, '') IN ['DOCUMENT', 'EVIDENCE'])
   AND coalesce(n.is_document_artifact, false) = false
   AND ($include_inactive OR coalesce(n.is_active, true))
   AND ($include_staging OR NOT coalesce(n.staging, false))
@@ -121,7 +121,7 @@ RETURN a.provenance_key AS source, b.provenance_key AS target,
 MULTI_CASE_PROJECTION = """
 MATCH (n)
 WHERE ANY(cid IN $case_ids WHERE cid IN n.case_ids)
-  AND coalesce(n.entity_type, '') NOT IN ['DOCUMENT', 'EVIDENCE']
+  AND NOT (coalesce(n.entity_type, '') IN ['DOCUMENT', 'EVIDENCE'])
   AND coalesce(n.is_document_artifact, false) = false
   AND ($include_inactive OR coalesce(n.is_active, true))
   AND NOT coalesce(n.staging, false)
@@ -135,7 +135,7 @@ RETURN n
 SEARCH_FALLBACK = """
 MATCH (n)
 WHERE ($label IS NULL OR $label IN labels(n))
-  AND coalesce(n.entity_type, '') NOT IN ['DOCUMENT', 'EVIDENCE']
+  AND NOT (coalesce(n.entity_type, '') IN ['DOCUMENT', 'EVIDENCE'])
   AND coalesce(n.is_document_artifact, false) = false
   AND ($case_id IS NULL OR $case_id IN n.case_ids)
   AND (toLower(coalesce(n.name, '')) CONTAINS $q
