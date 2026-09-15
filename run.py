@@ -109,7 +109,7 @@ def main() -> int:
 
     info("Bootstrapping storage, database, and demo dataset …")
     bootstrap = subprocess.run(
-        [str(py), "-c", "from app.db.bootstrap import run_bootstrap; import os; run_bootstrap()"],
+        [str(py), "-c", "from app.db.bootstrap import bootstrap_demo_dataset; bootstrap_demo_dataset()"],
         cwd=BACKEND,
         env=env,
     )
