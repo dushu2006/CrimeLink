@@ -66,17 +66,18 @@ interface Props {
 
 export function EvidenceDrawer({ data, evidence, open, onClose, onViewGraph, onOpenSource, onPin }: Props) {
   const resolvedData = (data ?? evidence) as EvidenceDrawerData | null;
-  if (open !== undefined && !open) return null;
+  const isOpen = open === undefined || open;
 
   useEffect(() => {
+    if (!isOpen) return;
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
-  }, [onClose]);
+  }, [onClose, isOpen]);
 
-  if (!resolvedData) return null;
+  if (!isOpen || !resolvedData) return null;
 
   return (
     <div className="evidence-drawer-backdrop" onClick={onClose}>
