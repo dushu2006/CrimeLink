@@ -1,0 +1,93 @@
+[
+  {
+    "id": "PERSON-076",
+    "name": "Prisha Tiwari",
+    "label": "Person",
+    "role": "Associate",
+    "age": 51,
+    "properties": {
+      "role": "Associate",
+      "age": 51,
+      "display_name": "Prisha Tiwari",
+      "full_name": "Prisha Tiwari"
+    }
+  },
+  {
+    "id": "PERSON-077",
+    "name": "Myra Bhatt",
+    "label": "Person",
+    "role": "Witness",
+    "age": 52,
+    "properties": {
+      "role": "Witness",
+      "age": 52,
+      "display_name": "Myra Bhatt",
+      "full_name": "Myra Bhatt"
+    }
+  },
+  {
+    "id": "PERSON-078",
+    "name": "Sara Kumar",
+    "label": "Person",
+    "role": "Contact",
+    "age": 53,
+    "properties": {
+      "role": "Contact",
+      "age": 53,
+      "display_name": "Sara Kumar",
+      "full_name": "Sara Kumar"
+    }
+  },
+  {
+    "id": "PERSON-079",
+    "name": "Avni Menon",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 54,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 54,
+      "display_name": "Avni Menon",
+      "full_name": "Avni Menon"
+    }
+  },
+  {
+    "id": "PERSON-080",
+    "name": "Rahul Choudhary",
+    "label": "Person",
+    "role": "Subject",
+    "age": 55,
+    "properties": {
+      "role": "Subject",
+      "age": 55,
+      "display_name": "Rahul Choudhary",
+      "full_name": "Rahul Choudhary"
+    }
+  },
+  {
+    "id": "PERSON-081",
+    "name": "Amit Kapoor",
+    "label": "Person",
+    "role": "Associate",
+    "age": 56,
+    "properties": {
+      "role": "Associate",
+      "age": 56,
+      "display_name": "Amit Kapoor",
+      "full_name": "Amit Kapoor"
+    }
+  },
+  {
+    "id": "PERSON-082",
+    "name": "Suresh Rathore",
+    "label": "Person",
+    "role": "Witness",
+    "age": 57,
+    "properties": {
+      "role": "Witness",
+      "age": 57,
+      "display_name": "Suresh Rathore",
+      "full_name": "Suresh Rathore"
+    }
+  }
+]

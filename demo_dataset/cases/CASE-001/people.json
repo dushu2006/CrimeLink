@@ -1,0 +1,106 @@
+[
+  {
+    "id": "PERSON-001",
+    "name": "Vivaan Patel",
+    "label": "Person",
+    "role": "Associate",
+    "age": 21,
+    "properties": {
+      "role": "Associate",
+      "age": 21,
+      "display_name": "Vivaan Patel",
+      "full_name": "Vivaan Patel"
+    }
+  },
+  {
+    "id": "PERSON-002",
+    "name": "Aditya Pillai",
+    "label": "Person",
+    "role": "Witness",
+    "age": 22,
+    "properties": {
+      "role": "Witness",
+      "age": 22,
+      "display_name": "Aditya Pillai",
+      "full_name": "Aditya Pillai"
+    }
+  },
+  {
+    "id": "PERSON-003",
+    "name": "Sai Mishra",
+    "label": "Person",
+    "role": "Contact",
+    "age": 23,
+    "properties": {
+      "role": "Contact",
+      "age": 23,
+      "display_name": "Sai Mishra",
+      "full_name": "Sai Mishra"
+    }
+  },
+  {
+    "id": "PERSON-004",
+    "name": "Arjun Arora",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 24,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 24,
+      "display_name": "Arjun Arora",
+      "full_name": "Arjun Arora"
+    }
+  },
+  {
+    "id": "PERSON-005",
+    "name": "Reyansh Mehta",
+    "label": "Person",
+    "role": "Subject",
+    "age": 25,
+    "properties": {
+      "role": "Subject",
+      "age": 25,
+      "display_name": "Reyansh Mehta",
+      "full_name": "Reyansh Mehta"
+    }
+  },
+  {
+    "id": "PERSON-009",
+    "name": "Krishna Singh",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 29,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 29,
+      "display_name": "Krishna Singh",
+      "full_name": "Krishna Singh"
+    }
+  },
+  {
+    "id": "PERSON-015",
+    "name": "Anvi Rao",
+    "label": "Person",
+    "role": "Subject",
+    "age": 35,
+    "properties": {
+      "role": "Subject",
+      "age": 35,
+      "display_name": "Anvi Rao",
+      "full_name": "Anvi Rao"
+    }
+  },
+  {
+    "id": "PERSON-020",
+    "name": "Rahul Choudhary",
+    "label": "Person",
+    "role": "Subject",
+    "age": 40,
+    "properties": {
+      "role": "Subject",
+      "age": 40,
+      "display_name": "Rahul Choudhary",
+      "full_name": "Rahul Choudhary"
+    }
+  }
+]

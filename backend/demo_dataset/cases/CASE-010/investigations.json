@@ -1,0 +1,38 @@
+[
+  {
+    "id": "INV-0051",
+    "case_id": "case-010-demo",
+    "case_number": "CR-1033",
+    "investigator_id": "demo-investigator-0001",
+    "investigator_badge": "DEMO-INVESTIGATOR",
+    "investigator_name": "Demo Investigator",
+    "subject": "PERSON-049 \u2194 PERSON-052",
+    "finding": "Investigation finding for CR-1033",
+    "finding_type": "CO_LOCATION",
+    "evidence": [
+      "E-091",
+      "E-092",
+      "E-093"
+    ],
+    "evidence_strength": "HIGH",
+    "classification": "FACT",
+    "confidence": 0.7,
+    "confidence_band": "HIGH",
+    "completed_at": "2026-09-06T00:00:00",
+    "connection_path": [
+      "PERSON-049",
+      "PERSON-052"
+    ],
+    "limitations": [
+      "Limited evidence available"
+    ],
+    "provenance": "Verified from multiple sources",
+    "entity_keys": [
+      "PERSON-049",
+      "PERSON-052"
+    ],
+    "status": "NEW",
+    "narrative": "Investigation INV-0051 for case CR-1033 found association between PERSON-049 \u2194 PERSON-052",
+    "reason": "Evidence convergence from multiple records"
+  }
+]

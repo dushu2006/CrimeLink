@@ -1,0 +1,80 @@
+[
+  {
+    "id": "PERSON-071",
+    "name": "Ananya Khan",
+    "label": "Person",
+    "role": "Associate",
+    "age": 46,
+    "properties": {
+      "role": "Associate",
+      "age": 46,
+      "display_name": "Ananya Khan",
+      "full_name": "Ananya Khan"
+    }
+  },
+  {
+    "id": "PERSON-072",
+    "name": "Diya Srivastava",
+    "label": "Person",
+    "role": "Witness",
+    "age": 47,
+    "properties": {
+      "role": "Witness",
+      "age": 47,
+      "display_name": "Diya Srivastava",
+      "full_name": "Diya Srivastava"
+    }
+  },
+  {
+    "id": "PERSON-073",
+    "name": "Pari Verma",
+    "label": "Person",
+    "role": "Contact",
+    "age": 48,
+    "properties": {
+      "role": "Contact",
+      "age": 48,
+      "display_name": "Pari Verma",
+      "full_name": "Pari Verma"
+    }
+  },
+  {
+    "id": "PERSON-074",
+    "name": "Ishani Shah",
+    "label": "Person",
+    "role": "Person of Interest",
+    "age": 49,
+    "properties": {
+      "role": "Person of Interest",
+      "age": 49,
+      "display_name": "Ishani Shah",
+      "full_name": "Ishani Shah"
+    }
+  },
+  {
+    "id": "PERSON-075",
+    "name": "Anvi Rao",
+    "label": "Person",
+    "role": "Subject",
+    "age": 50,
+    "properties": {
+      "role": "Subject",
+      "age": 50,
+      "display_name": "Anvi Rao",
+      "full_name": "Anvi Rao"
+    }
+  },
+  {
+    "id": "PERSON-076",
+    "name": "Prisha Tiwari",
+    "label": "Person",
+    "role": "Associate",
+    "age": 51,
+    "properties": {
+      "role": "Associate",
+      "age": 51,
+      "display_name": "Prisha Tiwari",
+      "full_name": "Prisha Tiwari"
+    }
+  }
+]

@@ -1,0 +1,137 @@
+[
+  {
+    "evidence_id": "E-110",
+    "case_id": "case-012-demo",
+    "filename": "E-110_call_record.csv",
+    "storage_key": "evidence/E-110/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "CDR",
+    "title": "Call Record E-110"
+  },
+  {
+    "evidence_id": "E-111",
+    "case_id": "case-012-demo",
+    "filename": "E-111_evidence.pdf",
+    "storage_key": "evidence/E-111/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "EVIDENCE",
+    "title": "EVIDENCE E-111"
+  },
+  {
+    "evidence_id": "E-112",
+    "case_id": "case-012-demo",
+    "filename": "E-112_fir.pdf",
+    "storage_key": "evidence/E-112/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-112"
+  },
+  {
+    "evidence_id": "E-113",
+    "case_id": "case-012-demo",
+    "filename": "E-113_charge_sheet.pdf",
+    "storage_key": "evidence/E-113/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-113"
+  },
+  {
+    "evidence_id": "E-114",
+    "case_id": "case-012-demo",
+    "filename": "E-114_surveillance_report.pdf",
+    "storage_key": "evidence/E-114/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SURVEILLANCE_REPORT",
+    "title": "SURVEILLANCE_REPORT E-114"
+  },
+  {
+    "evidence_id": "E-115",
+    "case_id": "case-012-demo",
+    "filename": "E-115_transaction_report.csv",
+    "storage_key": "evidence/E-115/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-115"
+  },
+  {
+    "evidence_id": "E-116",
+    "case_id": "case-012-demo",
+    "filename": "E-116_scene_report.pdf",
+    "storage_key": "evidence/E-116/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-116"
+  },
+  {
+    "evidence_id": "E-117",
+    "case_id": "case-012-demo",
+    "filename": "E-117_intelligence_report.pdf",
+    "storage_key": "evidence/E-117/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "INTELLIGENCE_REPORT",
+    "title": "INTELLIGENCE_REPORT E-117"
+  },
+  {
+    "evidence_id": "E-219",
+    "case_id": "case-012-demo",
+    "filename": "E-219_witness_statement.pdf",
+    "storage_key": "evidence/E-219/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "WITNESS_STATEMENT",
+    "title": "WITNESS_STATEMENT E-219"
+  },
+  {
+    "evidence_id": "E-222",
+    "case_id": "case-012-demo",
+    "filename": "E-222_financial.pdf",
+    "storage_key": "evidence/E-222/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FINANCIAL",
+    "title": "FINANCIAL E-222"
+  },
+  {
+    "evidence_id": "E-225",
+    "case_id": "case-012-demo",
+    "filename": "E-225_transaction_report.csv",
+    "storage_key": "evidence/E-225/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-225"
+  },
+  {
+    "evidence_id": "E-230",
+    "case_id": "case-012-demo",
+    "filename": "E-230_call_record.csv",
+    "storage_key": "evidence/E-230/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "CDR",
+    "title": "Call Record E-230"
+  },
+  {
+    "evidence_id": "E-245",
+    "case_id": "case-012-demo",
+    "filename": "E-245_transaction_report.csv",
+    "storage_key": "evidence/E-245/original.csv",
+    "mime_type": "text/csv",
+    "document_type": "FINANCIAL",
+    "title": "Transaction Report E-245"
+  },
+  {
+    "evidence_id": "E-248",
+    "case_id": "case-012-demo",
+    "filename": "E-248_fir.pdf",
+    "storage_key": "evidence/E-248/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "FIR E-248"
+  },
+  {
+    "evidence_id": "E-271",
+    "case_id": "case-012-demo",
+    "filename": "E-271_evidence.pdf",
+    "storage_key": "evidence/E-271/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "EVIDENCE",
+    "title": "EVIDENCE E-271"
+  }
+]

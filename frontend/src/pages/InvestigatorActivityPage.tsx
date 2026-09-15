@@ -21,26 +21,13 @@ export default function InvestigatorActivityPage() {
       try {
         const data = await api<{ activities: any[] }>("/investigator-activity");
         setActivities(data.activities || []);
+        if ((data.activities || []).length === 0) {
+          setError("No investigation activity found — database may need seeding");
+        }
       } catch (e: any) {
-        setError(e.message);
-        setActivities([
-          {
-            id: "INV-0042",
-            investigator: "DEMO-INVESTIGATOR",
-            investigatorName: "Demo Investigator",
-            caseId: "case-001-demo",
-            caseNumber: "CR-1024",
-            subject: "PERSON-001 ↔ PERSON-002",
-            finding: "Supported communication relationship",
-            evidence: ["E-042", "E-103", "E-118"],
-            evidenceStrength: "HIGH",
-            classification: "FACT",
-            completedAt: "15 Sep 2026",
-            connectionPath: ["PERSON-001", "PERSON-002"],
-            limitations: ["Purpose of association beyond documented records is unknown", "Criminal intent not established by this evidence alone"],
-            provenance: "Verified from CDR and field reports",
-          },
-        ]);
+        // No fake fallback — show Unavailable, not fake data
+        setError(e.message || "Failed to load investigator activity — backend unavailable or MinIO/PostgreSQL not ready");
+        setActivities([]);
       } finally {
         setLoading(false);
       }
@@ -62,8 +49,8 @@ export default function InvestigatorActivityPage() {
   return (
     <div>
       {error && (
-        <div className="alert alert-info" style={{ marginBottom: "12px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
-          Backend unavailable ({error}) — showing cached demo activity. File retrieval requires MinIO availability.
+        <div className="alert alert-warn" style={{ marginBottom: "12px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
+          {error} — Status: Unavailable (no fake data shown). Check that seed_demo.py has run and MinIO/PostgreSQL are healthy.
         </div>
       )}
       <InvestigatorActivity

@@ -1,0 +1,56 @@
+[
+  {
+    "evidence_id": "S-001",
+    "case_id": "case-001-demo",
+    "filename": "S-001_source_document.pdf",
+    "storage_key": "sources/S-001/source-document.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "FIR",
+    "title": "Source Document S-001"
+  },
+  {
+    "evidence_id": "E-042",
+    "case_id": "case-001-demo",
+    "filename": "E-042_communication_record.pdf",
+    "storage_key": "evidence/E-042/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CDR",
+    "title": "Communication Record E-042"
+  },
+  {
+    "evidence_id": "E-103",
+    "case_id": "case-001-demo",
+    "filename": "E-103_call_log.pdf",
+    "storage_key": "evidence/E-103/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CDR",
+    "title": "Call Log E-103"
+  },
+  {
+    "evidence_id": "E-212",
+    "case_id": "case-001-demo",
+    "filename": "E-212_scene_report.pdf",
+    "storage_key": "evidence/E-212/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "SCENE_REPORT",
+    "title": "SCENE_REPORT E-212"
+  },
+  {
+    "evidence_id": "E-227",
+    "case_id": "case-001-demo",
+    "filename": "E-227_witness_statement.pdf",
+    "storage_key": "evidence/E-227/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "WITNESS_STATEMENT",
+    "title": "WITNESS_STATEMENT E-227"
+  },
+  {
+    "evidence_id": "E-249",
+    "case_id": "case-001-demo",
+    "filename": "E-249_charge_sheet.pdf",
+    "storage_key": "evidence/E-249/original.pdf",
+    "mime_type": "application/pdf",
+    "document_type": "CHARGE_SHEET",
+    "title": "CHARGE_SHEET E-249"
+  }
+]

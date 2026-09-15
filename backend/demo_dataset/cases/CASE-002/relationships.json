@@ -1,0 +1,119 @@
+[
+  {
+    "id": "PERSON-008-TRANSFER_TO-PERSON-006-case-002-demo",
+    "source": "PERSON-008",
+    "target": "PERSON-006",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-002-demo",
+    "confidence": 0.8237993794602593,
+    "evidence": "E-001",
+    "evidence_list": [
+      "E-001"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-006-USES_PHONE-PERSON-010-case-002-demo",
+    "source": "PERSON-006",
+    "target": "PERSON-010",
+    "rel_type": "USES_PHONE",
+    "case_id": "case-002-demo",
+    "confidence": 0.6087537643279334,
+    "evidence": "E-002",
+    "evidence_list": [
+      "E-002"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-010-OWNS_VEHICLE-PERSON-007-case-002-demo",
+    "source": "PERSON-010",
+    "target": "PERSON-007",
+    "rel_type": "OWNS_VEHICLE",
+    "case_id": "case-002-demo",
+    "confidence": 0.6962602614291917,
+    "evidence": "E-003",
+    "evidence_list": [
+      "E-003"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-007-SHARED_ACCOUNT-PERSON-012-case-002-demo",
+    "source": "PERSON-007",
+    "target": "PERSON-012",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-002-demo",
+    "confidence": 0.6781237583520879,
+    "evidence": "E-004",
+    "evidence_list": [
+      "E-004"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-012-TRANSFER_TO-PERSON-009-case-002-demo",
+    "source": "PERSON-012",
+    "target": "PERSON-009",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-002-demo",
+    "confidence": 0.8577649249574043,
+    "evidence": "E-005",
+    "evidence_list": [
+      "E-005"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-009-ASSOCIATE_OF-PERSON-011-case-002-demo",
+    "source": "PERSON-009",
+    "target": "PERSON-011",
+    "rel_type": "ASSOCIATE_OF",
+    "case_id": "case-002-demo",
+    "confidence": 0.8368448205980189,
+    "evidence": "E-006",
+    "evidence_list": [
+      "E-006"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-011-SHARED_ACCOUNT-PERSON-001-case-002-demo",
+    "source": "PERSON-011",
+    "target": "PERSON-001",
+    "rel_type": "SHARED_ACCOUNT",
+    "case_id": "case-002-demo",
+    "confidence": 0.9122628486966958,
+    "evidence": "E-007",
+    "evidence_list": [
+      "E-007"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-001-ARRESTED_WITH-PERSON-008-case-002-demo",
+    "source": "PERSON-001",
+    "target": "PERSON-008",
+    "rel_type": "ARRESTED_WITH",
+    "case_id": "case-002-demo",
+    "confidence": 0.6304285914202956,
+    "evidence": "E-008",
+    "evidence_list": [
+      "E-008"
+    ],
+    "properties": {}
+  },
+  {
+    "id": "PERSON-008-TRANSFER_TO-PERSON-006-case-002-demo",
+    "source": "PERSON-008",
+    "target": "PERSON-006",
+    "rel_type": "TRANSFER_TO",
+    "case_id": "case-002-demo",
+    "confidence": 0.7476726368898446,
+    "evidence": "E-009",
+    "evidence_list": [
+      "E-009"
+    ],
+    "properties": {}
+  }
+]

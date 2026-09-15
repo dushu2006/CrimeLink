@@ -1,0 +1,38 @@
+[
+  {
+    "id": "INV-0052",
+    "case_id": "case-011-demo",
+    "case_number": "CR-1034",
+    "investigator_id": "demo-investigator-0001",
+    "investigator_badge": "DEMO-INVESTIGATOR",
+    "investigator_name": "Demo Investigator",
+    "subject": "PERSON-052 \u2194 PERSON-056",
+    "finding": "Investigation finding for CR-1034",
+    "finding_type": "FINANCIAL",
+    "evidence": [
+      "E-101",
+      "E-102",
+      "E-103"
+    ],
+    "evidence_strength": "MODERATE",
+    "classification": "INFERENCE",
+    "confidence": 0.8,
+    "confidence_band": "MEDIUM",
+    "completed_at": "2026-09-05T00:00:00",
+    "connection_path": [
+      "PERSON-052",
+      "PERSON-056"
+    ],
+    "limitations": [
+      "Co-location does not establish intent"
+    ],
+    "provenance": "Verified from multiple sources",
+    "entity_keys": [
+      "PERSON-052",
+      "PERSON-056"
+    ],
+    "status": "CONFIRMED",
+    "narrative": "Investigation INV-0052 for case CR-1034 found association between PERSON-052 \u2194 PERSON-056",
+    "reason": "Evidence convergence from multiple records"
+  }
+]

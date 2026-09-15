@@ -1,6 +1,6 @@
 # CrimeLink — production deployment topology (PRD 15)
 #
-# Eleven containers (8 core + 1 demo seed + 2 observability), as specified + Priority 1.4:
+# Twelve containers (8 core + 2 demo + 2 observability), as specified + Priority 1.4:
 #
 #   1. postgres  — relational system of record (PostgreSQL 15)
 #   2. neo4j     — the investigation graph (Neo4j 5 Community)
@@ -11,8 +11,10 @@
 #   7. beat      — Celery beat: nightly pattern detection + audit anchoring
 #   8. web       — nginx: serves the React console, terminates TLS, proxies /api
 #   9. seed      — production demo seed: idempotent PG/Neo4j/MinIO demo data (evaluator-ready, no manual upload)
-#  10. prometheus — scrapes /api/v1/health/metrics, evaluates alert_rules.yml
-#  11. grafana    — dashboards for pipeline, ER SLA, audit chain, API latency
+#  10. validate  — validates PG/Neo4j/MinIO/API/Viewer 403 checks after seed
+#  11. prometheus — scrapes /api/v1/health/metrics, evaluates alert_rules.yml
+#  12. grafana    — dashboards for pipeline, ER SLA, audit chain, API latency
+# Startup order: postgres -> neo4j -> minio -> redis -> api healthy -> seed -> validate -> web
 
 name: crimelink
 
@@ -208,29 +210,13 @@ services:
     networks: [crimelink]
 
   # ---------------------------------------------------------------------------
-  # 8. Console + reverse proxy
-  # ---------------------------------------------------------------------------
-  web:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: crimelink-web
-    ports:
-      - "${CRIMELINK_HTTP_PORT:-80}:80"
-    volumes:
-      - ./infra/tls:/etc/nginx/tls:ro
-    depends_on:
-      api: { condition: service_healthy }
-    restart: unless-stopped
-    networks: [crimelink]
-
-  # ---------------------------------------------------------------------------
-  # 9. Production Demo Seed — Idempotent, evaluator-ready, no manual upload
+  # 8. Production Demo Seed — Idempotent, evaluator-ready, no manual upload
   #    Populates PG (users/roles/cases/evidence metadata/source/investigation),
   #    Neo4j (people, relationships, properties), MinIO (actual files)
-  #    Stable IDs: CASE-001/CR-1024 PERSON-001 E-042 INV-0001
+  #    Stable IDs: CASE-001/CR-1024 PERSON-001 E-042 INV-0042
   #    Same data scope for ADMIN/INVESTIGATOR/VIEWER, different permissions
   #    Runs after API healthy, exits 0 on success, idempotent no duplicates
+  #    No auto-seed on API restart — use this seed job only
   # ---------------------------------------------------------------------------
   seed:
     build:
@@ -253,11 +239,60 @@ services:
       postgres: { condition: service_healthy }
       neo4j: { condition: service_healthy }
       minio: { condition: service_healthy }
+      redis: { condition: service_healthy }
     restart: "no"
     networks: [crimelink]
 
   # ---------------------------------------------------------------------------
-  # 10. Observability
+  # 9. Validation — comprehensive cross-store checks after seed
+  #    Validates PG/Neo4j/MinIO/API/Viewer 403, SHA-256, size, PDF validity, 1-4 hop
+  #    Runs after seed completes successfully
+  # ---------------------------------------------------------------------------
+  validate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crimelink-validate
+    command: ["python", "scripts/validate_demo.py"]
+    env_file: [.env]
+    environment:
+      CRIMELINK_PROFILE: production
+      CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
+      CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
+      CRIMELINK_NEO4J_URI: bolt://neo4j:7687
+      CRIMELINK_NEO4J_PASSWORD: ${CRIMELINK_NEO4J_PASSWORD:?CRIMELINK_NEO4J_PASSWORD must be set}
+      CRIMELINK_REDIS_URL: redis://redis:6379/0
+      CRIMELINK_MINIO_ENDPOINT: minio:9000
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      api: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      neo4j: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    restart: "no"
+    networks: [crimelink]
+
+  # ---------------------------------------------------------------------------
+  # 10. Console + reverse proxy — starts after validate
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: crimelink-web
+    ports:
+      - "${CRIMELINK_HTTP_PORT:-80}:80"
+    volumes:
+      - ./infra/tls:/etc/nginx/tls:ro
+    depends_on:
+      api: { condition: service_healthy }
+      validate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    networks: [crimelink]
+
+  # ---------------------------------------------------------------------------
+  # 11. Observability
   # ---------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:v2.53.2
