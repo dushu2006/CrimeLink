@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -29,6 +30,9 @@ REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from sqlalchemy import text
+
+from app import runtime
 from app.config import Settings, get_settings
 from app.db.models import (
     Base,
@@ -72,38 +76,187 @@ EXPECTED_CASE_NUMBERS = [f"CR-{1024 + i}" for i in range(20)]
 # 1. Service Health & Readiness Checks
 # ---------------------------------------------------------------------------
 
+#: Command that starts the host-accessible infrastructure stack.  It only ever
+#: creates/starts containers; it never removes a volume or resets demo data.
+INFRA_START_COMMAND = "docker compose -f docker-compose.infra.yml up -d"
+INFRA_STATUS_COMMAND = "docker compose -f docker-compose.infra.yml ps"
+
+#: Phrases that identify a DNS failure across psycopg2/asyncpg/neo4j/redis.
+#: A hostname that does not resolve will not start resolving because we retried,
+#: so bootstrap fails immediately with an actionable message instead of looping
+#: until the timeout and reporting an opaque driver error.
+_NAME_RESOLUTION_MARKERS = (
+    "could not translate host name",
+    "name or service not known",
+    "nodename nor servname provided",
+    "getaddrinfo failed",
+    "temporary failure in name resolution",
+    "no address associated with hostname",
+    "server misbehaving",
+)
+
+
+def is_name_resolution_failure(exc: BaseException | None) -> bool:
+    """True when *exc* (or anything it wraps) is a hostname resolution error."""
+    seen: set[int] = set()
+    stack: list[BaseException | None] = [exc]
+    while stack:
+        current = stack.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, socket.gaierror):
+            return True
+        message = str(current).lower()
+        if any(marker in message for marker in _NAME_RESOLUTION_MARKERS):
+            return True
+        stack.append(current.__cause__)
+        stack.append(current.__context__)
+    return False
+
+
+def _host_part(dsn: str) -> str:
+    """``host:port/database`` with credentials stripped, safe to log."""
+    return dsn.split("@")[-1] if "@" in dsn else dsn
+
+
+def _infrastructure_hint() -> str:
+    return (
+        "Start the CrimeLink infrastructure services and retry:\n"
+        f"    {INFRA_START_COMMAND}\n"
+        f"Check what is running with:\n"
+        f"    {INFRA_STATUS_COMMAND}\n"
+        "Existing containers, volumes and the persisted demo dataset are left untouched."
+    )
+
+
+def _context_line(settings: Settings) -> str:
+    description = runtime.CONTEXT_DESCRIPTIONS.get(settings.resolved_runtime_context, "")
+    return f"Runtime context: {settings.resolved_runtime_context} ({description})"
+
+
+def postgres_unavailable_message(
+    settings: Settings, last_error: str, *, name_resolution: bool
+) -> str:
+    """Actionable explanation of why PostgreSQL could not be reached.
+
+    The headline is always the same sentence so it is recognisable in a log,
+    followed by the concrete address, the runtime context and the exact command
+    that fixes the common cases.  This replaces the raw
+    ``could not translate host name "postgres"`` DNS error, which told an
+    operator nothing about what to do next.
+    """
+    host, port = settings.postgres_endpoint
+    lines = [
+        f"PostgreSQL is not running ({host}:{port}).",
+        "",
+        _infrastructure_hint(),
+        "",
+        f"Connection error : {last_error or 'no response'}",
+        _context_line(settings),
+        f"DSN (sync)       : {_host_part(settings.postgres_dsn_sync)}",
+        f"DSN (async)      : {_host_part(settings.postgres_dsn)}",
+    ]
+    if name_resolution and host in runtime.COMPOSE_SERVICE_HOSTNAMES:
+        lines += [
+            "",
+            f"'{host}' is a Docker Compose service name: it resolves only on the Compose",
+            "network, and this process is not running in a container. Pick one of:",
+            "    python run.py                          # detects the runtime context for you",
+            f"    set CRIMELINK_RUNTIME_CONTEXT=host     # rewrites '{host}' -> "
+            f"{settings.infra_host}:{settings.postgres_host_port}",
+            "    set CRIMELINK_POSTGRES_DSN / CRIMELINK_POSTGRES_DSN_SYNC to a reachable server",
+        ]
+    elif name_resolution:
+        lines += [
+            "",
+            f"The hostname '{host}' could not be resolved from this machine.",
+            "Check CRIMELINK_INFRA_HOST, your DNS settings, or set the DSN explicitly.",
+        ]
+    else:
+        lines += [
+            "",
+            "Nothing accepted a connection on that address. If PostgreSQL runs on another",
+            "port or host, point CrimeLink at it instead of editing the code:",
+            "    CRIMELINK_INFRA_HOST / CRIMELINK_POSTGRES_HOST_PORT (host runtime), or",
+            "    CRIMELINK_POSTGRES_DSN and CRIMELINK_POSTGRES_DSN_SYNC (any runtime).",
+            "",
+            "CrimeLink does not fall back to SQLite or an in-memory database: PostgreSQL",
+            "is the relational system of record for this configuration.",
+        ]
+    return "\n".join(lines)
+
+
 def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -> None:
     """Verify that required storage and persistence backends are healthy.
 
     In production profile: fails loudly if PostgreSQL, Neo4j, or MinIO cannot be reached.
     In embedded profile: verifies local filesystem paths are accessible and writable.
+
+    Every check is fail-closed: a service that cannot be reached aborts the
+    bootstrap.  No check silently substitutes a weaker backend.
     """
     settings = settings or get_settings()
     is_prod = settings.profile == "production" or settings.environment == "production"
     deadline = time.time() + timeout
 
+    log.info(
+        "bootstrap.runtime_context",
+        context=settings.resolved_runtime_context,
+        profile=settings.profile,
+        environment=settings.environment,
+        in_container=runtime.running_in_container(),
+        backends={
+            "relational": settings.effective_relational_backend,
+            "graph": settings.effective_graph_backend,
+            "object_store": settings.effective_object_store_backend,
+            "broker": settings.effective_broker_backend,
+        },
+        endpoint_rewrites=settings.endpoint_rewrites,
+    )
+
     # 1.1 Relational database
     rel_backend = settings.effective_relational_backend
     if rel_backend == "postgres":
-        log.info("bootstrap.checking_postgres", dsn=settings.postgres_dsn_sync.split("@")[-1])
+        host, port = settings.postgres_endpoint
+        log.info(
+            "bootstrap.checking_postgres",
+            dsn=_host_part(settings.postgres_dsn_sync),
+            host=host,
+            port=port,
+            runtime_context=settings.resolved_runtime_context,
+        )
         last_error = ""
+        name_resolution_failure = False
         engine = get_sync_engine(settings)
         connected = False
         while time.time() < deadline:
             try:
                 with engine.connect() as conn:
-                    conn.execute(Base.metadata.tables.get("cases", None) or "SELECT 1")
+                    # A literal SELECT 1 — the previous code handed SQLAlchemy a
+                    # Table object, which is not executable, so the probe failed
+                    # even against a perfectly healthy PostgreSQL server.
+                    conn.execute(text("SELECT 1"))
                 connected = True
                 break
-            except Exception as exc:
-                last_error = str(exc)
+            except Exception as exc:  # noqa: BLE001 - reported with full context below
+                last_error = str(exc).strip()
+                if is_name_resolution_failure(exc):
+                    # DNS will not fix itself by retrying; fail fast and explain.
+                    name_resolution_failure = True
+                    break
                 time.sleep(1.0)
         if not connected:
+            try:
+                engine.dispose()
+            except Exception:  # pragma: no cover - disposal is best effort
+                pass
             raise RuntimeError(
-                f"PostgreSQL is unavailable ({last_error}). "
-                "Refusing to start with broken database dependency."
+                postgres_unavailable_message(
+                    settings, last_error, name_resolution=name_resolution_failure
+                )
             )
-        log.info("bootstrap.postgres_ready")
+        log.info("bootstrap.postgres_ready", host=host, port=port)
     else:
         # SQLite
         settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -112,7 +265,14 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
     # 1.2 Graph database
     graph_backend = settings.effective_graph_backend
     if graph_backend == "neo4j":
-        log.info("bootstrap.checking_neo4j", uri=settings.neo4j_uri)
+        neo_host, neo_port = settings.neo4j_endpoint
+        log.info(
+            "bootstrap.checking_neo4j",
+            uri=settings.neo4j_uri,
+            host=neo_host,
+            port=neo_port,
+            runtime_context=settings.resolved_runtime_context,
+        )
         try:
             from neo4j import GraphDatabase
         except ImportError as exc:
@@ -133,11 +293,14 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
                 break
             except Exception as exc:
                 last_error = str(exc)
+                if is_name_resolution_failure(exc):
+                    break
                 time.sleep(1.0)
         if not connected:
             raise RuntimeError(
                 f"Neo4j is unavailable at {settings.neo4j_uri} ({last_error}). "
-                "Refusing to start with broken graph database dependency."
+                "Refusing to start with broken graph database dependency.\n"
+                + _infrastructure_hint()
             )
         log.info("bootstrap.neo4j_ready")
     else:
@@ -148,7 +311,14 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
     # 1.3 Object store
     obj_backend = settings.effective_object_store_backend
     if obj_backend == "minio":
-        log.info("bootstrap.checking_minio", endpoint=settings.minio_endpoint)
+        minio_host, minio_port = settings.minio_endpoint_address
+        log.info(
+            "bootstrap.checking_minio",
+            endpoint=settings.minio_endpoint,
+            host=minio_host,
+            port=minio_port,
+            runtime_context=settings.resolved_runtime_context,
+        )
         try:
             from app.adapters.objectstore.minio_store import MinioObjectStore
             store = MinioObjectStore(settings)
@@ -158,9 +328,12 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
             if is_prod:
                 raise RuntimeError(
                     f"MinIO is unavailable at {settings.minio_endpoint} ({exc}). "
-                    "MinIO is mandatory in production — refusing Local fallback."
+                    "MinIO is mandatory in production — refusing Local fallback.\n"
+                    + _infrastructure_hint()
                 ) from exc
-            raise RuntimeError(f"MinIO connection failed: {exc}") from exc
+            raise RuntimeError(
+                f"MinIO connection failed: {exc}\n" + _infrastructure_hint()
+            ) from exc
     else:
         if is_prod:
             raise RuntimeError(
@@ -173,7 +346,14 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
     # 1.4 Broker (Redis)
     broker_backend = settings.effective_broker_backend
     if broker_backend == "celery":
-        log.info("bootstrap.checking_redis", url=settings.redis_url)
+        redis_host, redis_port = settings.redis_endpoint
+        log.info(
+            "bootstrap.checking_redis",
+            url=settings.redis_url,
+            host=redis_host,
+            port=redis_port,
+            runtime_context=settings.resolved_runtime_context,
+        )
         try:
             import redis
             client = redis.from_url(settings.redis_url, socket_timeout=3.0)
@@ -183,7 +363,8 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
             if is_prod:
                 raise RuntimeError(
                     f"Redis is unavailable at {settings.redis_url} ({exc}). "
-                    "Redis is mandatory for Celery broker in production."
+                    "Redis is mandatory for Celery broker in production.\n"
+                    + _infrastructure_hint()
                 ) from exc
             log.warning("bootstrap.redis_unavailable", error=str(exc))
 
