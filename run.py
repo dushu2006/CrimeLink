@@ -59,7 +59,18 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 ROOT = Path(__file__).resolve().parent
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
-VENV = ROOT / ".venv"
+def resolve_venv() -> Path:
+    """Resolve the virtualenv directory, preferring an existing venv in ROOT or backend/."""
+    for candidate in (ROOT / ".venv", BACKEND / ".venv"):
+        if candidate.is_dir():
+            script_dir = candidate / ("Scripts" if os.name == "nt" else "bin")
+            py_name = "python.exe" if os.name == "nt" else "python"
+            if (script_dir / py_name).is_file():
+                return candidate
+    return ROOT / ".venv"
+
+
+VENV = resolve_venv()
 RUN_DIR = ROOT / ".run"
 DATA_DIR = ROOT / "var" / "data"
 OBJECT_DIR = ROOT / "var" / "objects"
@@ -72,6 +83,20 @@ DEFAULT_WEB_PORT = 5173
 MIN_PYTHON = (3, 11)
 MAX_PYTHON_TESTED = (3, 13)  # tested on 3.11–3.13; warn on 3.14+
 MIN_NODE_MAJOR = 18
+
+REQUIRED_BACKEND_MODULES: tuple[str, ...] = (
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic_settings",
+    "sqlalchemy",
+    "psycopg2",
+    "asyncpg",
+    "aiosqlite",
+    "alembic",
+    "networkx",
+    "structlog",
+)
 
 
 def die(message: str, code: int = 1) -> None:
@@ -87,14 +112,15 @@ def warn(message: str) -> None:
     print(f"[CrimeLink] WARNING: {message}", file=sys.stderr, flush=True)
 
 
-def venv_bin(name: str) -> Path:
+def venv_bin(name: str, venv: Path | None = None) -> Path:
+    target = venv or VENV
     if os.name == "nt":
-        return VENV / "Scripts" / (name + (".exe" if not name.endswith(".exe") else ""))
-    return VENV / "bin" / name
+        return target / "Scripts" / (name + (".exe" if not name.endswith(".exe") else ""))
+    return target / "bin" / name
 
 
-def venv_python() -> Path:
-    return venv_bin("python.exe" if os.name == "nt" else "python")
+def venv_python(venv: Path | None = None) -> Path:
+    return venv_bin("python.exe" if os.name == "nt" else "python", venv=venv)
 
 
 def load_dotenv(path: Path) -> None:
@@ -268,36 +294,86 @@ def run(cmd: list[str], **kwargs) -> None:
         die(f"Command failed ({result.returncode}): {' '.join(cmd)}")
 
 
+def check_backend_dependencies(py: Path) -> list[str]:
+    """Verify backend modules required for bootstrap and runtime are importable.
+
+    Returns a list of missing module names (empty if all are satisfied).
+    """
+    probe_script = (
+        "import importlib, sys\n"
+        f"mods = {list(REQUIRED_BACKEND_MODULES)!r}\n"
+        "missing = []\n"
+        "for m in mods:\n"
+        "    try:\n"
+        "        importlib.import_module(m)\n"
+        "    except Exception:\n"
+        "        missing.append(m)\n"
+        "if missing:\n"
+        "    print(','.join(missing))\n"
+        "    sys.exit(1)\n"
+    )
+    res = subprocess.run(
+        [str(py), "-c", probe_script],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        raw = res.stdout.strip()
+        if raw:
+            return [m.strip() for m in raw.split(",") if m.strip()]
+        return ["backend-dependencies"]
+    return []
+
+
+def verify_bootstrap_dependencies(py: Path) -> None:
+    """Pre-flight verification that all dependencies required for bootstrap are present."""
+    info("Verifying backend bootstrap dependencies …")
+    missing = check_backend_dependencies(py)
+    if missing:
+        die(
+            f"Required backend dependencies missing before bootstrap: {', '.join(missing)}. "
+            "Please run `python run.py --reinstall` or check backend/pyproject.toml."
+        )
+    info("Backend bootstrap dependencies verified.")
+
+
 def ensure_venv(interpreter: str, env: dict[str, str], reinstall: bool) -> Path:
-    py = venv_python()
+    global VENV
+    VENV = resolve_venv()
+    py = venv_python(VENV)
     if reinstall and VENV.exists():
-        info("Removing existing virtualenv (--reinstall).")
+        info(f"Removing existing virtualenv ({VENV}) (--reinstall).")
         shutil.rmtree(VENV)
     if not py.is_file():
         info(f"Creating virtualenv at {VENV} …")
         run([interpreter, "-m", "venv", str(VENV)])
-        py = venv_python()
+        py = venv_python(VENV)
         if not py.is_file():
             die(f"Virtualenv was created but {py} is missing.")
 
     marker = VENV / ".crimelink-installed"
-    need_install = reinstall or not marker.is_file()
-    if not need_install:
-        probe = subprocess.run(
-            [str(py), "-c", "import fastapi, uvicorn, sqlalchemy, networkx"],
-            capture_output=True,
-        )
-        need_install = probe.returncode != 0
+    missing = check_backend_dependencies(py) if (marker.is_file() and not reinstall) else ["uninstalled"]
 
-    if need_install:
-        info("Installing backend Python dependencies (first time can take a few minutes) …")
+    if reinstall or not marker.is_file() or missing:
+        if missing and marker.is_file() and not reinstall:
+            info(f"Backend virtualenv is missing required dependencies: {', '.join(missing)}.")
+            info("Synchronizing dependencies with backend/pyproject.toml …")
+        else:
+            info("Installing backend Python dependencies (first time can take a few minutes) …")
         info("Upgrading pip/setuptools/wheel first so prebuilt wheels are preferred.")
         run([str(py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], env=env)
         run([str(py), "-m", "pip", "install", "-e", str(BACKEND)], env=env)
+
+        remaining = check_backend_dependencies(py)
+        if remaining:
+            die(
+                f"Required backend dependencies are still missing after install: {', '.join(remaining)}. "
+                "Check backend/pyproject.toml and your Python environment."
+            )
         marker.write_text("ok\n", encoding="utf-8")
-        info("Backend dependencies installed.")
+        info("Backend dependencies installed and verified.")
     else:
-        info("Backend virtualenv already present — skipping pip install.")
+        info("Backend virtualenv dependencies verified — skipping pip install.")
     return py
 
 
@@ -453,6 +529,9 @@ def main() -> int:
     _check_env(env)
     py = ensure_venv(interpreter, env, reinstall=args.reinstall)
     ensure_frontend(npm, env, reinstall=args.reinstall)
+
+    # Lightweight pre-flight verification of backend dependencies before bootstrap
+    verify_bootstrap_dependencies(py)
 
     # Idempotent storage checks, migrations, and demo dataset bootstrap
     run_bootstrap(py, env)
