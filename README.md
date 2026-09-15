@@ -245,6 +245,70 @@ reports duplicates rather than copying them. `ground_truth/` is isolation-checke
 and excluded — it may only be consumed by a separate evaluation harness, never
 by the operational pipeline, AI context or UI.
 
+### Running `python run.py` against the real services (PostgreSQL, Neo4j, MinIO, Redis)
+
+The launcher is environment-aware. `docker-compose.yml` addresses the data
+services by Compose service name (`postgres`, `neo4j`, `minio`, `redis`), and
+those DNS names exist **only on the Compose network** — which is why a native
+launch used to fail with
+`could not translate host name "postgres" to address: Name or service not known`.
+
+CrimeLink therefore determines the **runtime context** before it connects
+(`CRIMELINK_RUNTIME_CONTEXT`, implemented in `backend/app/runtime.py`):
+
+| Context | Where | Endpoints |
+| ------- | ----- | --------- |
+| `host` | native Python — `python run.py` on Windows/macOS/Linux | Compose service names rewritten to `CRIMELINK_INFRA_HOST` (default `localhost`) + the published host port |
+| `docker` | inside a container on the Compose network | service hostnames used exactly as configured |
+| `production` | a deployment (`docker-compose.yml` sets it for every service) | endpoints used exactly as configured, no rewriting, no fallback |
+
+`auto` (the default) detects which one applies; an explicit value always wins,
+and `run.py` pins the detected context into every process it starts. Rewriting
+changes **where** a service is reached, never **which** backend is used —
+PostgreSQL stays PostgreSQL, MinIO stays MinIO, and there is no SQLite,
+in-memory or local-filesystem fallback anywhere in this path.
+
+Start the host-accessible data services (same images, credentials, healthchecks
+and volumes as production, with ports published on loopback):
+
+```bash
+cp .env.example .env                          # set the passwords + CRIMELINK_SECRET_KEY
+docker compose -f docker-compose.infra.yml up -d
+python run.py                                 # or: python run.py --start-infra
+```
+
+Ask for the real services in `.env` — either the whole production profile
+(`CRIMELINK_PROFILE=production`), or PostgreSQL only while the other adapters
+stay embedded:
+
+```bash
+CRIMELINK_RELATIONAL_BACKEND=postgres
+CRIMELINK_POSTGRES_DSN_SYNC=postgresql+psycopg2://crimelink:<password>@postgres:5432/crimelink
+```
+
+The launcher then prints what it decided and verifies each service in order
+before bootstrapping:
+
+```text
+[CrimeLink] Runtime environment: host — native Python on this machine …
+[CrimeLink] Adapters: relational=postgres, graph=embedded, object_store=local, broker=inline
+[CrimeLink]   PostgreSQL : localhost:5432  [host runtime: Compose name 'postgres' -> localhost:5432]
+[CrimeLink] Verifying PostgreSQL at localhost:5432 …
+[CrimeLink] PostgreSQL is reachable at localhost:5432.
+```
+
+If a service is genuinely down you get an actionable message instead of a DNS
+error — `PostgreSQL is not running (localhost:5432). Start the CrimeLink
+infrastructure services and retry: docker compose -f docker-compose.infra.yml
+up -d` — and the launch stops. Nothing is bypassed, and the launcher never runs
+`down`, never removes a volume and never calls `reset_demo`.
+
+Useful overrides: `CRIMELINK_INFRA_HOST`, `CRIMELINK_POSTGRES_HOST_PORT`
+(and `_NEO4J_/_MINIO_/_REDIS_`), `--runtime-context host|docker|production`,
+`--infra-timeout`. When the stack is already running, `run.py` reads the actual
+published ports back from Docker (`docker port crimelink-postgres 5432`) rather
+than assuming them; an explicit value in `.env` still wins.
+
 ### Manual start (without run.py)
 
 ```bash
@@ -264,6 +328,13 @@ docker compose up -d --build
 ```
 
 Then open the console and create the first administrator.
+
+The production topology is unchanged: its data services publish **no** host
+ports and every CrimeLink container runs with `CRIMELINK_RUNTIME_CONTEXT=production`,
+so the Compose hostnames in the DSNs are used verbatim. `docker-compose.infra.yml`
+is a development convenience only — it shares the project name, network and
+named volumes with the production file, so data seeded locally is the same data
+the production containers see.
 
 ---
 
@@ -342,6 +413,8 @@ test and code path that satisfies it.
 backend/
   app/
     config.py                 # settings, both deployment profiles
+    runtime.py                # runtime context (host/docker/production) +
+                              # infrastructure endpoint resolution (stdlib only)
     domain/                   # enums, provenance, normalisation, graph models
     ai/                       # AI gateway, pseudonymization, model router, schemas
     adapters/
@@ -362,8 +435,10 @@ backend/
   tests/
 frontend/                     # React 18 + Cytoscape + Zustand console
 infra/                        # TLS mount point for nginx
-run.py                        # local installer + launcher (embedded profile)
-docker-compose.yml            # production topology
+run.py                        # local installer + launcher (environment-aware)
+docker-compose.yml            # production topology (no host-published data ports)
+docker-compose.infra.yml      # local dev: the same four data services with
+                              # ports published on loopback for native Python
 .env.example                  # all environment variables, grouped by section
 ```
 

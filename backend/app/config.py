@@ -17,6 +17,14 @@ Two deployment profiles exist:
 
 The profile only selects *adapters*; the domain, pipeline, analytics and API
 layers are byte-for-byte identical in both profiles.
+
+A third, orthogonal axis is the **runtime context** (``CRIMELINK_RUNTIME_CONTEXT``,
+see :mod:`app.runtime`): ``host`` for native Python on the developer machine,
+``docker`` for a container on the Compose network and ``production`` for a
+deployment.  Only the ``host`` context rewrites endpoints, and it rewrites only
+Compose service hostnames (``postgres`` → ``localhost:5432``) so that the same
+``.env`` works both natively and inside containers.  The context never changes
+which backend is used — PostgreSQL stays mandatory wherever it is configured.
 """
 
 from __future__ import annotations
@@ -27,8 +35,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app import runtime
 
 # backend/app/config.py -> parents[1] == backend/, parents[2] == repository root
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -67,22 +77,55 @@ class Settings(BaseSettings):
     object_store_backend: Literal["auto", "minio", "local"] = "auto"
     broker_backend: Literal["auto", "celery", "inline"] = "auto"
 
-    postgres_dsn: str = "postgresql+asyncpg://crimelink:crimelink@localhost:5432/crimelink"
-    postgres_dsn_sync: str = "postgresql+psycopg2://crimelink:crimelink@localhost:5432/crimelink"
+    # -------------------------------------------------------- runtime context
+    # Where this process runs (see app/runtime.py).  `auto` detects it:
+    #
+    #   host        native Python on this machine (`python run.py`).  Compose
+    #               service hostnames (`postgres`, `neo4j`, `minio`, `redis`)
+    #               are rewritten to `infra_host` + the published host port,
+    #               because those DNS names exist only on the Compose network.
+    #   docker      inside a container on the Compose network — the service
+    #               hostnames are authoritative and are never rewritten.
+    #   production  production deployment — endpoints are used exactly as
+    #               configured, with no rewriting and no fallback of any kind.
+    #
+    # An explicit value always wins over detection.  `run.py` detects the
+    # context once and pins it into the environment of every child process
+    # (bootstrap, API, console) so the whole startup path agrees.  Rewriting
+    # only changes *where* a service is reached, never *which* backend is used:
+    # PostgreSQL stays PostgreSQL in every context.
+    runtime_context: Literal["auto", "host", "docker", "production"] = "auto"
+    #: Host-accessible address used for the infrastructure services when the
+    #: runtime context is `host` (Docker Desktop publishes on localhost).
+    infra_host: str = runtime.DEFAULT_INFRA_HOST
+    #: Host ports published by `docker-compose.infra.yml`.  The defaults are the
+    #: container-internal ports declared in `docker-compose.yml`, so a default
+    #: local stack needs no overrides at all.
+    postgres_host_port: int = runtime.SERVICE_CONTAINER_PORTS["postgres"]
+    neo4j_host_port: int = runtime.SERVICE_CONTAINER_PORTS["neo4j"]
+    minio_host_port: int = runtime.SERVICE_CONTAINER_PORTS["minio"]
+    redis_host_port: int = runtime.SERVICE_CONTAINER_PORTS["redis"]
+
+    #: Filled in by `_resolve_runtime_endpoints`; never read from the environment.
+    _resolved_runtime_context: str = PrivateAttr(default=runtime.CONTEXT_HOST)
+    _endpoint_rewrites: list[str] = PrivateAttr(default_factory=list)
+
+    postgres_dsn: str = runtime.DEFAULT_POSTGRES_DSN
+    postgres_dsn_sync: str = runtime.DEFAULT_POSTGRES_DSN_SYNC
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
 
-    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_uri: str = runtime.DEFAULT_NEO4J_URI
     neo4j_user: str = "neo4j"
     neo4j_password: str = "crimelink"
     neo4j_database: str = "neo4j"
     neo4j_gds_enabled: bool = False  # GDS is optional; centrality is computed in Python
 
-    redis_url: str = "redis://localhost:6379/0"
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
+    redis_url: str = runtime.DEFAULT_REDIS_URL
+    celery_broker_url: str = runtime.DEFAULT_CELERY_BROKER_URL
+    celery_result_backend: str = runtime.DEFAULT_CELERY_RESULT_BACKEND
 
-    minio_endpoint: str = "localhost:9000"
+    minio_endpoint: str = runtime.DEFAULT_MINIO_ENDPOINT
     minio_access_key: str = "crimelink"
     minio_secret_key: str = "crimelink"
     minio_secure: bool = False
@@ -274,6 +317,48 @@ class Settings(BaseSettings):
     http_port: int = 8000  # used by docker compose
 
     @model_validator(mode="after")
+    def _resolve_runtime_endpoints(self) -> "Settings":
+        """Make the infrastructure endpoints reachable from wherever this runs.
+
+        Detection and rewriting live in :mod:`app.runtime`, so the launcher, the
+        API, the workers, Alembic and the seed scripts all resolve endpoints
+        identically instead of each growing their own idea of where PostgreSQL
+        lives.
+
+        Nothing here can downgrade a backend: a ``postgres`` DSN stays a
+        ``postgres`` DSN, a ``minio`` object store stays MinIO.  Only the
+        host/port of an endpoint may change, and only in the ``host`` context
+        where the Compose DNS name cannot possibly resolve.  Container and
+        production contexts are returned untouched.
+        """
+        context = runtime.resolve_runtime_context(
+            explicit=self.runtime_context,
+            profile=self.profile,
+            environment=self.environment,
+        )
+        rewrites: list[str] = []
+        if context == runtime.CONTEXT_HOST:
+            for field, service in runtime.ENDPOINT_FIELDS:
+                configured = getattr(self, field)
+                resolution = runtime.resolve_service_endpoint(
+                    configured,
+                    service,
+                    context=context,
+                    field=field,
+                    infra_host=self.infra_host,
+                    host_port=getattr(self, runtime.HOST_PORT_FIELDS[service], None),
+                )
+                if resolution.rewritten and resolution.value != configured:
+                    object.__setattr__(self, field, resolution.value)
+                    rewrites.append(
+                        f"{field}: {resolution.configured_host} -> "
+                        f"{resolution.host}:{resolution.port}"
+                    )
+        self._resolved_runtime_context = context
+        self._endpoint_rewrites = rewrites
+        return self
+
+    @model_validator(mode="after")
     def _validate_production_security(self) -> "Settings":
         """Fail closed when an operator selects a production profile.
 
@@ -342,29 +427,137 @@ class Settings(BaseSettings):
         return max(0.0, min(1.0, f))
 
     # ------------------------------------------------------------- resolution
+    # The four adapter selections delegate to app.runtime so `run.py` (which
+    # cannot import pydantic before the virtualenv exists) resolves them with
+    # exactly the same logic.
     @property
     def effective_relational_backend(self) -> str:
-        if self.relational_backend != "auto":
-            return self.relational_backend
-        return "postgres" if self.profile == "production" else "sqlite"
+        return runtime.resolve_backend(
+            self.relational_backend,
+            profile=self.profile,
+            production_backend="postgres",
+            embedded_backend="sqlite",
+        )
 
     @property
     def effective_graph_backend(self) -> str:
-        if self.graph_backend != "auto":
-            return self.graph_backend
-        return "neo4j" if self.profile == "production" else "embedded"
+        return runtime.resolve_backend(
+            self.graph_backend,
+            profile=self.profile,
+            production_backend="neo4j",
+            embedded_backend="embedded",
+        )
 
     @property
     def effective_object_store_backend(self) -> str:
-        if self.object_store_backend != "auto":
-            return self.object_store_backend
-        return "minio" if self.profile == "production" else "local"
+        return runtime.resolve_backend(
+            self.object_store_backend,
+            profile=self.profile,
+            production_backend="minio",
+            embedded_backend="local",
+        )
 
     @property
     def effective_broker_backend(self) -> str:
-        if self.broker_backend != "auto":
-            return self.broker_backend
-        return "celery" if self.profile == "production" else "inline"
+        return runtime.resolve_backend(
+            self.broker_backend,
+            profile=self.profile,
+            production_backend="celery",
+            embedded_backend="inline",
+        )
+
+    # ------------------------------------------------------- runtime context
+    @property
+    def resolved_runtime_context(self) -> str:
+        """`host`, `docker` or `production` — resolved once at construction."""
+        return self._resolved_runtime_context
+
+    @property
+    def is_host_runtime(self) -> bool:
+        """True when running natively on the machine that started the process."""
+        return self._resolved_runtime_context == runtime.CONTEXT_HOST
+
+    @property
+    def is_production_deployment(self) -> bool:
+        """True for the production profile/environment (fail-closed paths)."""
+        return self.profile == "production" or self.environment == "production"
+
+    @property
+    def endpoint_rewrites(self) -> list[str]:
+        """Compose hostnames that were rewritten for host-native execution."""
+        return list(self._endpoint_rewrites)
+
+    @property
+    def resolved_endpoints(self) -> dict[str, runtime.EndpointResolution]:
+        """Every infrastructure endpoint resolved for this runtime context."""
+        return runtime.resolve_infrastructure(
+            context=self._resolved_runtime_context,
+            infra_host=self.infra_host,
+            values={field: getattr(self, field) for field, _ in runtime.ENDPOINT_FIELDS},
+        )
+
+    @property
+    def postgres_endpoint(self) -> tuple[str, int]:
+        """Host/port of the resolved PostgreSQL DSN (used by bootstrap checks)."""
+        host, port = runtime.split_endpoint(
+            self.postgres_dsn_sync, runtime.SERVICE_CONTAINER_PORTS["postgres"]
+        )
+        return host, int(port or runtime.SERVICE_CONTAINER_PORTS["postgres"])
+
+    @property
+    def neo4j_endpoint(self) -> tuple[str, int]:
+        host, port = runtime.split_endpoint(
+            self.neo4j_uri, runtime.SERVICE_CONTAINER_PORTS["neo4j"]
+        )
+        return host, int(port or runtime.SERVICE_CONTAINER_PORTS["neo4j"])
+
+    @property
+    def minio_endpoint_address(self) -> tuple[str, int]:
+        host, port = runtime.split_endpoint(
+            self.minio_endpoint, runtime.SERVICE_CONTAINER_PORTS["minio"]
+        )
+        return host, int(port or runtime.SERVICE_CONTAINER_PORTS["minio"])
+
+    @property
+    def redis_endpoint(self) -> tuple[str, int]:
+        host, port = runtime.split_endpoint(
+            self.redis_url, runtime.SERVICE_CONTAINER_PORTS["redis"]
+        )
+        return host, int(port or runtime.SERVICE_CONTAINER_PORTS["redis"])
+
+    @property
+    def required_infrastructure(self) -> list[str]:
+        """Compose services the currently selected adapters depend on."""
+        return runtime.required_services(
+            {
+                "relational": self.effective_relational_backend,
+                "graph": self.effective_graph_backend,
+                "object_store": self.effective_object_store_backend,
+                "broker": self.effective_broker_backend,
+            }
+        )
+
+    def endpoint_report(self) -> dict[str, Any]:
+        """Non-secret description of the runtime context and every endpoint."""
+        return {
+            "runtime_context": self._resolved_runtime_context,
+            "runtime_context_description": runtime.CONTEXT_DESCRIPTIONS.get(
+                self._resolved_runtime_context, ""
+            ),
+            "profile": self.profile,
+            "environment": self.environment,
+            "infra_host": self.infra_host,
+            "backends": {
+                "relational": self.effective_relational_backend,
+                "graph": self.effective_graph_backend,
+                "object_store": self.effective_object_store_backend,
+                "broker": self.effective_broker_backend,
+            },
+            "endpoints": {
+                field: resolution.as_dict() for field, resolution in self.resolved_endpoints.items()
+            },
+            "rewrites": self.endpoint_rewrites,
+        }
 
     @property
     def sqlite_path(self) -> Path:

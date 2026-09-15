@@ -118,6 +118,10 @@ services:
     env_file: [.env]
     environment:
       CRIMELINK_PROFILE: production
+      # Deterministic runtime context: containers are on the Compose network,
+      # so the service hostnames in the DSNs below are used exactly as written.
+      # Never auto-detected, never rewritten (see backend/app/runtime.py).
+      CRIMELINK_RUNTIME_CONTEXT: production
       CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
       CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
@@ -163,6 +167,10 @@ services:
     env_file: [.env]
     environment:
       CRIMELINK_PROFILE: production
+      # Deterministic runtime context: containers are on the Compose network,
+      # so the service hostnames in the DSNs below are used exactly as written.
+      # Never auto-detected, never rewritten (see backend/app/runtime.py).
+      CRIMELINK_RUNTIME_CONTEXT: production
       CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
       CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
@@ -198,6 +206,10 @@ services:
     env_file: [.env]
     environment:
       CRIMELINK_PROFILE: production
+      # Deterministic runtime context: containers are on the Compose network,
+      # so the service hostnames in the DSNs below are used exactly as written.
+      # Never auto-detected, never rewritten (see backend/app/runtime.py).
+      CRIMELINK_RUNTIME_CONTEXT: production
       CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_REDIS_URL: redis://redis:6379/0
@@ -227,6 +239,10 @@ services:
     env_file: [.env]
     environment:
       CRIMELINK_PROFILE: production
+      # Deterministic runtime context: containers are on the Compose network,
+      # so the service hostnames in the DSNs below are used exactly as written.
+      # Never auto-detected, never rewritten (see backend/app/runtime.py).
+      CRIMELINK_RUNTIME_CONTEXT: production
       CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
       CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
@@ -257,6 +273,10 @@ services:
     env_file: [.env]
     environment:
       CRIMELINK_PROFILE: production
+      # Deterministic runtime context: containers are on the Compose network,
+      # so the service hostnames in the DSNs below are used exactly as written.
+      # Never auto-detected, never rewritten (see backend/app/runtime.py).
+      CRIMELINK_RUNTIME_CONTEXT: production
       CRIMELINK_ENVIRONMENT: ${CRIMELINK_ENVIRONMENT:-production}
       CRIMELINK_POSTGRES_DSN: postgresql+asyncpg://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
       CRIMELINK_POSTGRES_DSN_SYNC: postgresql+psycopg2://${CRIMELINK_POSTGRES_USER:-crimelink}:${CRIMELINK_POSTGRES_PASSWORD:?CRIMELINK_POSTGRES_PASSWORD must be set}@postgres:5432/${CRIMELINK_POSTGRES_DB:-crimelink}
