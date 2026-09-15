@@ -26,11 +26,17 @@ RUN python -m venv /opt/venv \
 
 FROM python:3.11.9-slim-bookworm AS runtime
 
+# Containerised execution is never left to auto-detection: CRIMELINK_RUNTIME_CONTEXT
+# pins the runtime context so the Compose/Kubernetes service hostnames in the DSNs
+# are used exactly as configured.  A container must never rewrite `postgres` to
+# `localhost` — inside a container that is the container itself.  See
+# backend/app/runtime.py and the runtime-context section of .env.example.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     CRIMELINK_PROFILE=production \
-    CRIMELINK_ENVIRONMENT=production
+    CRIMELINK_ENVIRONMENT=production \
+    CRIMELINK_RUNTIME_CONTEXT=production
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl=7.88.1-10+deb12u12 libgomp1 \
