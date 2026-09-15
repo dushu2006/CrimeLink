@@ -463,7 +463,7 @@ async def test_active_case_document_source_viewer_regression(tmp_path):
         assert "cases/" in row["relative_path"]
 
         # 2. Verify _resolve_source_path with doc_id
-        cand, rel, df, doc = await _resolve_source_path(
+        cand, rel, df, doc, _ = await _resolve_source_path(
             session=session,
             dataset=active_dataset,
             root=root,
@@ -475,7 +475,7 @@ async def test_active_case_document_source_viewer_regression(tmp_path):
         assert df is not None and df.relative_path == c109_doc.storage_key
 
         # 3. Verify _resolve_source_path with path=doc.storage_key
-        cand2, rel2, _, _ = await _resolve_source_path(
+        cand2, rel2, _, _, _ = await _resolve_source_path(
             session=session,
             dataset=active_dataset,
             root=root,
@@ -485,7 +485,7 @@ async def test_active_case_document_source_viewer_regression(tmp_path):
         assert rel2 == c109_doc.storage_key
 
         # 4. Verify _resolve_source_path with bare path and doc_id
-        cand3, rel3, _, _ = await _resolve_source_path(
+        cand3, rel3, _, _, _ = await _resolve_source_path(
             session=session,
             dataset=active_dataset,
             root=root,

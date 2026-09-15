@@ -394,6 +394,7 @@ def check_neo4j():
                 for pk, cids in cross_case[:3]:
                     print(f"    - {pk}: {cids}")
 
+            store.close()
             print("  Neo4j (embedded) OK")
             return True
         else:
@@ -524,6 +525,7 @@ def check_cross_store():
                     print(f"  WARNING: {len(invalid_case)} relationships with invalid evidence ref")
                 else:
                     print(f"  Neo4j evidence refs valid — OK")
+                gstore.close()
 
             print("  Cross-store consistency OK")
             return True

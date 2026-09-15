@@ -19,6 +19,9 @@ import {
 } from "../api/client";
 import { Empty, ErrorState } from "../components/Status";
 import ErrorBoundary from "../components/ErrorBoundary";
+import MasterCaseNetwork from "../components/investigator/MasterCaseNetwork";
+import { NetworkAnalysisPanel } from "../components/investigator/NetworkAnalysisPanel";
+import { EvidenceList, ProvenanceChip } from "../components/investigator/InvestigatorEvidence";
 import { EvidenceDrawer } from "../components/investigator/EvidenceDrawer";
 import type { EvidenceDrawerData } from "../components/investigator/EvidenceDrawer";
 import { EnhancedTimeline as EnhancedTimelineComp } from "../components/investigator/EnhancedTimeline";
@@ -206,6 +209,14 @@ export default function InvestigatorWorkspace() {
         </div>
       </header>
 
+      <ErrorBoundary>
+        <NetworkAnalysisPanel initialCaseId={caseParam} />
+      </ErrorBoundary>
+
+      <ErrorBoundary>
+        <MasterCaseNetwork />
+      </ErrorBoundary>
+
       <div className="investigate-search-bar">
         <input
           type="text"
@@ -229,6 +240,31 @@ export default function InvestigatorWorkspace() {
           <div className="stream-step done">✓ Searching connections</div>
           <div className="stream-step done">✓ Checking evidence</div>
           <div className="stream-step active">● Preparing explanation</div>
+        </div>
+      )}
+
+      {response && (
+        <div className="investigation-objective-section" style={{ margin: "16px 0", padding: "16px", background: "var(--surface-primary)", borderRadius: "8px", border: "1px solid var(--border-primary)" }}>
+          <h3>Investigation objective: {response.objective || question}</h3>
+          {response.provenance && response.provenance.length > 0 && (
+            <div className="inv-pointers" style={{ display: "flex", flexWrap: "wrap", gap: "8px", margin: "8px 0" }}>
+              {response.provenance.map((p, idx) => (
+                <ProvenanceChip key={idx} pointer={p} caseId={caseParam || ""} />
+              ))}
+            </div>
+          )}
+          {response.facts && response.facts.length > 0 && (
+            <div className="investigation-facts" style={{ marginTop: "12px" }}>
+              <h4>Facts</h4>
+              <EvidenceList items={response.facts} caseId={caseParam || ""} />
+            </div>
+          )}
+          {response.hypotheses && response.hypotheses.length > 0 && (
+            <div className="investigation-hypotheses" style={{ marginTop: "12px" }}>
+              <h4>Hypotheses</h4>
+              <EvidenceList items={response.hypotheses.flatMap((h: any) => h.supporting || [])} caseId={caseParam || ""} />
+            </div>
+          )}
         </div>
       )}
 
