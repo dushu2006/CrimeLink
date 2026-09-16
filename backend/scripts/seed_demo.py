@@ -133,7 +133,7 @@ def seed_postgres():
                 name="Production Demo Dataset v1",
                 version="1.0",
                 status="READY",
-                is_active=True,
+                is_active=False,
                 source_kind="builtin",
                 root_path=str(ws),
                 origin_note="Production demo seed — persistent evaluator dataset",
@@ -157,15 +157,14 @@ def seed_postgres():
                 dataset.root_path = str(ws)
                 session.flush()
 
-        # Deactivate other datasets? For demo, keep demo active, but don't purge hand-created
-        # Ensure only demo is active for evaluator
-        from app.db.models import Dataset as DS
-        other_active = session.query(DS).filter(DS.is_active == True, DS.id != DEMO_DATASET_ID).all()
-        for od in other_active:
-            od.is_active = False
-        if other_active:
-            print(f"  Deactivated {len(other_active)} other datasets")
-            session.flush()
+        # This legacy seed must never supersede v2 when v2 is installed.
+        # Registry activation changes flags only here; it does not purge either
+        # corpus or unrelated uploaded/user data.
+        from app.datasets.registry import set_only_active_sync
+
+        preferred = session.get(Dataset, "demo-dataset-002") or dataset
+        set_only_active_sync(session, preferred)
+        print(f"  Active dataset: {preferred.id}")
 
         # Seed users
         for user_data in DEMO_USERS:

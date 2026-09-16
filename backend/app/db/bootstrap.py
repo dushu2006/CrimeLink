@@ -367,19 +367,22 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
     session = session_maker()
 
     try:
-        dataset = None
-        active_ds_id = None
-        for ds_id in DEMO_DATASET_IDS:
-            ds = session.query(Dataset).filter(Dataset.id == ds_id).one_or_none()
-            if ds is not None:
-                dataset = ds
-                active_ds_id = ds_id
-                if not ds.is_active:
-                    ds.is_active = True
-                    session.commit()
-                break
+        # Preference is semantic, never dependent on row/physical query order.
+        # In particular, an old v1 row must not be reactivated merely because
+        # it still exists beside the populated v2 corpus.
+        datasets = {
+            row.id: row
+            for row in session.query(Dataset).filter(Dataset.id.in_(DEMO_DATASET_IDS)).all()
+        }
+        dataset = next((datasets[ds_id] for ds_id in DEMO_DATASET_IDS if ds_id in datasets), None)
         if dataset is None:
             return "MISSING", "No demo dataset is registered in database."
+
+        active_ds_id = dataset.id
+        from app.datasets.registry import set_only_active_sync
+
+        set_only_active_sync(session, dataset)
+        session.commit()
 
         for u in DEMO_USERS:
             user = session.query(User).filter(User.badge_number == u["badge_number"]).one_or_none()
@@ -448,8 +451,16 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 if node_count < 50:
                     return _unseeded_or_inconsistent(f"Embedded graph has only {node_count} nodes (expected >= 50).")
                 hero_found = False
-                for n, d in store._graph.nodes(data=True):
-                    if d.get("label") in ("Person", "PERSON") and hero_case.id in (d.get("case_ids") or []):
+                for _node_id, data in store._graph.nodes(data=True):
+                    # EmbeddedGraphStore persists the node label under
+                    # ``_label`` (``label`` is the domain-model input name).
+                    # Accept both for snapshots written by either format.
+                    label = data.get("_label") or data.get("label")
+                    if (
+                        label in ("Person", "PERSON")
+                        and data.get("dataset_id") == active_ds_id
+                        and hero_case.id in (data.get("case_ids") or [])
+                    ):
                         hero_found = True
                         break
                 if not hero_found:

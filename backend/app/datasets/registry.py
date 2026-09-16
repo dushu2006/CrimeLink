@@ -132,18 +132,48 @@ async def list_datasets(session: AsyncSession, *, limit: int = 100) -> list[Data
 
 
 async def active_dataset(session: AsyncSession) -> Dataset | None:
-    """The one dataset every page is allowed to read."""
+    """Return the active dataset, failing loudly if the invariant is corrupt.
+
+    The partial unique index normally makes multiple active rows impossible.
+    ``scalar_one_or_none`` deliberately remains a second line of defence for a
+    legacy/unmigrated database: choosing an arbitrary row would make different
+    API pages silently read different corpora.
+    """
     row = await session.execute(
-        select(Dataset).where(Dataset.is_active.is_(True)).limit(1)
+        select(Dataset)
+        .where(Dataset.is_active.is_(True))
+        .order_by(Dataset.activated_at.desc(), Dataset.created_at.desc(), Dataset.id.desc())
     )
     return row.scalar_one_or_none()
 
 
 async def active_dataset_id(session: AsyncSession) -> str | None:
-    row = await session.execute(
-        select(Dataset.id).where(Dataset.is_active.is_(True)).limit(1)
+    dataset = await active_dataset(session)
+    return dataset.id if dataset is not None else None
+
+
+async def set_only_active(session: AsyncSession, dataset: Dataset) -> Dataset:
+    """Set the registry flag without deleting any dataset-owned records."""
+    await session.execute(
+        update(Dataset)
+        .where(Dataset.id != dataset.id, Dataset.is_active.is_(True))
+        .values(is_active=False)
     )
-    return row.scalar_one_or_none()
+    dataset.is_active = True
+    dataset.activated_at = utcnow()
+    await session.flush()
+    return dataset
+
+
+def set_only_active_sync(session: Any, dataset: Dataset) -> Dataset:
+    """Synchronous counterpart used by bootstrap and built-in seed scripts."""
+    session.query(Dataset).filter(
+        Dataset.id != dataset.id, Dataset.is_active.is_(True)
+    ).update({Dataset.is_active: False}, synchronize_session=False)
+    dataset.is_active = True
+    dataset.activated_at = utcnow()
+    session.flush()
+    return dataset
 
 
 async def visibility_filter(session: AsyncSession, model: Any):
@@ -207,13 +237,7 @@ async def activate(session: AsyncSession, dataset: Dataset) -> Dataset:
     by the graph rebuild job that always follows activation.
     """
     log.info("dataset.replacement.started", new_dataset_id=dataset.id, new_dataset_name=dataset.name)
-    await session.execute(
-        update(Dataset)
-        .where(Dataset.id != dataset.id, Dataset.is_active.is_(True))
-        .values(is_active=False)
-    )
-    dataset.is_active = True
-    dataset.activated_at = utcnow()
+    await set_only_active(session, dataset)
     if dataset.status not in TERMINAL_STAGES:
         dataset.status = "READY"
     await session.flush()
