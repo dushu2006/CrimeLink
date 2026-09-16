@@ -424,14 +424,24 @@ def run_db_migrations(settings: Settings | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, str]:
-    """Check whether DEMO-DATASET-001 is correctly and consistently seeded.
+    """Inspects persistence stores and returns ("CORRECT" | "MISSING" | "INCONSISTENT", reason).
 
-    Returns:
-        ("CORRECT", explanation)      -> already fully seeded, consistent, ready
-        ("MISSING", explanation)      -> not yet seeded (needs seed)
-        ("INCONSISTENT", explanation) -> partially seeded / corrupt / mismatch (fail loudly)
+    In development environments, missing or partially populated demo records return "MISSING"
+    so the bootstrap can automatically and safely populate them. In strict production,
+    inconsistencies fail loudly to prevent unintentional modification of existing data.
     """
     settings = settings or get_settings()
+    is_dev = (
+        settings.environment in ("dev", "staging")
+        or os.getenv("CRIMELINK_ALLOW_DEMO_RESET", "").lower() in ("true", "1", "yes")
+        or os.getenv("CRIMELINK_DEMO_MODE", "").lower() in ("true", "1", "yes")
+    )
+
+    def _unseeded_or_inconsistent(detail: str) -> Tuple[str, str]:
+        if is_dev:
+            return "MISSING", f"{detail} (will auto-seed in dev environment)"
+        return "INCONSISTENT", detail
+
     session_maker = get_sync_sessionmaker()
     session = session_maker()
 
@@ -439,10 +449,9 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         # Check Dataset row
         dataset = session.query(Dataset).filter(Dataset.id == DEMO_DATASET_ID).one_or_none()
         if dataset is None:
-            # Check if any cases or demo users exist
             case_count = session.query(Case).filter(Case.dataset_id == DEMO_DATASET_ID).count()
             if case_count > 0:
-                return "INCONSISTENT", f"Found {case_count} cases for {DEMO_DATASET_ID} but Dataset record is missing."
+                return _unseeded_or_inconsistent(f"Found {case_count} cases for {DEMO_DATASET_ID} but Dataset record is missing.")
             return "MISSING", f"Dataset {DEMO_DATASET_ID} is not registered in database."
 
         if not dataset.is_active:
@@ -454,45 +463,49 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         for u in DEMO_USERS:
             user = session.query(User).filter(User.badge_number == u["badge_number"]).one_or_none()
             if user is None:
-                return "INCONSISTENT", f"Required demo user {u['badge_number']} is missing."
+                return _unseeded_or_inconsistent(f"Required demo user {u['badge_number']} is missing.")
             if user.role != u["role"]:
-                return "INCONSISTENT", f"Demo user {u['badge_number']} has incorrect role: {user.role} vs {u['role']}."
+                if is_dev:
+                    user.role = u["role"]
+                    session.commit()
+                else:
+                    return "INCONSISTENT", f"Demo user {u['badge_number']} has incorrect role: {user.role} vs {u['role']}."
 
         # Check cases: expect 20 cases (CR-1024 to CR-1043)
         cases = session.query(Case).filter(Case.dataset_id == DEMO_DATASET_ID).all()
         case_numbers = {c.case_number for c in cases}
         if len(cases) < 20:
-            return "INCONSISTENT", f"Incomplete demo cases: found {len(cases)} of 20 expected cases."
+            return _unseeded_or_inconsistent(f"Incomplete demo cases: found {len(cases)} of 20 expected cases.")
 
         missing_cases = set(EXPECTED_CASE_NUMBERS) - case_numbers
         if missing_cases:
-            return "INCONSISTENT", f"Missing expected case numbers: {sorted(missing_cases)}"
+            return _unseeded_or_inconsistent(f"Missing expected case numbers: {sorted(missing_cases)}")
 
         hero_case = next((c for c in cases if c.case_number == HERO_CASE_NUMBER), None)
         if hero_case is None:
-            return "INCONSISTENT", f"Hero case {HERO_CASE_NUMBER} not found in cases."
+            return _unseeded_or_inconsistent(f"Hero case {HERO_CASE_NUMBER} not found in cases.")
 
         # Check evidence CaseDocuments
         doc_count = session.query(CaseDocument).filter(CaseDocument.dataset_id == DEMO_DATASET_ID).count()
         if doc_count < 200:
-            return "INCONSISTENT", f"Incomplete evidence documents: found {doc_count} (expected >= 300)."
+            return _unseeded_or_inconsistent(f"Incomplete evidence documents: found {doc_count} (expected >= 300).")
 
         hero_doc = session.query(CaseDocument).filter(CaseDocument.id == HERO_EVIDENCE_ID).one_or_none()
         if hero_doc is None:
-            return "INCONSISTENT", f"Hero evidence document {HERO_EVIDENCE_ID} is missing."
+            return _unseeded_or_inconsistent(f"Hero evidence document {HERO_EVIDENCE_ID} is missing.")
 
         # Check InvestigationFindings
         findings = session.query(InvestigationFinding).filter(
             InvestigationFinding.case_id.in_([c.id for c in cases])
         ).all()
         if not findings:
-            return "INCONSISTENT", "No investigation findings found for demo cases."
+            return _unseeded_or_inconsistent("No investigation findings found for demo cases.")
 
         hero_finding = session.query(InvestigationFinding).filter(
             InvestigationFinding.id == HERO_INVESTIGATION_ID
         ).one_or_none()
         if hero_finding is None:
-            return "INCONSISTENT", f"Hero investigation finding {HERO_INVESTIGATION_ID} is missing."
+            return _unseeded_or_inconsistent(f"Hero investigation finding {HERO_INVESTIGATION_ID} is missing.")
 
         # Check Graph store
         graph_backend = settings.effective_graph_backend
@@ -503,9 +516,9 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 node_count = store._graph.number_of_nodes()
                 edge_count = store._graph.number_of_edges()
                 if node_count < 50:
-                    return "INCONSISTENT", f"Embedded graph has only {node_count} nodes (expected >= 100)."
+                    return _unseeded_or_inconsistent(f"Embedded graph has only {node_count} nodes (expected >= 100).")
                 if "PERSON-001" not in store._graph:
-                    return "INCONSISTENT", "Hero entity PERSON-001 is missing from embedded graph."
+                    return _unseeded_or_inconsistent("Hero entity PERSON-001 is missing from embedded graph.")
             finally:
                 store.close()
         elif graph_backend == "neo4j":
@@ -520,7 +533,7 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 ).single()
                 if not res or res["cnt"] == 0:
                     driver.close()
-                    return "INCONSISTENT", "Hero entity PERSON-001 is missing from Neo4j."
+                    return _unseeded_or_inconsistent("Hero entity PERSON-001 is missing from Neo4j.")
             driver.close()
 
         # Check Object Store for hero file E-042
@@ -532,13 +545,13 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
             m_store = MinioObjectStore(settings)
             meta = m_store.stat(bucket, hero_storage_key)
             if not meta or meta.size == 0:
-                return "INCONSISTENT", f"Hero file {hero_storage_key} missing or empty in MinIO."
+                return _unseeded_or_inconsistent(f"Hero file {hero_storage_key} missing or empty in MinIO.")
         else:
             from app.adapters.objectstore.local import LocalObjectStore
             l_store = LocalObjectStore(settings)
             meta = l_store.stat(bucket, hero_storage_key)
             if not meta or meta.size == 0:
-                return "INCONSISTENT", f"Hero file {hero_storage_key} missing or empty in local object store."
+                return _unseeded_or_inconsistent(f"Hero file {hero_storage_key} missing or empty in local object store.")
 
         return "CORRECT", "Demo dataset DEMO-DATASET-001 is fully populated, verified, and consistent."
     except Exception as exc:
@@ -567,6 +580,7 @@ def bootstrap_demo_dataset(
     4. Validates readiness
     """
     settings = settings or get_settings()
+    force_reseed = force_reseed or os.getenv("CRIMELINK_FORCE_RESEED", "").lower() in ("true", "1", "yes")
     print("[CrimeLink] Initializing storage and persistence services...", flush=True)
     wait_for_services(settings)
 

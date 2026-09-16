@@ -78,7 +78,7 @@ async def get_attention_center(
             "severity": "critical" if p.confidence >= 0.9 else "high",
             "title": f"{p.pattern_type.value if hasattr(p.pattern_type, 'value') else str(p.pattern_type)} — {p.confidence:.2f} confidence",
             "description": p.explanation[:150] if p.explanation else "",
-            "timestamp": p.created_at.isoformat() if p.created_at else None,
+            "timestamp": p.detected_at.isoformat() if getattr(p, "detected_at", None) else None,
             "link": {"kind": "pattern", "case_id": p.case_id, "pattern_id": p.id},
         })
 
@@ -96,7 +96,7 @@ async def get_attention_center(
             "type": "finding",
             "case_id": f.case_id,
             "severity": "critical",
-            "title": f.question[:80] if f.question else "New finding requires review",
+            "title": f.title[:80] if f.title else "New finding requires review",
             "description": f"Status: {f.status.value if hasattr(f.status, 'value') else str(f.status)}",
             "timestamp": f.created_at.isoformat() if f.created_at else None,
             "link": {"kind": "finding", "case_id": f.case_id, "finding_id": f.id},
@@ -106,7 +106,7 @@ async def get_attention_center(
     recent_pat_stmt = (
         select(DetectedPattern)
         .where(DetectedPattern.case_id.in_(allowed_list))
-        .order_by(DetectedPattern.created_at.desc())
+        .order_by(DetectedPattern.detected_at.desc())
         .limit(20)
     )
     recent_pats = (await session.execute(recent_pat_stmt)).scalars().all()
@@ -119,7 +119,7 @@ async def get_attention_center(
             "severity": "info",
             "title": f"Pattern detected: {p.pattern_type.value if hasattr(p.pattern_type, 'value') else str(p.pattern_type)}",
             "description": p.explanation[:120] if p.explanation else "",
-            "timestamp": p.created_at.isoformat() if p.created_at else None,
+            "timestamp": p.detected_at.isoformat() if getattr(p, "detected_at", None) else None,
             "link": {"kind": "pattern", "case_id": p.case_id, "pattern_id": p.id},
         })
 
@@ -136,7 +136,7 @@ async def get_attention_center(
             "type": "finding",
             "case_id": f.case_id,
             "severity": "info",
-            "title": f.question[:80] if f.question else "Investigation finding",
+            "title": f.title[:80] if f.title else "Investigation finding",
             "description": f"Status: {f.status.value if hasattr(f.status, 'value') else str(f.status)}",
             "timestamp": f.created_at.isoformat() if f.created_at else None,
             "link": {"kind": "finding", "case_id": f.case_id, "finding_id": f.id},
@@ -157,8 +157,8 @@ async def get_attention_center(
             "type": "unresolved_entity",
             "case_id": item.case_id,
             "severity": "warning",
-            "title": f"Unresolved entity: {item.canonical_id}",
-            "description": f"{len(item.member_keys or [])} potential duplicates need review",
+            "title": f"Unresolved entity: {getattr(item, 'canonical_id', item.source_node_key)}",
+            "description": f"Potential duplicate with {item.target_node_key} (similarity: {item.similarity_score:.2f})",
             "timestamp": item.created_at.isoformat() if item.created_at else None,
             "link": {"kind": "resolution", "case_id": item.case_id, "resolution_id": item.id},
         })

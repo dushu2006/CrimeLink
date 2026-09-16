@@ -7,11 +7,25 @@ import hashlib
 import sys
 import json
 import os
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
+
+# Re-exec into project virtualenv if running under another interpreter
+for candidate in (REPO_ROOT / ".venv", BACKEND_ROOT / ".venv"):
+    venv_py = candidate / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if venv_py.is_file():
+        try:
+            if Path(sys.executable).resolve() != venv_py.resolve():
+                res = subprocess.run([str(venv_py), *sys.argv], check=False)
+                sys.exit(res.returncode)
+        except Exception:
+            pass
+        break
+
 sys.path.insert(0, str(BACKEND_ROOT))
 
 # Demo dataset roots (repo root and backend copy)

@@ -43,6 +43,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -114,17 +115,47 @@ def migration_lock(engine: Engine) -> Iterator[None]:
         if not database or database == ":memory:":
             yield
             return
-        import fcntl  # POSIX only; the embedded profile runs on Linux/macOS
 
         lock_path = Path(f"{database}.migrate.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+        if os.name == "nt":
             try:
+                import msvcrt
+
+                with open(lock_path, "a+b") as handle:
+                    handle.seek(0, os.SEEK_END)
+                    if handle.tell() == 0:
+                        handle.write(b"\0")
+                        handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    try:
+                        yield
+                    finally:
+                        try:
+                            handle.seek(0)
+                            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                        except Exception:
+                            pass
+                return
+            except (ImportError, OSError):
                 yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return
+                return
+
+        try:
+            import fcntl
+
+            with open(lock_path, "a+", encoding="utf-8") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return
+        except (ImportError, OSError):
+            yield
+            return
 
     yield
 

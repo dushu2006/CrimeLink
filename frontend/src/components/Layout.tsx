@@ -132,7 +132,7 @@ export default function Layout() {
                   <span className="nav-label">People</span>
                   <span className="nav-pill">Priority</span>
                 </Link>
-                <Link to="/relationships" className={`sidebar-link ${isActive("/relationships") ? "active" : ""}`}>
+                <Link to="/relationships" className={`sidebar-link ${isActive("/relationships") ? "active" : ""}`} title="Relationships — Person → Person">
                   <span className="material-symbols-outlined nav-icon">polyline</span>
                   <span className="nav-label">Relationships</span>
                   <span className="nav-pill">Person → Person</span>
@@ -145,11 +145,11 @@ export default function Layout() {
                   <span className="material-symbols-outlined nav-icon">timeline</span>
                   <span className="nav-label">Timeline</span>
                 </Link>
-                <Link to="/investigate" className={`sidebar-link ${isActive("/investigate") ? "active" : ""} sidebar-link-accent`}>
+                <Link to="/investigate" className={`sidebar-link ${isActive("/investigate") ? "active" : ""} sidebar-link-accent`} title="Investigate Relationship">
                   <span className="material-symbols-outlined nav-icon">fact_check</span>
                   <span className="nav-label">Investigate Relationship</span>
                 </Link>
-                <Link to="/activity" className={`sidebar-link ${isActive("/activity") ? "active" : ""}`}>
+                <Link to="/activity" className={`sidebar-link ${isActive("/activity") ? "active" : ""}`} title="Investigator Activity (INV-0042)">
                   <span className="material-symbols-outlined nav-icon">assignment</span>
                   <span className="nav-label">Investigator Activity</span>
                   <span className="nav-pill">INV-0042</span>

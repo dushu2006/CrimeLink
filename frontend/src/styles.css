@@ -7,6 +7,7 @@
  */
 :root {
   /* Stitch Design System Tokens — CrimeLink Tactical Intelligence Platform */
+  --sidebar-width: 280px;
   --navy: #1d4ed8;
   --navy-hover: #1e40af;
   --navy-dark: #0f172a;
@@ -91,7 +92,7 @@ pre {
   top: 0;
   left: 0;
   bottom: 0;
-  width: 256px;
+  width: var(--sidebar-width);
   background: #ffffff;
   border-right: 1px solid var(--line);
   display: flex;
@@ -197,6 +198,8 @@ pre {
   background: #f1f5f9;
   color: var(--muted);
   border: 1px solid #e2e8f0;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .sidebar-link .nav-pill-primary {
@@ -258,7 +261,7 @@ pre {
 
 /* ------------------------------------------------------------------ MAIN WORKSPACE & TOPBAR */
 .stitch-main-wrap {
-  margin-left: 256px;
+  margin-left: var(--sidebar-width);
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -7940,21 +7943,34 @@ button.chip.active {
   background: var(--surface-secondary);
   border: 1px solid var(--border-secondary);
   border-radius: 8px;
-  padding: 8px;
-  margin: 8px;
+  padding: 6px;
+  margin: 4px 0;
 }
 .sidebar-link-accent {
-  background: var(--info);
-  color: #fff !important;
-  border: 1px solid var(--info);
-  font-weight: 700;
+  background: var(--navy-soft);
+  color: var(--navy) !important;
+  border: 1.5px solid var(--navy);
+  font-weight: 600;
 }
 .sidebar-link-accent .nav-icon {
-  color: #fff !important;
+  color: var(--navy) !important;
 }
 .sidebar-link-accent:hover {
-  background: var(--navy-hover);
+  background: var(--navy-tint);
   border-color: var(--navy-hover);
+  color: var(--navy-hover) !important;
+}
+.sidebar-link-accent:hover .nav-icon {
+  color: var(--navy-hover) !important;
+}
+.sidebar-link-accent.active {
+  background: var(--navy-tint) !important;
+  border-color: var(--navy) !important;
+  color: var(--navy) !important;
+  box-shadow: 0 0 0 1px var(--navy);
+}
+.sidebar-link-accent.active .nav-icon {
+  color: var(--navy) !important;
 }
 
 /* Evidence Drawer — right-side, Claim → Evidence → Original Record */
@@ -8096,8 +8112,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 /* Responsive — sidebar collapses, relationship panel drawer, evidence drawer full-screen */
 @media (max-width: 768px) {
+  :root {
+    --sidebar-width: 60px;
+  }
   .stitch-sidebar {
     width: 60px;
+  }
+  .stitch-main-wrap {
+    margin-left: 60px;
   }
   .stitch-sidebar .nav-label, .stitch-sidebar .nav-pill, .stitch-sidebar .nav-section-title, .sidebar-brand .logo-subtitle, .sidebar-security-footer {
     display: none;
@@ -8116,8 +8138,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   }
 }
 @media (max-width: 1024px) {
+  :root {
+    --sidebar-width: 240px;
+  }
   .stitch-sidebar {
-    width: 220px;
+    width: 240px;
+  }
+  .stitch-main-wrap {
+    margin-left: 240px;
   }
   .case-workspace {
     padding: 12px;
@@ -8234,7 +8262,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: #f8fafc;
 }
 .stitch-sidebar {
-  width: 260px;
+  width: var(--sidebar-width);
   background: #ffffff;
   border-right: 1px solid var(--border-primary);
   display: flex;
@@ -8242,6 +8270,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   transition: width 0.2s ease;
 }
 .stitch-main-wrap {
+  margin-left: var(--sidebar-width);
   flex: 1;
   display: flex;
   flex-direction: column;
