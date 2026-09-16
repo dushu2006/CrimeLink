@@ -51,7 +51,7 @@ from app.logging import get_logger
 log = get_logger("crimelink.bootstrap")
 
 DEMO_DATASET_ID = "demo-dataset-002"
-DEMO_DATASET_IDS = ("demo-dataset-001", "demo-dataset-002")
+DEMO_DATASET_IDS = ("demo-dataset-002", "demo-dataset-001")
 HERO_CASE_NUMBER = "CR-2001"
 HERO_CASE_ID = "case-d2-000"
 HERO_EVIDENCE_ID = "doc-d2-0000"
