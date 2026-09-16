@@ -330,6 +330,26 @@ def run_db_migrations(settings: Settings | None = None) -> None:
     log.info("bootstrap.db_schema_ready", backend=backend, revision=report.revision, mode=report.mode)
 
 
+def _database_identity(settings: Settings) -> dict[str, Any]:
+    """Return a safe DB identity proving which endpoint/schema is being queried."""
+    engine = get_sync_engine(settings)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT current_database() AS db_name, "
+                "current_schema() AS schema_name, "
+                "inet_server_addr()::text AS server_addr, "
+                "inet_server_port() AS server_port"
+            )
+        ).mappings().one()
+    return {
+        "database": row["db_name"],
+        "schema": row["schema_name"],
+        "server_addr": row["server_addr"],
+        "server_port": row["server_port"],
+    }
+
+
 def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, str]:
     settings = settings or get_settings()
     is_dev = (
@@ -375,7 +395,14 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         cases = session.query(Case).filter(Case.dataset_id == active_ds_id).all()
         case_numbers = {c.case_number for c in cases}
         if len(cases) < 20:
-            return _unseeded_or_inconsistent(f"Incomplete demo cases: found {len(cases)} of expected minimum 20.")
+            detail = f"Incomplete demo cases: found {len(cases)} of expected minimum 20."
+            if settings.effective_relational_backend == "postgres":
+                try:
+                    identity = _database_identity(settings)
+                    detail += f" Queried DB={identity['database']} schema={identity['schema']} server={identity['server_addr']}:{identity['server_port']} dataset_id={active_ds_id}."
+                except Exception as exc:
+                    detail += f" DB identity probe failed: {exc}"
+            return _unseeded_or_inconsistent(detail)
 
         if active_ds_id == "demo-dataset-002":
             missing_cases = set(EXPECTED_CASE_NUMBERS) - case_numbers
@@ -421,7 +448,7 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 if node_count < 50:
                     return _unseeded_or_inconsistent(f"Embedded graph has only {node_count} nodes (expected >= 50).")
                 hero_found = False
-                for _, d in store._graph.nodes(data=True):
+                for n, d in store._graph.nodes(data=True):
                     if d.get("label") in ("Person", "PERSON") and hero_case.id in (d.get("case_ids") or []):
                         hero_found = True
                         break
@@ -492,10 +519,26 @@ def bootstrap_demo_dataset(settings: Settings | None = None, force_reseed: bool 
         if not ok:
             raise RuntimeError("Demo dataset seeding failed.")
 
-        # seed_demo_v2 uses a separate SQLAlchemy engine. Discard any engine
-        # created during the pre-seed verification/migration phase before the
-        # post-seed verification so the next session always reconnects cleanly.
         reset_engine_state()
+
+        # Prove the seed and verifier are using the same PostgreSQL instance.
+        try:
+            identity = _database_identity(settings)
+            print(
+                "[CrimeLink] Post-seed database identity: "
+                f"{identity['database']} / {identity['schema']} @ "
+                f"{identity['server_addr']}:{identity['server_port']}",
+                flush=True,
+            )
+            verify_engine = get_sync_engine(settings)
+            with verify_engine.connect() as conn:
+                seeded_count = conn.execute(
+                    text("SELECT count(*) FROM cases WHERE dataset_id = :dataset_id"),
+                    {"dataset_id": DEMO_DATASET_ID},
+                ).scalar_one()
+            print(f"[CrimeLink] Post-seed relational case count: {seeded_count}", flush=True)
+        except Exception as exc:
+            raise RuntimeError(f"Post-seed database verification probe failed: {exc}") from exc
 
         status_after, reason_after = check_demo_dataset_status(settings)
         if status_after != "CORRECT":
