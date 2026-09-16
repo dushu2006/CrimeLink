@@ -891,7 +891,18 @@ class Dataset(Base):
     created_at: Mapped[datetime] = created_at_column()
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
 
-    __table_args__ = (Index("ix_datasets_status", "status"),)
+    __table_args__ = (
+        Index("ix_datasets_status", "status"),
+        # Both supported relational backends implement partial unique indexes.
+        # False rows remain unlimited; at most one TRUE row can exist.
+        Index(
+            "uq_datasets_single_active",
+            "is_active",
+            unique=True,
+            postgresql_where=(is_active.is_(True)),
+            sqlite_where=(is_active.is_(True)),
+        ),
+    )
 
 
 class DatasetPseudonym(Base):

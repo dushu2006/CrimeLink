@@ -1416,7 +1416,9 @@ def seed_all() -> bool:
             name=DATASET_NAME,
             version="2.0",
             status="READY",
-            is_active=True,
+            # Activate only after all relational rows are ready. The registry
+            # deactivates every competing dataset in the same transaction.
+            is_active=False,
             source_kind="builtin",
             root_path=str(settings.data_dir / "datasets" / DEMO_DATASET_ID),
             origin_note="CrimeLink demo dataset v2 — synthetic interconnected data",
@@ -1722,8 +1724,14 @@ def seed_all() -> bool:
             )
             session.add(pat)
 
+        # The final step is centralized registry activation: all legacy,
+        # production-demo and upload rows become inactive, while their data is
+        # preserved. This is idempotent and commits atomically with the seed.
+        from app.datasets.registry import set_only_active_sync
+
+        set_only_active_sync(session, ds)
         session.commit()
-        print("  Database seeding complete.")
+        print(f"  Database seeding complete. Active dataset: {DEMO_DATASET_ID}")
 
         # Now build the graph
         print("  Building graph...")
