@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, cast
+from sqlalchemy import String as SA_String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.container import get_container
@@ -160,7 +161,7 @@ async def global_search(
                 or_(
                     CaseDocument.filename.ilike(f"%{q}%"),
                     CaseDocument.id.ilike(f"%{q}%"),
-                    CaseDocument.document_type.ilike(f"%{q}%"),
+                    cast(CaseDocument.document_type, SA_String).ilike(f"%{q}%"),
                 )
             )
             .limit(limit)

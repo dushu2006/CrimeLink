@@ -233,9 +233,7 @@ def document_row(document: CaseDocument, containers: Container | None = None) ->
             container.settings.minio_bucket_documents,
             document.storage_key,
             container.settings.presigned_url_ttl_seconds,
-        )
-        if container.settings.effective_object_store_backend == "minio"
-        else None,
+        ),
     }
 
 
