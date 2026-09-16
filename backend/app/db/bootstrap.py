@@ -2,15 +2,6 @@
 
 Handles service readiness checks, database migrations, and idempotent demo dataset
 verification and seeding.
-
-Flow:
-1. wait_for_services (PostgreSQL/SQLite, Neo4j/Embedded, MinIO/Local, Redis/Inline)
-2. run_db_migrations (Alembic upgrade head -> additive reconcile)
-3. check_demo_dataset_status:
-   - "CORRECT"      -> do nothing (idempotent, non-destructive, fast)
-   - "MISSING"      -> seed demo dataset (20 cases, 100 people, 216 rels, 300 evidence, INV-0042)
-   - "INCONSISTENT" -> fail loudly with detailed reason (do not corrupt or wipe)
-4. validate_demo_readiness (hero flow CR-1024, E-042, INV-0042, demo users)
 """
 
 from __future__ import annotations
@@ -49,6 +40,7 @@ from app.db.session import (
     _bootstrap_postgres,
     get_sync_engine,
     get_sync_sessionmaker,
+    reset_engine_state,
     sync_database_columns,
     sync_sqlite_columns,
     sync_sqlite_enum_constraints,
@@ -62,7 +54,7 @@ DEMO_DATASET_ID = "demo-dataset-002"
 DEMO_DATASET_IDS = ("demo-dataset-001", "demo-dataset-002")
 HERO_CASE_NUMBER = "CR-2001"
 HERO_CASE_ID = "case-d2-000"
-HERO_EVIDENCE_ID = "doc-d2-0000"  # CR-2001 FIR document
+HERO_EVIDENCE_ID = "doc-d2-0000"
 HERO_INVESTIGATION_ID = "INV-0000"
 
 DEMO_USERS = [
@@ -73,20 +65,6 @@ DEMO_USERS = [
 
 EXPECTED_CASE_NUMBERS = [f"CR-{2001 + i}" for i in range(25)]
 
-
-# ---------------------------------------------------------------------------
-# 1. Service Health & Readiness Checks
-# ---------------------------------------------------------------------------
-
-#: Command that starts the host-accessible infrastructure stack.  It only ever
-#: creates/starts containers; it never removes a volume or resets demo data.
-INFRA_START_COMMAND = "docker compose -f docker-compose.infra.yml up -d"
-INFRA_STATUS_COMMAND = "docker compose -f docker-compose.infra.yml ps"
-
-#: Phrases that identify a DNS failure across psycopg2/asyncpg/neo4j/redis.
-#: A hostname that does not resolve will not start resolving because we retried,
-#: so bootstrap fails immediately with an actionable message instead of looping
-#: until the timeout and reporting an opaque driver error.
 _NAME_RESOLUTION_MARKERS = (
     "could not translate host name",
     "name or service not known",
@@ -99,7 +77,6 @@ _NAME_RESOLUTION_MARKERS = (
 
 
 def is_name_resolution_failure(exc: BaseException | None) -> bool:
-    """True when *exc* (or anything it wraps) is a hostname resolution error."""
     seen: set[int] = set()
     stack: list[BaseException | None] = [exc]
     while stack:
@@ -118,16 +95,15 @@ def is_name_resolution_failure(exc: BaseException | None) -> bool:
 
 
 def _host_part(dsn: str) -> str:
-    """``host:port/database`` with credentials stripped, safe to log."""
     return dsn.split("@")[-1] if "@" in dsn else dsn
 
 
 def _infrastructure_hint() -> str:
     return (
         "Start the CrimeLink infrastructure services and retry:\n"
-        f"    {INFRA_START_COMMAND}\n"
-        f"Check what is running with:\n"
-        f"    {INFRA_STATUS_COMMAND}\n"
+        "    docker compose -f docker-compose.infra.yml up -d\n"
+        "Check what is running with:\n"
+        "    docker compose -f docker-compose.infra.yml ps\n"
         "Existing containers, volumes and the persisted demo dataset are left untouched."
     )
 
@@ -137,17 +113,7 @@ def _context_line(settings: Settings) -> str:
     return f"Runtime context: {settings.resolved_runtime_context} ({description})"
 
 
-def postgres_unavailable_message(
-    settings: Settings, last_error: str, *, name_resolution: bool
-) -> str:
-    """Actionable explanation of why PostgreSQL could not be reached.
-
-    The headline is always the same sentence so it is recognisable in a log,
-    followed by the concrete address, the runtime context and the exact command
-    that fixes the common cases.  This replaces the raw
-    ``could not translate host name "postgres"`` DNS error, which told an
-    operator nothing about what to do next.
-    """
+def postgres_unavailable_message(settings: Settings, last_error: str, *, name_resolution: bool) -> str:
     host, port = settings.postgres_endpoint
     lines = [
         f"PostgreSQL is not running ({host}:{port}).",
@@ -164,40 +130,14 @@ def postgres_unavailable_message(
             "",
             f"'{host}' is a Docker Compose service name: it resolves only on the Compose",
             "network, and this process is not running in a container. Pick one of:",
-            "    python run.py                          # detects the runtime context for you",
-            f"    set CRIMELINK_RUNTIME_CONTEXT=host     # rewrites '{host}' -> "
-            f"{settings.infra_host}:{settings.postgres_host_port}",
+            "    python run.py",
+            f"    set CRIMELINK_RUNTIME_CONTEXT=host",
             "    set CRIMELINK_POSTGRES_DSN / CRIMELINK_POSTGRES_DSN_SYNC to a reachable server",
-        ]
-    elif name_resolution:
-        lines += [
-            "",
-            f"The hostname '{host}' could not be resolved from this machine.",
-            "Check CRIMELINK_INFRA_HOST, your DNS settings, or set the DSN explicitly.",
-        ]
-    else:
-        lines += [
-            "",
-            "Nothing accepted a connection on that address. If PostgreSQL runs on another",
-            "port or host, point CrimeLink at it instead of editing the code:",
-            "    CRIMELINK_INFRA_HOST / CRIMELINK_POSTGRES_HOST_PORT (host runtime), or",
-            "    CRIMELINK_POSTGRES_DSN and CRIMELINK_POSTGRES_DSN_SYNC (any runtime).",
-            "",
-            "CrimeLink does not fall back to SQLite or an in-memory database: PostgreSQL",
-            "is the relational system of record for this configuration.",
         ]
     return "\n".join(lines)
 
 
 def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -> None:
-    """Verify that required storage and persistence backends are healthy.
-
-    In production profile: fails loudly if PostgreSQL, Neo4j, or MinIO cannot be reached.
-    In embedded profile: verifies local filesystem paths are accessible and writable.
-
-    Every check is fail-closed: a service that cannot be reached aborts the
-    bootstrap.  No check silently substitutes a weaker backend.
-    """
     settings = settings or get_settings()
     is_prod = settings.profile == "production" or settings.environment == "production"
     deadline = time.time() + timeout
@@ -217,7 +157,6 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
         endpoint_rewrites=settings.endpoint_rewrites,
     )
 
-    # 1.1 Relational database
     rel_backend = settings.effective_relational_backend
     if rel_backend == "postgres":
         host, port = settings.postgres_endpoint
@@ -235,23 +174,19 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
         while time.time() < deadline:
             try:
                 with engine.connect() as conn:
-                    # A literal SELECT 1 — the previous code handed SQLAlchemy a
-                    # Table object, which is not executable, so the probe failed
-                    # even against a perfectly healthy PostgreSQL server.
                     conn.execute(text("SELECT 1"))
                 connected = True
                 break
-            except Exception as exc:  # noqa: BLE001 - reported with full context below
+            except Exception as exc:
                 last_error = str(exc).strip()
                 if is_name_resolution_failure(exc):
-                    # DNS will not fix itself by retrying; fail fast and explain.
                     name_resolution_failure = True
                     break
                 time.sleep(1.0)
         if not connected:
             try:
                 engine.dispose()
-            except Exception:  # pragma: no cover - disposal is best effort
+            except Exception:
                 pass
             raise RuntimeError(
                 postgres_unavailable_message(
@@ -260,11 +195,9 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
             )
         log.info("bootstrap.postgres_ready", host=host, port=port)
     else:
-        # SQLite
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         log.info("bootstrap.sqlite_ready", path=str(settings.sqlite_path))
 
-    # 1.2 Graph database
     graph_backend = settings.effective_graph_backend
     if graph_backend == "neo4j":
         neo_host, neo_port = settings.neo4j_endpoint
@@ -306,11 +239,9 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
             )
         log.info("bootstrap.neo4j_ready")
     else:
-        # Embedded GraphStore
         settings.graph_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         log.info("bootstrap.embedded_graph_ready", path=str(settings.graph_snapshot_path))
 
-    # 1.3 Object store
     obj_backend = settings.effective_object_store_backend
     if obj_backend == "minio":
         minio_host, minio_port = settings.minio_endpoint_address
@@ -333,9 +264,7 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
                     "MinIO is mandatory in production — refusing Local fallback.\n"
                     + _infrastructure_hint()
                 ) from exc
-            raise RuntimeError(
-                f"MinIO connection failed: {exc}\n" + _infrastructure_hint()
-            ) from exc
+            raise RuntimeError(f"MinIO connection failed: {exc}\n" + _infrastructure_hint()) from exc
     else:
         if is_prod:
             raise RuntimeError(
@@ -345,7 +274,6 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
         settings.object_store_dir.mkdir(parents=True, exist_ok=True)
         log.info("bootstrap.local_object_store_ready", path=str(settings.object_store_dir))
 
-    # 1.4 Broker (Redis)
     broker_backend = settings.effective_broker_backend
     if broker_backend == "celery":
         redis_host, redis_port = settings.redis_endpoint
@@ -371,25 +299,7 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
             log.warning("bootstrap.redis_unavailable", error=str(exc))
 
 
-# ---------------------------------------------------------------------------
-# 2. Database Schema Upkeep & Migrations
-# ---------------------------------------------------------------------------
-
 def run_db_migrations(settings: Settings | None = None) -> None:
-    """Bring the relational schema to Alembic ``head`` and verify it.
-
-    Alembic owns the schema: ``app.db.upgrade`` runs ``alembic upgrade head``
-    for a fresh database, an already-migrated one, and a pre-Alembic database
-    created by ``create_all`` in an older build (additive reconcile, then stamp
-    and upgrade) — the same entry point a Render pre-deploy hook uses, so a
-    container start and a deployment can never disagree about the schema.
-
-    The additive reconcile below is a *repair* pass, not the source of truth:
-    on a database the migrations just brought to ``head`` it must add nothing,
-    so anything it does add is logged as a warning.  A model that gained a table
-    or column without a matching revision would otherwise pass silently, which
-    is exactly how ``cases.classification does not exist`` reached production.
-    """
     settings = settings or get_settings()
     settings.ensure_directories()
     engine = get_sync_engine(settings)
@@ -414,23 +324,13 @@ def run_db_migrations(settings: Settings | None = None) -> None:
         if backend == "sqlite":
             upgraded = sync_sqlite_enum_constraints(conn, Base.metadata)
             if upgraded:
-                log.warning("bootstrap.sqlite_enums_repaired", upgraded=upgraded)
+                log.warning("bootstrap.sqlite_enums_repaired", upgraded=upgraded, backend=backend)
         conn.commit()
 
     log.info("bootstrap.db_schema_ready", backend=backend, revision=report.revision, mode=report.mode)
 
 
-# ---------------------------------------------------------------------------
-# 3. Idempotent Demo Dataset Status Check
-# ---------------------------------------------------------------------------
-
 def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, str]:
-    """Inspects persistence stores and returns ("CORRECT" | "MISSING" | "INCONSISTENT", reason).
-
-    In development environments, missing or partially populated demo records return "MISSING"
-    so the bootstrap can automatically and safely populate them. In strict production,
-    inconsistencies fail loudly to prevent unintentional modification of existing data.
-    """
     settings = settings or get_settings()
     is_dev = (
         settings.environment in ("dev", "staging")
@@ -447,7 +347,6 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
     session = session_maker()
 
     try:
-        # Check Dataset row (accept v1 or v2; prefer v2 which is richer)
         dataset = None
         active_ds_id = None
         for ds_id in DEMO_DATASET_IDS:
@@ -455,15 +354,13 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
             if ds is not None:
                 dataset = ds
                 active_ds_id = ds_id
-                # Activate latest
                 if not ds.is_active:
                     ds.is_active = True
                     session.commit()
                 break
         if dataset is None:
-            return "MISSING", f"No demo dataset is registered in database."
+            return "MISSING", "No demo dataset is registered in database."
 
-        # Check demo users
         for u in DEMO_USERS:
             user = session.query(User).filter(User.badge_number == u["badge_number"]).one_or_none()
             if user is None:
@@ -475,16 +372,13 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 else:
                     return "INCONSISTENT", f"Demo user {u['badge_number']} has incorrect role: {user.role} vs {u['role']}."
 
-        # Check cases: expect >=20 cases
         cases = session.query(Case).filter(Case.dataset_id == active_ds_id).all()
         case_numbers = {c.case_number for c in cases}
         if len(cases) < 20:
             return _unseeded_or_inconsistent(f"Incomplete demo cases: found {len(cases)} of expected minimum 20.")
 
-        # For v2, expect the CR-2001..CR-2025 block
         if active_ds_id == "demo-dataset-002":
-            expected_set = set(EXPECTED_CASE_NUMBERS)
-            missing_cases = expected_set - case_numbers
+            missing_cases = set(EXPECTED_CASE_NUMBERS) - case_numbers
             if missing_cases:
                 return _unseeded_or_inconsistent(f"Missing expected case numbers: {sorted(missing_cases)}")
 
@@ -492,21 +386,16 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         if hero_case is None:
             return _unseeded_or_inconsistent(f"Hero case {HERO_CASE_NUMBER} not found in cases.")
 
-        # Check evidence CaseDocuments
         doc_count = session.query(CaseDocument).filter(CaseDocument.dataset_id == active_ds_id).count()
         if doc_count < 200:
             return _unseeded_or_inconsistent(f"Incomplete evidence documents: found {doc_count} (expected >= 200).")
 
         hero_doc = session.query(CaseDocument).filter(CaseDocument.id == HERO_EVIDENCE_ID).one_or_none()
         if hero_doc is None:
-            # For v1 the hero doc id differs; accept any FIR for the hero case
-            hero_doc = session.query(CaseDocument).filter(
-                CaseDocument.case_id == HERO_CASE_ID,
-            ).first()
+            hero_doc = session.query(CaseDocument).filter(CaseDocument.case_id == HERO_CASE_ID).first()
             if hero_doc is None:
                 return _unseeded_or_inconsistent(f"Hero evidence document for case {HERO_CASE_NUMBER} is missing.")
 
-        # Check InvestigationFindings
         findings = session.query(InvestigationFinding).filter(
             InvestigationFinding.case_id.in_([c.id for c in cases])
         ).all()
@@ -517,26 +406,22 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
             InvestigationFinding.id == HERO_INVESTIGATION_ID
         ).one_or_none()
         if hero_finding is None:
-            # Accept any finding for hero case
             hero_finding = session.query(InvestigationFinding).filter(
                 InvestigationFinding.case_id == HERO_CASE_ID
             ).first()
             if hero_finding is None:
                 return _unseeded_or_inconsistent(f"No investigation finding for hero case {HERO_CASE_NUMBER}.")
 
-        # Check Graph store
         graph_backend = settings.effective_graph_backend
         if graph_backend == "embedded":
             from app.adapters.graph.embedded import EmbeddedGraphStore
             store = EmbeddedGraphStore(settings)
             try:
                 node_count = store._graph.number_of_nodes()
-                edge_count = store._graph.number_of_edges()
                 if node_count < 50:
                     return _unseeded_or_inconsistent(f"Embedded graph has only {node_count} nodes (expected >= 50).")
-                # Check hero person is present (look for Person nodes with first person name)
                 hero_found = False
-                for n, d in store._graph.nodes(data=True):
+                for _, d in store._graph.nodes(data=True):
                     if d.get("label") in ("Person", "PERSON") and hero_case.id in (d.get("case_ids") or []):
                         hero_found = True
                         break
@@ -559,7 +444,6 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                     return _unseeded_or_inconsistent(f"No Person nodes connected to hero case {HERO_CASE_NUMBER} in Neo4j.")
             driver.close()
 
-        # Check Object Store for a hero evidence file (use hero_doc.storage_key)
         obj_backend = settings.effective_object_store_backend
         bucket = settings.minio_bucket_documents
         hero_storage_key = hero_doc.storage_key
@@ -583,25 +467,7 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         session.close()
 
 
-# ---------------------------------------------------------------------------
-# 4. Bootstrap Sequence
-# ---------------------------------------------------------------------------
-
-def bootstrap_demo_dataset(
-    settings: Settings | None = None,
-    force_reseed: bool = False,
-    validate: bool = True,
-) -> bool:
-    """Idempotent startup bootstrap sequence.
-
-    1. Checks service dependencies
-    2. Runs DB schema migrations
-    3. Verifies demo dataset status:
-       - If CORRECT: do nothing (preserve persistence, 0 duplicate data)
-       - If MISSING: seed demo dataset
-       - If INCONSISTENT: fail loudly
-    4. Validates readiness
-    """
+def bootstrap_demo_dataset(settings: Settings | None = None, force_reseed: bool = False, validate: bool = True) -> bool:
     settings = settings or get_settings()
     force_reseed = force_reseed or os.getenv("CRIMELINK_FORCE_RESEED", "").lower() in ("true", "1", "yes")
     print("[CrimeLink] Initializing storage and persistence services...", flush=True)
@@ -620,14 +486,17 @@ def bootstrap_demo_dataset(
 
     if status == "MISSING" or force_reseed:
         print(f"[CrimeLink] Demo dataset needs seeding ({reason}). Seeding now...", flush=True)
-        # Import v2 seed logic
         from scripts.seed_demo_v2 import seed_all
 
         ok = seed_all()
         if not ok:
             raise RuntimeError("Demo dataset seeding failed.")
 
-        # Re-check status after seed
+        # seed_demo_v2 uses a separate SQLAlchemy engine. Discard any engine
+        # created during the pre-seed verification/migration phase before the
+        # post-seed verification so the next session always reconnects cleanly.
+        reset_engine_state()
+
         status_after, reason_after = check_demo_dataset_status(settings)
         if status_after != "CORRECT":
             raise RuntimeError(
@@ -636,12 +505,11 @@ def bootstrap_demo_dataset(
         print("[CrimeLink] Demo dataset seeded and verified successfully.", flush=True)
         return True
 
-    # If INCONSISTENT -> fail loudly!
-    print(f"\n[CrimeLink] CRITICAL ERROR: Demo dataset inconsistency detected!", file=sys.stderr, flush=True)
+    print("\n[CrimeLink] CRITICAL ERROR: Demo dataset inconsistency detected!", file=sys.stderr, flush=True)
     print(f"[CrimeLink] Reason: {reason}", file=sys.stderr, flush=True)
-    print(f"[CrimeLink] To safely reset and re-seed in development, run:", file=sys.stderr, flush=True)
-    print(f"    CRIMELINK_ALLOW_DEMO_RESET=true python backend/scripts/reset_demo.py", file=sys.stderr, flush=True)
-    print(f"    python backend/scripts/seed_demo.py", file=sys.stderr, flush=True)
+    print("[CrimeLink] To safely reset and re-seed in development, run:", file=sys.stderr, flush=True)
+    print("    CRIMELINK_ALLOW_DEMO_RESET=true python backend/scripts/reset_demo.py", file=sys.stderr, flush=True)
+    print("    python backend/scripts/seed_demo.py", file=sys.stderr, flush=True)
     raise RuntimeError(f"Demo dataset inconsistency: {reason}")
 
 
