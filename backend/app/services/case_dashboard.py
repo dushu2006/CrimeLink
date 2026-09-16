@@ -117,12 +117,15 @@ async def get_case_dashboard(
                 "status": p.status.value if hasattr(p.status, "value") else str(p.status),
             })
     for f in findings[:5]:
-        if str(f.status.value if hasattr(f.status, "value") else f.status).upper() in ("NEW", "OPEN"):
+        f_status = f.status.value if hasattr(f.status, "value") else str(f.status)
+        if str(f_status).upper() in ("NEW", "OPEN", "REVIEWED"):
             high_priority.append({
                 "id": f.id,
                 "type": "finding",
-                "question": f.question[:120] if f.question else "",
-                "status": f.status.value if hasattr(f.status, "value") else str(f.status),
+                "title": (f.title or "")[:120],
+                "finding_type": f.finding_type,
+                "confidence": f.confidence,
+                "status": f_status,
                 "created_at": f.created_at.isoformat() if f.created_at else None,
             })
 
@@ -132,8 +135,10 @@ async def get_case_dashboard(
         gaps.append({
             "id": item.id,
             "type": "unresolved_entity",
-            "canonical_id": item.canonical_id,
-            "member_keys": item.member_keys[:3] if item.member_keys else [],
+            "source_key": item.source_node_key,
+            "target_key": item.target_node_key,
+            "similarity_score": item.similarity_score,
+            "match_basis": item.match_basis.value if hasattr(item.match_basis, "value") else str(item.match_basis),
             "reason": "Pending entity resolution",
         })
     for p in patterns:
@@ -165,22 +170,25 @@ async def get_case_dashboard(
             "description": f"Document uploaded: {d.filename}",
         })
 
-    for p in sorted(patterns, key=lambda x: x.created_at or x.id, reverse=True)[:5]:
+    pat_timestamp_attr = "detected_at" if hasattr(patterns[0], "detected_at") and patterns else "created_at"
+    for p in sorted(patterns, key=lambda x: getattr(x, "detected_at", None) or x.id, reverse=True)[:5]:
+        ts = getattr(p, "detected_at", None)
         recent_activity.append({
             "type": "pattern",
             "id": p.id,
             "title": f"{p.pattern_type.value if hasattr(p.pattern_type, 'value') else str(p.pattern_type)} pattern",
-            "timestamp": p.created_at.isoformat() if p.created_at else None,
+            "timestamp": ts.isoformat() if ts else None,
             "description": p.explanation[:100] if p.explanation else "",
         })
 
     for f in findings[:5]:
+        f_status = f.status.value if hasattr(f.status, "value") else str(f.status)
         recent_activity.append({
             "type": "finding",
             "id": f.id,
-            "title": f.question[:60] if f.question else "Finding",
+            "title": (f.title or "Finding")[:60],
             "timestamp": f.created_at.isoformat() if f.created_at else None,
-            "description": f"Finding {f.status.value if hasattr(f.status, 'value') else str(f.status)}",
+            "description": f"Finding {f_status}",
         })
 
     # Sort recent activity by timestamp desc, handling None
@@ -198,9 +206,8 @@ async def get_case_dashboard(
         "jurisdiction_id": case.jurisdiction_id,
         "dataset_id": case.dataset_id,
         "created_at": case.created_at.isoformat() if case.created_at else None,
-        "updated_at": case.updated_at.isoformat() if getattr(case, "updated_at", None) else None,
         "closed_at": case.closed_at.isoformat() if getattr(case, "closed_at", None) and case.closed_at else None,
-        "description": case.title,  # Use title as description if no dedicated field
+        "description": case.title,
     }
 
     stats = {
@@ -220,8 +227,10 @@ async def get_case_dashboard(
         "unresolved": [
             {
                 "id": item.id,
-                "canonical_id": item.canonical_id,
-                "member_count": len(item.member_keys or []),
+                "source_key": item.source_node_key,
+                "target_key": item.target_node_key,
+                "similarity_score": item.similarity_score,
+                "match_basis": item.match_basis.value if hasattr(item.match_basis, "value") else str(item.match_basis),
             }
             for item in unresolved_items[:5]
         ],
@@ -232,6 +241,7 @@ async def get_case_dashboard(
                 "confidence": p.confidence,
                 "status": p.status.value if hasattr(p.status, "value") else str(p.status),
                 "entity_count": len(p.entity_keys or []),
+                "timestamp": getattr(p, "detected_at", None).isoformat() if getattr(p, "detected_at", None) else None,
             }
             for p in patterns[:10]
         ],

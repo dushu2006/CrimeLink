@@ -58,11 +58,12 @@ from app.logging import get_logger
 
 log = get_logger("crimelink.bootstrap")
 
-DEMO_DATASET_ID = "demo-dataset-001"
-HERO_CASE_NUMBER = "CR-1024"
-HERO_CASE_ID = "case-001-demo"
-HERO_EVIDENCE_ID = "evidence-042-demo"
-HERO_INVESTIGATION_ID = "INV-0042"
+DEMO_DATASET_ID = "demo-dataset-002"
+DEMO_DATASET_IDS = ("demo-dataset-001", "demo-dataset-002")
+HERO_CASE_NUMBER = "CR-2001"
+HERO_CASE_ID = "case-d2-000"
+HERO_EVIDENCE_ID = "doc-d2-0000"  # CR-2001 FIR document
+HERO_INVESTIGATION_ID = "INV-0000"
 
 DEMO_USERS = [
     {"badge_number": "DEMO-ADMIN", "role": Role.ADMIN},
@@ -70,7 +71,7 @@ DEMO_USERS = [
     {"badge_number": "DEMO-VIEWER", "role": Role.VIEWER},
 ]
 
-EXPECTED_CASE_NUMBERS = [f"CR-{1024 + i}" for i in range(20)]
+EXPECTED_CASE_NUMBERS = [f"CR-{2001 + i}" for i in range(25)]
 
 
 # ---------------------------------------------------------------------------
@@ -446,18 +447,21 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
     session = session_maker()
 
     try:
-        # Check Dataset row
-        dataset = session.query(Dataset).filter(Dataset.id == DEMO_DATASET_ID).one_or_none()
+        # Check Dataset row (accept v1 or v2; prefer v2 which is richer)
+        dataset = None
+        active_ds_id = None
+        for ds_id in DEMO_DATASET_IDS:
+            ds = session.query(Dataset).filter(Dataset.id == ds_id).one_or_none()
+            if ds is not None:
+                dataset = ds
+                active_ds_id = ds_id
+                # Activate latest
+                if not ds.is_active:
+                    ds.is_active = True
+                    session.commit()
+                break
         if dataset is None:
-            case_count = session.query(Case).filter(Case.dataset_id == DEMO_DATASET_ID).count()
-            if case_count > 0:
-                return _unseeded_or_inconsistent(f"Found {case_count} cases for {DEMO_DATASET_ID} but Dataset record is missing.")
-            return "MISSING", f"Dataset {DEMO_DATASET_ID} is not registered in database."
-
-        if not dataset.is_active:
-            # Re-activate
-            dataset.is_active = True
-            session.commit()
+            return "MISSING", f"No demo dataset is registered in database."
 
         # Check demo users
         for u in DEMO_USERS:
@@ -471,28 +475,36 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 else:
                     return "INCONSISTENT", f"Demo user {u['badge_number']} has incorrect role: {user.role} vs {u['role']}."
 
-        # Check cases: expect 20 cases (CR-1024 to CR-1043)
-        cases = session.query(Case).filter(Case.dataset_id == DEMO_DATASET_ID).all()
+        # Check cases: expect >=20 cases
+        cases = session.query(Case).filter(Case.dataset_id == active_ds_id).all()
         case_numbers = {c.case_number for c in cases}
         if len(cases) < 20:
-            return _unseeded_or_inconsistent(f"Incomplete demo cases: found {len(cases)} of 20 expected cases.")
+            return _unseeded_or_inconsistent(f"Incomplete demo cases: found {len(cases)} of expected minimum 20.")
 
-        missing_cases = set(EXPECTED_CASE_NUMBERS) - case_numbers
-        if missing_cases:
-            return _unseeded_or_inconsistent(f"Missing expected case numbers: {sorted(missing_cases)}")
+        # For v2, expect the CR-2001..CR-2025 block
+        if active_ds_id == "demo-dataset-002":
+            expected_set = set(EXPECTED_CASE_NUMBERS)
+            missing_cases = expected_set - case_numbers
+            if missing_cases:
+                return _unseeded_or_inconsistent(f"Missing expected case numbers: {sorted(missing_cases)}")
 
         hero_case = next((c for c in cases if c.case_number == HERO_CASE_NUMBER), None)
         if hero_case is None:
             return _unseeded_or_inconsistent(f"Hero case {HERO_CASE_NUMBER} not found in cases.")
 
         # Check evidence CaseDocuments
-        doc_count = session.query(CaseDocument).filter(CaseDocument.dataset_id == DEMO_DATASET_ID).count()
+        doc_count = session.query(CaseDocument).filter(CaseDocument.dataset_id == active_ds_id).count()
         if doc_count < 200:
-            return _unseeded_or_inconsistent(f"Incomplete evidence documents: found {doc_count} (expected >= 300).")
+            return _unseeded_or_inconsistent(f"Incomplete evidence documents: found {doc_count} (expected >= 200).")
 
         hero_doc = session.query(CaseDocument).filter(CaseDocument.id == HERO_EVIDENCE_ID).one_or_none()
         if hero_doc is None:
-            return _unseeded_or_inconsistent(f"Hero evidence document {HERO_EVIDENCE_ID} is missing.")
+            # For v1 the hero doc id differs; accept any FIR for the hero case
+            hero_doc = session.query(CaseDocument).filter(
+                CaseDocument.case_id == HERO_CASE_ID,
+            ).first()
+            if hero_doc is None:
+                return _unseeded_or_inconsistent(f"Hero evidence document for case {HERO_CASE_NUMBER} is missing.")
 
         # Check InvestigationFindings
         findings = session.query(InvestigationFinding).filter(
@@ -505,7 +517,12 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
             InvestigationFinding.id == HERO_INVESTIGATION_ID
         ).one_or_none()
         if hero_finding is None:
-            return _unseeded_or_inconsistent(f"Hero investigation finding {HERO_INVESTIGATION_ID} is missing.")
+            # Accept any finding for hero case
+            hero_finding = session.query(InvestigationFinding).filter(
+                InvestigationFinding.case_id == HERO_CASE_ID
+            ).first()
+            if hero_finding is None:
+                return _unseeded_or_inconsistent(f"No investigation finding for hero case {HERO_CASE_NUMBER}.")
 
         # Check Graph store
         graph_backend = settings.effective_graph_backend
@@ -516,9 +533,15 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
                 node_count = store._graph.number_of_nodes()
                 edge_count = store._graph.number_of_edges()
                 if node_count < 50:
-                    return _unseeded_or_inconsistent(f"Embedded graph has only {node_count} nodes (expected >= 100).")
-                if "PERSON-001" not in store._graph:
-                    return _unseeded_or_inconsistent("Hero entity PERSON-001 is missing from embedded graph.")
+                    return _unseeded_or_inconsistent(f"Embedded graph has only {node_count} nodes (expected >= 50).")
+                # Check hero person is present (look for Person nodes with first person name)
+                hero_found = False
+                for n, d in store._graph.nodes(data=True):
+                    if d.get("label") in ("Person", "PERSON") and hero_case.id in (d.get("case_ids") or []):
+                        hero_found = True
+                        break
+                if not hero_found:
+                    return _unseeded_or_inconsistent(f"No Person nodes associated with hero case {HERO_CASE_NUMBER}.")
             finally:
                 store.close()
         elif graph_backend == "neo4j":
@@ -529,17 +552,17 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
             )
             with driver.session(database=settings.neo4j_database) as neo_sess:
                 res = neo_sess.run(
-                    "MATCH (p:Person {provenance_key: 'PERSON-001'}) RETURN count(p) as cnt"
+                    f"MATCH (p:Person)-[:PARTICIPATED_IN]->(c:Case {{case_number: '{HERO_CASE_NUMBER}'}}) RETURN count(p) as cnt"
                 ).single()
                 if not res or res["cnt"] == 0:
                     driver.close()
-                    return _unseeded_or_inconsistent("Hero entity PERSON-001 is missing from Neo4j.")
+                    return _unseeded_or_inconsistent(f"No Person nodes connected to hero case {HERO_CASE_NUMBER} in Neo4j.")
             driver.close()
 
-        # Check Object Store for hero file E-042
+        # Check Object Store for a hero evidence file (use hero_doc.storage_key)
         obj_backend = settings.effective_object_store_backend
         bucket = settings.minio_bucket_documents
-        hero_storage_key = "evidence/E-042/original.pdf"
+        hero_storage_key = hero_doc.storage_key
         if obj_backend == "minio":
             from app.adapters.objectstore.minio_store import MinioObjectStore
             m_store = MinioObjectStore(settings)
@@ -553,7 +576,7 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
             if not meta or meta.size == 0:
                 return _unseeded_or_inconsistent(f"Hero file {hero_storage_key} missing or empty in local object store.")
 
-        return "CORRECT", "Demo dataset DEMO-DATASET-001 is fully populated, verified, and consistent."
+        return "CORRECT", f"Demo dataset {active_ds_id} is fully populated, verified, and consistent."
     except Exception as exc:
         return "INCONSISTENT", f"Verification encountered an error: {exc}"
     finally:
@@ -587,7 +610,7 @@ def bootstrap_demo_dataset(
     print("[CrimeLink] Ensuring database schema and migrations...", flush=True)
     run_db_migrations(settings)
 
-    print("[CrimeLink] Checking demo dataset DEMO-DATASET-001 status...", flush=True)
+    print("[CrimeLink] Checking demo dataset status...", flush=True)
     status, reason = check_demo_dataset_status(settings)
 
     if status == "CORRECT" and not force_reseed:
@@ -597,21 +620,12 @@ def bootstrap_demo_dataset(
 
     if status == "MISSING" or force_reseed:
         print(f"[CrimeLink] Demo dataset needs seeding ({reason}). Seeding now...", flush=True)
-        # Import seed logic dynamically
-        from scripts.seed_demo import seed_postgres, seed_minio, seed_neo4j, ensure_demo_dataset_files
+        # Import v2 seed logic
+        from scripts.seed_demo_v2 import seed_all
 
-        ensure_demo_dataset_files()
-        pg_ok = seed_postgres()
-        if not pg_ok:
-            raise RuntimeError("PostgreSQL / SQLite seeding failed.")
-
-        minio_ok = seed_minio()
-        if not minio_ok:
-            raise RuntimeError("MinIO / ObjectStore seeding failed.")
-
-        neo4j_ok = seed_neo4j()
-        if not neo4j_ok:
-            raise RuntimeError("Neo4j / EmbeddedGraph seeding failed.")
+        ok = seed_all()
+        if not ok:
+            raise RuntimeError("Demo dataset seeding failed.")
 
         # Re-check status after seed
         status_after, reason_after = check_demo_dataset_status(settings)
