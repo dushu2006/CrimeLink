@@ -749,8 +749,10 @@ export function listDatasetMappings(
   datasetId: string,
   options: { needsReview?: boolean } = {},
 ): Promise<{ dataset_id: string; items: DatasetMapping[]; total: number; review_pending: number }> {
-  const query = options.needsReview ? "?needs_review=true" : "";
-  return api(`/datasets/${datasetId}/mappings${query}`);
+  const params = new URLSearchParams();
+  if (options.needsReview) params.set("needs_review", "true");
+  const qs = params.toString();
+  return api(`/datasets/${datasetId}/mappings${qs ? `?${qs}` : ""}`);
 }
 
 /** Record operator sign-off on inferred mappings. Empty list means "all of them". */
@@ -2242,8 +2244,10 @@ export function masterPersonNetwork(
 ): Promise<MasterPersonNetwork> {
   const hops = Math.max(1, Math.floor(Number(depth) || DEFAULT_NETWORK_DEPTH));
   const params = new URLSearchParams({ depth: String(hops) });
+  // The route is /graph/master/person/{key}/network — the trailing /network
+  // segment was missing, so the PERSON NETWORK scope 404'd on every request.
   return api(
-    `/graph/master/person/${encodeURIComponent(personKey)}?${params.toString()}`,
+    `/graph/master/person/${encodeURIComponent(personKey)}/network?${params.toString()}`,
   );
 }
 
