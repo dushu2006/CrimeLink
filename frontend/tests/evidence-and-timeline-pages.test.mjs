@@ -197,3 +197,27 @@ test("case workspace opens the real document behind a card", () => {
   assert.match(WORKSPACE, /setEvidenceDocId\(doc\.id\)/);
   assert.match(WORKSPACE, /data=\{evidenceDocId \? \{ id: evidenceDocId \} : null\}/);
 });
+
+// ---------------------------------------------------------------------------
+// Activity feed: provenance ticks must be computed, not decorative
+// ---------------------------------------------------------------------------
+
+const ACTIVITY = read("../src/components/investigator/InvestigatorActivity.tsx");
+
+test("the activity feed renders the backend's computed provenance checks", () => {
+  // It used to print two literal ticks next to every finding, whatever that
+  // finding actually cited.
+  assert.doesNotMatch(
+    ACTIVITY,
+    /\{activity\.provenance\} ✓ Evidence verified ✓ Source traceable/,
+    "provenance ticks must not be literals",
+  );
+  assert.match(ACTIVITY, /provenanceChecks/);
+  assert.match(ACTIVITY, /provenanceChecks\.evidence_verified \? "✓" : "✗"/);
+  assert.match(ACTIVITY, /provenanceChecks\.source_traceable \? "✓" : "✗"/);
+});
+
+test("the activity feed explains a failed check instead of only ticking", () => {
+  assert.match(ACTIVITY, /provenanceChecks\.detail/);
+  assert.match(ACTIVITY, /verified" : "unverified"/);
+});

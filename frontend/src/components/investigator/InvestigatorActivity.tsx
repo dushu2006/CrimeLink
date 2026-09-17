@@ -22,6 +22,14 @@ interface ActivityItem {
   connectionPath?: string[];
   limitations?: string[];
   provenance?: string;
+  /** Computed by the backend from stored records — never asserted by the UI. */
+  provenanceChecks?: {
+    evidence_verified: boolean;
+    source_traceable: boolean;
+    evidence_cited: number;
+    evidence_resolved: number;
+    detail: string;
+  } | null;
   confidence?: number;
   confidenceBand?: string;
   status?: string;
@@ -112,7 +120,30 @@ export function InvestigatorActivity({ activities, onViewEvidence, onViewTimelin
                 </div>
               )}
               {activity.provenance && (
-                <div><strong>Provenance:</strong> {activity.provenance} ✓ Evidence verified ✓ Source traceable</div>
+                <div>
+                  <strong>Provenance:</strong> {activity.provenance}
+                </div>
+              )}
+              {/* The ticks used to be literals printed next to every finding.
+                  They are now the backend's computed checks, with the reason
+                  shown when a check fails. */}
+              {activity.provenanceChecks && (
+                <div className="provenance-checks" title={activity.provenanceChecks.detail}>
+                  <span
+                    className={`provenance-check ${activity.provenanceChecks.evidence_verified ? "verified" : "unverified"}`}
+                  >
+                    {activity.provenanceChecks.evidence_verified ? "✓" : "✗"} Evidence verified
+                  </span>
+                  <span
+                    className={`provenance-check ${activity.provenanceChecks.source_traceable ? "verified" : "unverified"}`}
+                  >
+                    {activity.provenanceChecks.source_traceable ? "✓" : "✗"} Source traceable
+                  </span>
+                  {!activity.provenanceChecks.evidence_verified ||
+                  !activity.provenanceChecks.source_traceable ? (
+                    <span className="muted">{activity.provenanceChecks.detail}</span>
+                  ) : null}
+                </div>
               )}
               {activity.status && <div><strong>Status:</strong> {activity.status} | <strong>Method:</strong> {activity.method}</div>}
             </div>
