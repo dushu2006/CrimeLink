@@ -220,12 +220,65 @@ async def get_case(
 async def case_summaries(
     session: AsyncSession, scope: JurisdictionScope, *, limit: int = 100, offset: int = 0
 ) -> list[dict]:
-    """Case list rows with document counts and pending-review counts.
+    """Case list rows with the counts the case table actually displays.
 
-    The UI's case table shows "pending reviews" because an un-actioned review
-    queue is the one thing that must never be allowed to quietly grow.
+    Every number here is counted from stored data — documents, source
+    references, findings, people and person-to-person relationships — never
+    cached in the frontend and never a placeholder.  "Pending reviews" is
+    included because an un-actioned review queue is the one thing that must
+    never be allowed to quietly grow.
     """
+    from app.db.models import InvestigationFinding, SourceReference
+
     cases = await list_cases(session, scope, limit=limit, offset=offset)
+    case_ids = [case.id for case in cases]
+
+    async def _counts(model, column) -> dict[str, int]:
+        if not case_ids:
+            return {}
+        rows = (
+            await session.execute(
+                select(column, func.count(model.id))
+                .where(column.in_(case_ids))
+                .group_by(column)
+            )
+        ).all()
+        return {row[0]: int(row[1]) for row in rows}
+
+    doc_counts = await _counts(CaseDocument, CaseDocument.case_id)
+    source_counts = await _counts(SourceReference, SourceReference.case_id)
+    finding_counts = await _counts(InvestigationFinding, InvestigationFinding.case_id)
+
+    # People and relationships come from the same graph the People and
+    # Relationships pages read, so the three surfaces can never disagree about
+    # how many people a case has.  One snapshot and one derivation serve the
+    # whole page; a graph problem must never blank the case list.
+    person_counts: dict[str, int] = {}
+    relationship_counts: dict[str, int] = {}
+    if case_ids:
+        try:
+            from app.container import get_container
+            from app.domain.enums import canonical_label
+            from app.services.person_relationships import derive_person_relationships
+
+            snapshot = get_container().graph_store.multi_case_snapshot(
+                case_ids, include_inactive=False
+            )
+            for node in snapshot.nodes.values():
+                if canonical_label(node.label) != "PERSON":
+                    continue
+                for cid in node.properties.get("case_ids") or []:
+                    if cid in set(case_ids):
+                        person_counts[cid] = person_counts.get(cid, 0) + 1
+            derived = derive_person_relationships(snapshot)
+            wanted = set(case_ids)
+            for edge in derived["edges"]:
+                for cid in edge["case_ids"]:
+                    if cid in wanted:
+                        relationship_counts[cid] = relationship_counts.get(cid, 0) + 1
+        except Exception:  # pragma: no cover - graph unavailable
+            person_counts, relationship_counts = {}, {}
+
     out: list[dict] = []
     for case in cases:
         documents = int(
@@ -268,6 +321,10 @@ async def case_summaries(
                 "status": case.status.value,
                 "classification": case.classification.value,
                 "document_count": documents,
+                "source_count": source_counts.get(case.id, 0),
+                "finding_count": finding_counts.get(case.id, 0),
+                "person_count": person_counts.get(case.id, 0),
+                "relationship_count": relationship_counts.get(case.id, 0),
                 "pending_review_count": pending_reviews,
                 "created_at": case.created_at.isoformat() if case.created_at else None,
             }

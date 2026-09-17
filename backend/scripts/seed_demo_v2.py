@@ -1450,21 +1450,44 @@ def seed_all() -> bool:
         object_store = container.object_store
         bucket = settings.minio_bucket_documents
 
-        # Seed all files into object store first, then DB records
+        # Seed all files into object store first, then DB records.
+        #
+        # Each file's bytes are generated EXACTLY ONCE and reused for the
+        # stored object, the recorded content_hash and the size.  Regenerating
+        # them later — which this seeder used to do — silently breaks chain of
+        # custody: ReportLab stamps a creation timestamp into every PDF, so the
+        # second generation produces different bytes and the recorded SHA-256
+        # no longer matches the stored object.  GET /evidence/{doc}/verify
+        # exists precisely to catch that, and it did.
+        evidence_bytes: dict[str, bytes] = {}
         evidence_file_map: dict[str, str] = {}
         for ev in dataset["evidence"]:
-            file_bytes = gen_evidence_bytes(ev, dataset)
             key = ev["storage_key"]
-            # Put object (idempotent)
-            if not object_store.stat(bucket, key):
+            existing = None
+            try:
+                if object_store.stat(bucket, key):
+                    existing = object_store.get(bucket, key)
+            except Exception:
+                existing = None
+            file_bytes = existing if existing is not None else gen_evidence_bytes(ev, dataset)
+            if existing is None:
                 object_store.put(bucket, key, file_bytes, content_type=ev["mime_type"])
+            evidence_bytes[ev["evidence_id"]] = file_bytes
             evidence_file_map[ev["evidence_id"]] = key
 
+        source_bytes: dict[str, bytes] = {}
         for src in dataset["sources"]:
-            file_bytes = gen_source_bytes(src, dataset)
             key = src["storage_key"]
-            if not object_store.stat(bucket, key):
+            existing = None
+            try:
+                if object_store.stat(bucket, key):
+                    existing = object_store.get(bucket, key)
+            except Exception:
+                existing = None
+            file_bytes = existing if existing is not None else gen_source_bytes(src, dataset)
+            if existing is None:
                 object_store.put(bucket, key, file_bytes, content_type=src["mime_type"])
+            source_bytes[src["source_id"]] = file_bytes
 
         print("  Object store populated.")
 
@@ -1494,7 +1517,7 @@ def seed_all() -> bool:
 
         # Create evidence documents
         for ev in dataset["evidence"]:
-            file_bytes = gen_evidence_bytes(ev, dataset)
+            file_bytes = evidence_bytes[ev["evidence_id"]]
             content_hash = sha256(file_bytes)
             did = doc_id_for(ev["evidence_id"])
             doc = CaseDocument(
@@ -1538,7 +1561,7 @@ def seed_all() -> bool:
 
         # Create source documents
         for src in dataset["sources"]:
-            file_bytes = gen_source_bytes(src, dataset)
+            file_bytes = source_bytes[src["source_id"]]
             content_hash = sha256(file_bytes)
             did = doc_id_for(src["source_id"])
             if session.query(CaseDocument).filter(CaseDocument.id == did).one_or_none():

@@ -337,11 +337,16 @@ async def test_missing_file_reports_not_found_explicitly(client, admin_headers, 
 
 
 async def test_traversal_and_absolute_paths_are_refused(client, admin_headers, rendered_dataset):
+    """A traversal attempt is a *bad request about the path* — never a served
+    file, and never a 404 that pretends the file was merely missing."""
     for attempt in ("../../blue_ledger/fir.txt", "/etc/passwd", "..%2F..%2Fetc%2Fpasswd"):
         response = _preview(client, admin_headers, attempt)
-        assert response.status_code in (200, 400, 404), attempt
+        assert response.status_code in (200, 400, 404, 422), attempt
         if response.status_code == 200:
             assert response.json()["status"] in {"NOT_FOUND", "UNSUPPORTED"}
+        else:
+            assert response.json()["error"]["code"] in {"validation_failed", "not_found"}
+        assert "root:" not in response.text
 
 
 async def test_replacing_the_dataset_closes_the_files_behind_it(
