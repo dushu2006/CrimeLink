@@ -1865,6 +1865,12 @@ async def test_cross_dataset_isolation_and_thread_pinning(
     async with async_session() as session:
         row_b = await session.get(Dataset, dataset_b)
         row_b.is_active = False
+        # Flush the deactivation before raising the other flag.  ``datasets``
+        # has a partial unique index on ``is_active``; SQLAlchemy batches both
+        # dirty rows into one executemany whose order is not defined, so half
+        # the time the new active row lands first and the index rejects the
+        # statement.  Same two-step ordering as registry.set_only_active.
+        await session.flush()
         row_a = await session.get(Dataset, investigation_world["dataset_id"])
         row_a.is_active = True
         await session.commit()

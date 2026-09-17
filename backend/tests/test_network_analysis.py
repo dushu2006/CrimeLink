@@ -167,8 +167,13 @@ async def test_entity_types_are_preserved_in_metrics(db, users, container):
     edges.append(_edge("p1", "loc1", "LOCATED_AT", "t-loc"))
     container.injector.inject_edges(edges)
 
-    result = await analyze_network(db, _scope(users), Principal(users["INV-0001"]), mode="case", case_id=c1.id)
+    # MASTER is the entity/evidence deep-dive, so entity rows are reported
+    # there — and they must keep their real type rather than being coerced.
+    result = await analyze_network(
+        db, _scope(users), Principal(users["INV-0001"]), mode="master"
+    )
     analysis = result["analysis"]
+    assert analysis["subject"] == "ENTITY"
     all_rows = (
         analysis["metrics"]["betweenness"]
         + analysis["metrics"]["degree"]
@@ -177,6 +182,26 @@ async def test_entity_types_are_preserved_in_metrics(db, users, container):
     by_key = {row["key"]: row for row in all_rows}
     assert by_key["ba1"]["label"] == "BANK_ACCOUNT", "BANK_ACCOUNT must stay BANK_ACCOUNT"
     assert by_key["loc1"]["label"] == "LOCATION", "LOCATION must stay LOCATION"
+
+    # CASE is investigator-facing and person-centric: a hub bank account must
+    # not be presented as an investigative subject at all.  It stays in the
+    # evidence graph (MASTER above) and in the supporting basis of the
+    # person↔person findings it explains — never as a ranked metric row here.
+    case_result = await analyze_network(
+        db, _scope(users), Principal(users["INV-0001"]), mode="case", case_id=c1.id
+    )
+    case_analysis = case_result["analysis"]
+    assert case_analysis["subject"] == "PERSON"
+    case_rows = (
+        case_analysis["metrics"]["betweenness"]
+        + case_analysis["metrics"]["degree"]
+        + case_analysis["metrics"]["pagerank"]
+        + case_analysis["metrics"]["weighted_degree"]
+        + case_analysis["cross_case"]
+    )
+    assert case_rows, "person-centric metrics must still rank the people"
+    non_person = [row for row in case_rows if row["label"] != "PERSON"]
+    assert non_person == [], f"person-centric analysis surfaced {non_person[:3]}"
 
 
 async def test_criminal_status_is_source_derived_only(db, users, container):

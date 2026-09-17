@@ -108,6 +108,13 @@ export interface PreviewResult {
   sheet?: string | null;
   raw_url?: string | null;
   download_url?: string | null;
+  /**
+   * Machine-readable reason, returned alongside `status` so the UI can branch
+   * on the *cause* instead of parsing prose.  "No dataset is active", "the file
+   * is not in the store" and "the store is unreachable" are three different
+   * problems and the investigator is told which one they have.
+   */
+  code?: string | null;
 }
 
 interface ReferencePayload {
@@ -159,7 +166,59 @@ const STATUS_TONE: Record<string, string> = {
   CORRUPTED: "bad",
   NOT_FOUND: "bad",
   EXTRACTION_FAILED: "bad",
+  STORAGE_UNAVAILABLE: "bad",
 };
+
+/**
+ * One message per failure cause.  The old single "Active dataset workspace is
+ * unavailable." was shown for a missing file, an unconfigured object store and
+ * a MinIO outage alike, which sent the investigator to fix the wrong thing.
+ */
+export const SOURCE_FAILURE_MESSAGE: Record<string, string> = {
+  active_dataset_unavailable:
+    "No dataset is active. Activate a dataset in the Dataset Console and this source will resolve.",
+  source_record_not_found:
+    "The active dataset has no record of this source. It may belong to a dataset that is no longer active.",
+  source_file_not_found:
+    "This source file is not stored with the active dataset. The record exists; the file does not.",
+  source_bytes_missing:
+    "The source is registered to the active dataset but its bytes are missing from storage — a data-integrity problem, not a missing record.",
+  storage_unavailable:
+    "Object storage could not be reached. The file may still exist; retry once the storage service is back.",
+  unsupported_file_type:
+    "CrimeLink has no viewer for this file type. The original file is still available to download.",
+  preview_generation_failed:
+    "The preview could not be generated — the file may be damaged or in an unreadable format.",
+  permission_denied: "You do not have permission to open this source.",
+  backend_unavailable: "The CrimeLink backend did not respond. Check the service and retry.",
+};
+
+/** Fallback wording per viewer state when the backend sent no `code`. */
+const STATUS_FALLBACK_MESSAGE: Record<string, string> = {
+  NOT_FOUND: "The file is no longer stored with this dataset.",
+  STORAGE_UNAVAILABLE:
+    "Object storage could not be reached, so this source cannot be opened right now.",
+  UNSUPPORTED:
+    "Unsupported file preview — the file is part of the evidence set, but there is no viewer for this format.",
+  CORRUPTED: "The file could not be parsed; it may be damaged.",
+  EXTRACTION_FAILED: "Content extraction failed for this file.",
+  NO_EXTRACTED_TEXT: "This document has no extractable text (it may be a scan).",
+};
+
+/** The message to show for a preview that did not open, cause first. */
+export function sourceFailureMessage(preview: {
+  code?: string | null;
+  status?: string;
+  reason?: string | null;
+}): string {
+  if (preview.code && SOURCE_FAILURE_MESSAGE[preview.code]) {
+    return preview.reason
+      ? `${SOURCE_FAILURE_MESSAGE[preview.code]} (${preview.reason})`
+      : SOURCE_FAILURE_MESSAGE[preview.code];
+  }
+  const fallback = STATUS_FALLBACK_MESSAGE[preview.status ?? ""] ?? null;
+  return preview.reason ?? fallback ?? "This source could not be opened.";
+}
 
 function StatusChip({ status, reason }: { status: string; reason?: string | null }) {
   return (
@@ -324,9 +383,12 @@ function PdfView({
 
 function ImageFileView({ path, rawUrl }: { path: string; rawUrl?: string | null }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
     let objectUrl: string | null = null;
+    setError(null);
     const rawEndpoint = rawUrl || `/sources/raw?path=${encodeURIComponent(path)}`;
     fetchBlob(rawEndpoint)
       .then((blob) => {
@@ -334,12 +396,27 @@ function ImageFileView({ path, rawUrl }: { path: string; rawUrl?: string | null 
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        // An image that fails to fetch must say so; spinning forever looks
+        // like a slow network and hides a broken signed link.
+        if (!active) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
     return () => {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path, rawUrl]);
+  }, [path, rawUrl, attempt]);
+  if (error) {
+    return (
+      <div className="image-view">
+        <Empty message={`The image could not be loaded: ${error}`} />
+        <button className="cl-btn cl-btn-sm" onClick={() => setAttempt((n) => n + 1)}>
+          Retry
+        </button>
+      </div>
+    );
+  }
   if (!url) return <Spinner />;
   return (
     <div className="image-view">
@@ -640,25 +717,11 @@ export function SourceViewerBody({
       {(renderKind === "text" || renderKind === "json") && win && <TextView win={win} />}
       {renderKind === "document" && win && <TextView win={win} />}
 
-      {status === "UNSUPPORTED" && (
-        <Empty
-          message={
-            preview.reason ??
-            "Unsupported file preview — the file is part of the evidence set, but there is no viewer for this format."
-          }
-        />
-      )}
-      {status === "NOT_FOUND" && (
-        <Empty message={preview.reason ?? "The file is no longer stored with this dataset."} />
-      )}
-      {status === "CORRUPTED" && (
-        <Empty message={preview.reason ?? "The file could not be parsed; it may be damaged."} />
-      )}
-      {status === "EXTRACTION_FAILED" && (
-        <Empty message={preview.reason ?? "Content extraction failed for this file."} />
-      )}
+      {["UNSUPPORTED", "NOT_FOUND", "CORRUPTED", "EXTRACTION_FAILED", "STORAGE_UNAVAILABLE"].includes(
+        status,
+      ) && <Empty message={sourceFailureMessage(preview)} />}
       {status === "NO_EXTRACTED_TEXT" && renderKind !== "pdf" && (
-        <Empty message={preview.reason ?? "This document has no extractable text (it may be a scan)."} />
+        <Empty message={sourceFailureMessage(preview)} />
       )}
       {renderKind === "binary" && (
         <div className="unsupported-view">

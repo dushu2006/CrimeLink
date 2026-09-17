@@ -17,6 +17,8 @@ import {
 } from "../api/client";
 import { useAuth } from "../store/auth";
 import { getRoleBadge } from "../lib/rbac";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import StaleDataNotice from "../components/common/StaleDataNotice";
 
 const PAGE = 50;
 
@@ -73,6 +75,12 @@ export default function EvidencePage() {
 
   useEffect(load, [load]);
 
+  // Bounded live refresh: records land in the active dataset while this page
+  // is open, and a failed refresh is reported rather than swallowed.
+  const live = useLiveRefresh(async () => {
+    await load();
+  });
+
   function update(next: Record<string, string>) {
     const merged = new URLSearchParams(searchParams);
     for (const [key, value] of Object.entries(next)) {
@@ -85,6 +93,11 @@ export default function EvidencePage() {
 
   return (
     <div className="evidence-page">
+      <StaleDataNotice
+        error={live.error}
+        lastRefreshedAt={live.lastRefreshedAt}
+        onRetry={live.refreshNow}
+      />
       <div className="page-header">
         <div>
           <h1>Evidence</h1>

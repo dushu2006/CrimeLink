@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { t } from "../i18n";
 import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import StaleDataNotice from "../components/common/StaleDataNotice";
 
 interface CaseRow {
   id: string;
@@ -41,6 +43,12 @@ export default function Cases() {
 
   useEffect(load, [load]);
 
+  // Bounded live refresh: records land in the active dataset while this page
+  // is open, and a failed refresh is reported rather than swallowed.
+  const live = useLiveRefresh(async () => {
+    await load();
+  });
+
   async function create(event: React.FormEvent) {
     event.preventDefault();
     try {
@@ -66,6 +74,11 @@ export default function Cases() {
 
   return (
     <div className="page">
+      <StaleDataNotice
+        error={live.error}
+        lastRefreshedAt={live.lastRefreshedAt}
+        onRetry={live.refreshNow}
+      />
       <header className="page-head">
         <h1>{t("cases.title")}</h1>
         <button className="btn" onClick={() => setCreating((v) => !v)}>

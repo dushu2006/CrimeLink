@@ -62,6 +62,44 @@ STATUS_CORRUPTED = "CORRUPTED"              # file is damaged / not parseable
 STATUS_NOT_FOUND = "NOT_FOUND"              # path resolves to nothing
 STATUS_EXTRACTION_FAILED = "EXTRACTION_FAILED"  # parser blew up mid-file
 STATUS_NO_EXTRACTED_TEXT = "NO_EXTRACTED_TEXT"  # format ok, nothing readable
+#: The storage layer itself could not be reached.  Deliberately distinct from
+#: ``NOT_FOUND``: "we asked and the file is not there" and "we could not ask"
+#: are different facts with different remedies, and reporting the second as
+#: the first is what made a MinIO outage look like a missing evidence file.
+STATUS_STORAGE_UNAVAILABLE = "STORAGE_UNAVAILABLE"
+
+#: Machine-readable reason codes, returned alongside ``status`` so a client can
+#: branch on the *cause* instead of parsing a human-readable message.
+CODE_ACTIVE_DATASET_UNAVAILABLE = "active_dataset_unavailable"
+CODE_SOURCE_RECORD_NOT_FOUND = "source_record_not_found"
+CODE_SOURCE_FILE_NOT_FOUND = "source_file_not_found"
+CODE_SOURCE_BYTES_MISSING = "source_bytes_missing"
+CODE_STORAGE_UNAVAILABLE = "storage_unavailable"
+CODE_UNSUPPORTED_FILE_TYPE = "unsupported_file_type"
+CODE_PREVIEW_FAILED = "preview_generation_failed"
+
+#: ``status`` → the reason code a client should act on.
+CODE_BY_STATUS: dict[str, str] = {
+    STATUS_NOT_FOUND: CODE_SOURCE_FILE_NOT_FOUND,
+    STATUS_STORAGE_UNAVAILABLE: CODE_STORAGE_UNAVAILABLE,
+    STATUS_UNSUPPORTED: CODE_UNSUPPORTED_FILE_TYPE,
+    STATUS_CORRUPTED: CODE_PREVIEW_FAILED,
+    STATUS_EXTRACTION_FAILED: CODE_PREVIEW_FAILED,
+    STATUS_NO_EXTRACTED_TEXT: CODE_SOURCE_FILE_NOT_FOUND,
+    STATUS_AVAILABLE: "available",
+}
+
+
+class StorageUnavailableError(Exception):
+    """The object store could not be reached at all.
+
+    Not a 404 and not a corrupt file: an outage.  Carried separately from
+    ``SourceAccessError`` so a caller can never mistake it for "no such file".
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.status = STATUS_STORAGE_UNAVAILABLE
 
 
 class SourceAccessError(ValidationFailedError):
@@ -232,7 +270,7 @@ def _get_object_store_info():
                 log.error("source_viewer.minio_unavailable_in_production", error=str(exc))
                 raise SourceAccessError(
                     f"Object storage unavailable in production: {exc}",
-                    status=STATUS_NOT_FOUND,
+                    status=STATUS_STORAGE_UNAVAILABLE,
                 ) from exc
             # In dev, fallback to local
             from app.adapters.objectstore.local import LocalObjectStore
@@ -246,7 +284,7 @@ def _get_object_store_info():
             log.error("source_viewer.minio_mandatory_in_production", backend=backend)
             raise SourceAccessError(
                 "MinIO is mandatory in production but backend is not minio — refusing Local fallback",
-                status=STATUS_NOT_FOUND,
+                status=STATUS_STORAGE_UNAVAILABLE,
             )
         # Prefer the container's store: it is built from the application's live
         # settings, so the viewer reads the same storage root the pipeline
@@ -1539,7 +1577,13 @@ def _preview_pptx_from_bytes(data: bytes) -> list[dict[str, Any]]:
                         pass
                 pages.append("\n".join(texts))
     except zipfile.BadZipFile as exc:
-        raise SourceAccessError(f"the PPTX could not be parsed ({type(exc).__name__}: {exc})", code="CORRUPTED") from exc
+        # ``SourceAccessError`` takes ``status``, not ``code``: this used to
+        # raise TypeError, turning a damaged presentation into a 500 instead of
+        # the CORRUPTED state the viewer knows how to explain.
+        raise SourceAccessError(
+            f"the PPTX could not be parsed ({type(exc).__name__}: {exc})",
+            status=STATUS_CORRUPTED,
+        ) from exc
 
     if not pages:
         raise SourceAccessError("the presentation contains no slides", status=STATUS_NO_EXTRACTED_TEXT)

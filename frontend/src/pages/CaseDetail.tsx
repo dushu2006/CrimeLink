@@ -147,6 +147,8 @@ export default function CaseDetail() {
   const [aiStreamText, setAiStreamText] = useState("");
   const [aiTransport, setAiTransport] = useState<"stream" | "request">("stream");
   const [liveStatus, setLiveStatus] = useState<"connected" | "polling" | null>(null);
+  /** Set when a live refresh fails, so a stale page never claims to be live. */
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function askAi() {
@@ -232,7 +234,12 @@ export default function CaseDetail() {
             return api<{ items: DocRow[] }>(`/cases/${caseId}/documents`);
           })
           .then((data) => setDocs(data.items))
-          .catch(() => undefined);
+          .catch((err: Error) => {
+            // A live refresh that fails must be visible.  Dropping it silently
+            // leaves the page showing the pre-update state while claiming to
+            // be live.
+            setRefreshError(err.message);
+          });
       },
       (status) => setLiveStatus(status.state),
     );
@@ -327,6 +334,15 @@ export default function CaseDetail() {
       {liveStatus === "polling" && (
         <div className="banner banner-warn">
           {t("case.livePolling")}
+        </div>
+      )}
+
+      {refreshError && (
+        <div className="banner banner-error" role="alert">
+          Live update failed — the data below may be stale: {refreshError}{" "}
+          <button className="cl-btn cl-btn-sm" onClick={load}>
+            Reload now
+          </button>
         </div>
       )}
 

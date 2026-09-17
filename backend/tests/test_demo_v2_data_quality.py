@@ -271,3 +271,55 @@ def test_criminal_status_rejects_a_typo(container, seeded_dataset):
             CRIMINAL_STATUS_BY_ROLE.pop("ACCOMPLICE", None)
         else:
             CRIMINAL_STATUS_BY_ROLE["ACCOMPLICE"] = original
+
+
+
+def test_every_generated_person_has_case_membership(seeded_dataset):
+    """No generated person may be orphaned from the case graph.
+
+    Case membership supplies the scope used by graph provenance and
+    person-centric analytics. An orphan person would be invisible to those
+    views even though the seeder reports them as part of the 120-person corpus.
+    """
+    from scripts.seed_demo_v2 import derive_case_persons
+
+    memberships = derive_case_persons(seeded_dataset)
+    assigned = {
+        pid
+        for person_ids in memberships.values()
+        for pid in person_ids
+    }
+    expected = {person["id"] for person in seeded_dataset["persons"]}
+    assert assigned == expected
+
+    # The same invariant must propagate to supporting entities owned by people:
+    # an org/vehicle with an owner is visible through at least one owner's case.
+    person_cases = {
+        person["id"]: {
+            case_id for case_id, person_ids in memberships.items()
+            if person["id"] in person_ids
+        }
+        for person in seeded_dataset["persons"]
+    }
+    for person in seeded_dataset["persons"]:
+        assert person_cases[person["id"]], person["id"]
+
+    org_owner_cases = {}
+    for person in seeded_dataset["persons"]:
+        if person.get("org_id"):
+            org_owner_cases.setdefault(person["org_id"], set()).update(
+                person_cases[person["id"]]
+            )
+    for org in seeded_dataset["orgs"]:
+        if org["id"] in org_owner_cases:
+            assert org_owner_cases[org["id"]]
+
+    vehicle_owner_cases = {}
+    for person in seeded_dataset["persons"]:
+        for vehicle_id in person.get("vehicle_ids", []):
+            vehicle_owner_cases.setdefault(vehicle_id, set()).update(
+                person_cases[person["id"]]
+            )
+    for vehicle in seeded_dataset["vehicles"]:
+        if vehicle["id"] in vehicle_owner_cases:
+            assert vehicle_owner_cases[vehicle["id"]]

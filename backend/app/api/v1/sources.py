@@ -50,7 +50,11 @@ from app.security.deps import (
 )
 from app.services import cases as case_service
 from app.services import source_viewer
-from app.services.source_viewer import SourceAccessError, SourceNotFoundError
+from app.services.source_viewer import (
+    SourceAccessError,
+    SourceNotFoundError,
+    StorageUnavailableError,
+)
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -114,13 +118,21 @@ def _assert_some_storage() -> None:
     """
     try:
         store, _bucket, _is_minio, _is_prod = _get_object_store_for_sources()
+    except StorageUnavailableError as exc:
+        raise ServiceUnavailableError(
+            str(exc), code=source_viewer.CODE_STORAGE_UNAVAILABLE
+        ) from exc
     except SourceAccessError:
         raise
     except Exception as exc:
-        raise ServiceUnavailableError(f"Object storage is unreachable: {exc}") from exc
+        raise ServiceUnavailableError(
+            f"Object storage is unreachable: {exc}",
+            code=source_viewer.CODE_STORAGE_UNAVAILABLE,
+        ) from exc
     if store is None:
         raise ServiceUnavailableError(
-            "Object storage is not configured, so source files cannot be opened."
+            "Object storage is not configured, so source files cannot be opened.",
+            code=source_viewer.CODE_STORAGE_UNAVAILABLE,
         )
 
 
@@ -190,7 +202,7 @@ def _get_object_store_for_sources():
         if is_prod:
             from app.logging import get_logger
             get_logger("crimelink.sources").error("sources.minio_unavailable_in_prod", error=str(exc))
-            raise SourceAccessError(f"Object storage unavailable in production: {exc}", status=source_viewer.STATUS_NOT_FOUND) from exc
+            raise StorageUnavailableError(f"Object storage unavailable in production: {exc}") from exc
         try:
             from app.adapters.objectstore.local import LocalObjectStore
             store = LocalObjectStore(settings)
@@ -480,21 +492,33 @@ async def _resolve_source_path(
         cand = (base / rel).resolve()
         return cand if (cand.is_file() and cand.is_relative_to(base)) else None
 
-    # Helper to try MinIO for a relative path
+    # Helper to try MinIO for a relative path.
+    #
+    # An object-store *outage* is raised, never turned into ``None``: returning
+    # None here is indistinguishable from "the key does not exist", and that
+    # conflation is precisely what reported a MinIO outage as a missing
+    # evidence file.
     def _try_minio(rel: str) -> bytes | None:
-        try:
-            store, bucket, is_minio, is_prod = _get_object_store_for_sources()
-            if store is None:
-                return None
-            clean_rel = rel.replace("\\", "/").lstrip("/")
-            meta = store.stat(bucket, clean_rel)
-            if not meta:
-                return None
-            return store.get(bucket, clean_rel)
-        except SourceAccessError:
-            raise
-        except Exception:
+        store, bucket, _is_minio, _is_prod = _get_object_store_for_sources()
+        if store is None:
             return None
+        clean_rel = rel.replace("\\", "/").lstrip("/")
+        try:
+            meta = store.stat(bucket, clean_rel)
+        except Exception as exc:  # noqa: BLE001 - transport/config failure
+            raise StorageUnavailableError(
+                f"Object storage could not be queried for {clean_rel}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if not meta:
+            return None
+        try:
+            return store.get(bucket, clean_rel)
+        except Exception as exc:  # noqa: BLE001
+            raise StorageUnavailableError(
+                f"Object storage could not return the bytes for {clean_rel}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     # 1. Explicit dataset_file_id lookup
     if dataset_file_id:
@@ -738,7 +762,12 @@ async def preview_file(
     _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
-        raise NotFoundError("No dataset is active.")
+        # A missing active dataset is a distinct state from a missing file: it
+        # means nothing in the console can resolve, not that this one source is
+        # gone.  It gets its own code so the UI can say so.
+        raise NotFoundError(
+            "No dataset is active.", code=source_viewer.CODE_ACTIVE_DATASET_UNAVAILABLE
+        )
     # No workspace directory is fine: the object store is the storage layer.
     root = await _dataset_root(session, dataset.id)
     _assert_some_storage()
@@ -753,13 +782,25 @@ async def preview_file(
             doc_id=doc_id,
             dataset_file_id=dataset_file_id,
         )
-    except SourceNotFoundError as exc:
+    except StorageUnavailableError as exc:
+        # Storage is down.  Never reported as NOT_FOUND: the file may be there.
         return {
-            "status": source_viewer.STATUS_NOT_FOUND,
+            "status": source_viewer.STATUS_STORAGE_UNAVAILABLE,
+            "code": source_viewer.CODE_STORAGE_UNAVAILABLE,
             "reason": str(exc),
             "openable": False,
             "render_kind": "none",
-            "file": {"path": clean},
+            "file": {"path": clean, "dataset_id": dataset_id},
+            "window": None,
+        }
+    except SourceNotFoundError as exc:
+        return {
+            "status": source_viewer.STATUS_NOT_FOUND,
+            "code": source_viewer.CODE_SOURCE_FILE_NOT_FOUND,
+            "reason": str(exc),
+            "openable": False,
+            "render_kind": "none",
+            "file": {"path": clean, "dataset_id": dataset_id},
             "window": None,
         }
     except SourceAccessError as exc:
@@ -768,10 +809,11 @@ async def preview_file(
             raise
         return {
             "status": exc.status,
+            "code": source_viewer.CODE_BY_STATUS.get(exc.status, "invalid_request"),
             "reason": str(exc),
             "openable": False,
             "render_kind": "none",
-            "file": {"path": clean},
+            "file": {"path": clean, "dataset_id": dataset_id},
             "window": None,
         }
 
@@ -789,6 +831,9 @@ async def preview_file(
         raw_url=_raw_url(resolved_relative_path),
         download_url=_raw_url(resolved_relative_path),
     )
+    result["code"] = source_viewer.CODE_BY_STATUS.get(
+        result.get("status", source_viewer.STATUS_AVAILABLE), "available"
+    )
     if "file" in result and isinstance(result["file"], dict):
         result["file"]["path"] = resolved_relative_path
         if dataset_file:
@@ -798,7 +843,12 @@ async def preview_file(
             result["file"]["doc_id"] = case_doc.id
             result["file"]["filename"] = case_doc.filename
         if minio_bytes is not None:
-            result["file"]["storage"] = "minio"
+            # The bytes came from the *object store*, which is only MinIO when
+            # the deployment says so.  Labelling a local-filesystem object
+            # store "minio" tells an investigator the wrong thing about where
+            # their evidence lives.
+            _store, _bucket, _is_minio, _is_prod = _get_object_store_for_sources()
+            result["file"]["storage"] = "minio" if _is_minio else "object_store"
             result["file"]["size_bytes"] = len(minio_bytes)
     if result["status"] in {source_viewer.STATUS_AVAILABLE, source_viewer.STATUS_NO_EXTRACTED_TEXT}:
         recorder.record("DOC_VIEW", target_resource=f"source:{resolved_relative_path}", details={"kind": result.get("render_kind")})
@@ -826,7 +876,9 @@ async def read_file(
     _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
-        raise NotFoundError("No dataset is active.")
+        raise NotFoundError(
+            "No dataset is active.", code=source_viewer.CODE_ACTIVE_DATASET_UNAVAILABLE
+        )
     # No workspace directory is fine: the object store is the storage layer.
     root = await _dataset_root(session, dataset.id)
     _assert_some_storage()
@@ -848,9 +900,16 @@ async def read_file(
             limit=limit,
             root=root,
         )
+    except StorageUnavailableError as exc:
+        # 503: storage is down, the file may well exist.
+        raise ServiceUnavailableError(
+            str(exc), code=source_viewer.CODE_STORAGE_UNAVAILABLE
+        ) from exc
     except SourceNotFoundError as exc:
         # 404, naming the file that is genuinely not there.
-        raise NotFoundError(str(exc)) from exc
+        raise NotFoundError(
+            str(exc), code=source_viewer.CODE_SOURCE_FILE_NOT_FOUND
+        ) from exc
     except SourceAccessError:
         # Traversal, absolute path, empty path: a bad request, not a missing file.
         raise
@@ -887,7 +946,9 @@ async def raw_file(
     _reject_unsafe_path(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
-        raise NotFoundError("No dataset is active.")
+        raise NotFoundError(
+            "No dataset is active.", code=source_viewer.CODE_ACTIVE_DATASET_UNAVAILABLE
+        )
     # No workspace directory is fine: the object store is the storage layer.
     root = await _dataset_root(session, dataset.id)
     _assert_some_storage()

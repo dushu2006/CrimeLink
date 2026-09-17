@@ -1336,11 +1336,22 @@ def derive_case_persons(dataset: dict[str, Any]) -> dict[str, list[str]]:
     Recomputed from ``build_dataset()`` output rather than threaded through it,
     so the relational rows, the generated documents and the graph all agree on
     who belongs to which case.
+
+    Every generated person is guaranteed to belong to at least one case. The
+    original deterministic assignment could leave a small tail of people with
+    no case membership; those people then disappeared from every case-scoped
+    view and from the person-centric analytics layer. Existing memberships are
+    preserved and only unassigned people receive a deterministic membership.
     """
     case_persons_dict: dict[str, list[str]] = {c["id"]: [] for c in dataset["cases"]}
     for ci, c in enumerate(dataset["cases"]):
         cid = c["id"]
-        primary_indices = [ci * 4 % PERSON_COUNT, (ci * 4 + 1) % PERSON_COUNT, (ci * 4 + 2) % PERSON_COUNT, (ci * 4 + 3) % PERSON_COUNT]
+        primary_indices = [
+            ci * 4 % PERSON_COUNT,
+            (ci * 4 + 1) % PERSON_COUNT,
+            (ci * 4 + 2) % PERSON_COUNT,
+            (ci * 4 + 3) % PERSON_COUNT,
+        ]
         extra_count = (ci * 3) % 6 + 2
         extra = []
         for j in range(extra_count):
@@ -1353,24 +1364,67 @@ def derive_case_persons(dataset: dict[str, Any]) -> dict[str, list[str]]:
             prev_p = case_persons_dict[dataset["cases"][prev_ci]["id"]]
             if prev_p:
                 overlap_p = prev_p[j % len(prev_p)]
-                if overlap_p not in [dataset["persons"][pi]["id"] for pi in primary_indices + extra if pi < len(dataset["persons"])]:
-                    # get index
-                    overlap_idx = next(i for i, p in enumerate(dataset["persons"]) if p["id"] == overlap_p)
+                existing_ids = [
+                    dataset["persons"][pi]["id"]
+                    for pi in primary_indices + extra
+                    if pi < len(dataset["persons"])
+                ]
+                if overlap_p not in existing_ids:
+                    overlap_idx = next(
+                        i for i, p in enumerate(dataset["persons"])
+                        if p["id"] == overlap_p
+                    )
                     if overlap_idx not in extra:
                         extra.append(overlap_idx)
-        all_idxs = list(set(primary_indices + extra))
+        all_idxs = list(dict.fromkeys(primary_indices + extra))
         for pidx in all_idxs:
             if pidx < len(dataset["persons"]):
-                case_persons_dict[cid].append(dataset["persons"][pidx]["id"])
+                pid = dataset["persons"][pidx]["id"]
+                if pid not in case_persons_dict[cid]:
+                    case_persons_dict[cid].append(pid)
 
-    # Hero case must include its cast
+    # Hero case must include its cast.
     hero_case_id = dataset["cases"][0]["id"]
     hero_indices = list(range(0, 12))
     case_persons_dict[hero_case_id] = [
-        dataset["persons"][i]["id"] for i in hero_indices if i < len(dataset["persons"])
+        dataset["persons"][i]["id"] for i in hero_indices
+        if i < len(dataset["persons"])
     ]
-    return case_persons_dict
 
+    # Repair the old deterministic tail without disturbing any existing
+    # membership. A person with no case is not a valid graph participant:
+    # they cannot receive case-specific provenance, relationships, analytics,
+    # or appear in the People Network. Assign each orphan to one stable case.
+    assigned: set[str] = {
+        pid
+        for pids in case_persons_dict.values()
+        for pid in pids
+    }
+    orphan_person_indices = [
+        i for i, person in enumerate(dataset["persons"])
+        if person["id"] not in assigned
+    ]
+    for offset, pidx in enumerate(orphan_person_indices):
+        cid = dataset["cases"][(pidx + offset) % CASE_COUNT]["id"]
+        pid = dataset["persons"][pidx]["id"]
+        if pid not in case_persons_dict[cid]:
+            case_persons_dict[cid].append(pid)
+
+    # Hard invariant for the v2 corpus: every generated person has at least
+    # one case membership. Fail loudly if a future edit breaks the repair.
+    assigned_after = {
+        pid
+        for pids in case_persons_dict.values()
+        for pid in pids
+    }
+    expected = {p["id"] for p in dataset["persons"]}
+    missing = expected - assigned_after
+    if missing:
+        raise ValueError(
+            f"derive_case_persons left {len(missing)} people without a case"
+        )
+
+    return case_persons_dict
 
 def seed_all() -> bool:
     print(f"[seed] Building {DEMO_DATASET_ID}...")

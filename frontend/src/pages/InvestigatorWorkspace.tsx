@@ -79,6 +79,7 @@ export default function InvestigatorWorkspace() {
 
   const [enhancedTimelineEvents, setEnhancedTimelineEvents] = useState<EnhancedTimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const [evidenceDrawerData, setEvidenceDrawerData] = useState<EvidenceDrawerData | null>(null);
   const [showEvidenceDrawer, setShowEvidenceDrawer] = useState(false);
   const [investigationJob, setInvestigationJob] = useState<InvestigationJob | null>(null);
@@ -155,11 +156,15 @@ export default function InvestigatorWorkspace() {
   const loadEnhancedTimeline = useCallback(async () => {
     if (!caseParam) return;
     setTimelineLoading(true);
+    setTimelineError(null);
     try {
       const res = await enhancedTimeline(caseParam);
       setEnhancedTimelineEvents(res.events);
-    } catch {
-      setEnhancedTimelineEvents([]);
+    } catch (err) {
+      // A failed timeline request is not an empty timeline.  Clearing the
+      // events here made a backend error look like "this case has no dated
+      // activity", which is a false investigative conclusion.
+      setTimelineError(err instanceof Error ? err.message : String(err));
     } finally {
       setTimelineLoading(false);
     }
@@ -628,6 +633,14 @@ export default function InvestigatorWorkspace() {
               <div className="timeline-tab">
                 {timelineLoading ? (
                   <div className="cl-empty"><div className="cl-empty-title">Loading timeline…</div><div className="cl-empty-desc">Evidence-grounded with real timestamps only. "Timestamp unavailable" if missing.</div></div>
+                ) : timelineError ? (
+                  <div className="cl-error">
+                    <div className="cl-empty-title">The timeline could not be loaded</div>
+                    <div className="cl-empty-desc">{timelineError}</div>
+                    <button className="cl-btn" onClick={() => void loadEnhancedTimeline()}>
+                      Retry
+                    </button>
+                  </div>
                 ) : (
                   <EnhancedTimelineComp caseId={caseParam || ""} events={enhancedTimelineEvents} onOpenEvidence={handleOpenEvidence} />
                 )}

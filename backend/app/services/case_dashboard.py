@@ -5,6 +5,7 @@ No fabrication: all numbers come from DB and GraphStore.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, func
@@ -16,6 +17,7 @@ from app.db.models import (
     CaseDocument,
     DetectedPattern,
     EntityResolutionItem,
+    EvidenceCustodyEvent,
     InvestigationFinding,
 )
 from app.security.deps import JurisdictionScope
@@ -96,6 +98,10 @@ async def get_case_dashboard(
     unresolved_items = (await session.execute(res_list_stmt)).scalars().all()
 
     # Findings
+    findings_count_stmt = select(func.count(InvestigationFinding.id)).where(
+        InvestigationFinding.case_id == case_id
+    )
+    finding_count = (await session.execute(findings_count_stmt)).scalar() or 0
     findings_stmt = (
         select(InvestigationFinding)
         .where(InvestigationFinding.case_id == case_id)
@@ -170,9 +176,16 @@ async def get_case_dashboard(
             "description": f"Document uploaded: {d.filename}",
         })
 
-    pat_timestamp_attr = "detected_at" if hasattr(patterns[0], "detected_at") and patterns else "created_at"
-    for p in sorted(patterns, key=lambda x: getattr(x, "detected_at", None) or x.id, reverse=True)[:5]:
-        ts = getattr(p, "detected_at", None)
+    # ``detected_at`` is a non-nullable column on DetectedPattern, so there is
+    # nothing to probe for — and probing ``patterns[0]`` on an *empty* list is
+    # what made every case without detected patterns answer 500.  The sort key
+    # is a plain ``(datetime, id)`` tuple so a NULL timestamp can never be
+    # compared against a string id.
+    def _pattern_sort_key(pattern: DetectedPattern) -> tuple[datetime, str]:
+        return (pattern.detected_at or datetime.min, pattern.id or "")
+
+    for p in sorted(patterns, key=_pattern_sort_key, reverse=True)[:5]:
+        ts = p.detected_at
         recent_activity.append({
             "type": "pattern",
             "id": p.id,
@@ -197,6 +210,32 @@ async def get_case_dashboard(
 
     recent_activity.sort(key=_ts_key, reverse=True)
 
+    # Last activity — the newest real timestamp this case owns.  There is no
+    # ``cases.updated_at`` column to read, and a header that always says
+    # "No recorded activity" is as false as one that says "12 min ago", so the
+    # value is derived from the records the case actually has: custody events,
+    # documents, findings and detected patterns.  ``None`` when it genuinely
+    # has none yet, which the UI must render as "no recorded activity".
+    activity_timestamps: list[datetime] = []
+    for max_ts_stmt in (
+        select(func.max(EvidenceCustodyEvent.created_at)).where(
+            EvidenceCustodyEvent.case_id == case_id
+        ),
+        select(func.max(CaseDocument.created_at)).where(
+            CaseDocument.case_id == case_id, CaseDocument.is_deleted.is_(False)
+        ),
+        select(func.max(InvestigationFinding.created_at)).where(
+            InvestigationFinding.case_id == case_id
+        ),
+        select(func.max(DetectedPattern.detected_at)).where(
+            DetectedPattern.case_id == case_id
+        ),
+    ):
+        value = (await session.execute(max_ts_stmt)).scalar()
+        if value is not None:
+            activity_timestamps.append(value)
+    last_activity_at = max(activity_timestamps) if activity_timestamps else None
+
     # Build header
     header = {
         "id": case.id,
@@ -207,6 +246,8 @@ async def get_case_dashboard(
         "dataset_id": case.dataset_id,
         "created_at": case.created_at.isoformat() if case.created_at else None,
         "closed_at": case.closed_at.isoformat() if getattr(case, "closed_at", None) and case.closed_at else None,
+        #: Newest real record timestamp for this case, or None.
+        "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
         "description": case.title,
     }
 
@@ -218,6 +259,7 @@ async def get_case_dashboard(
         "evidence": evidence_count,
         "documents": doc_count,
         "patterns": pattern_count,
+        "findings": finding_count,
         "unresolved": unresolved_count,
     }
 

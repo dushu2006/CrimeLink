@@ -2418,8 +2418,13 @@ export interface CaseDashboard {
     jurisdiction_id: string;
     dataset_id: string | null;
     created_at: string | null;
-    updated_at: string | null;
     closed_at: string | null;
+    /**
+     * Newest real timestamp this case owns (custody event, document, finding or
+     * detected pattern), or null when it has none.  `cases` has no
+     * `updated_at` column, so this is the only honest "last activity".
+     */
+    last_activity_at: string | null;
     description: string;
   };
   stats: {
@@ -2430,6 +2435,7 @@ export interface CaseDashboard {
     evidence: number;
     documents: number;
     patterns: number;
+    findings: number;
     unresolved: number;
   };
   intelligence: {

@@ -19,8 +19,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
-import fcose from "cytoscape-fcose";
+import { type ElementDefinition } from "cytoscape";
 import {
   relationshipEvidence,
   relationshipNetwork,
@@ -31,8 +30,8 @@ import {
 } from "../../api/client";
 import { Badge, Empty, ErrorState, Spinner } from "../Status";
 import { EvidencePointerLink } from "../EvidenceLink";
-
-cytoscape.use(fcose);
+import GraphViewControls from "../common/GraphViewControls";
+import { useGraphCanvas } from "../../lib/useGraphCanvas";
 
 const PERSON_FILL = "#1D4ED8";
 const CRIMINAL_FILL = "#DC2626";
@@ -75,6 +74,7 @@ export default function PersonRelationshipNetwork({
   const [selectedEdge, setSelectedEdge] = useState<RelationshipEdge | null>(null);
   const [edgeEvidence, setEdgeEvidence] = useState<RelationshipSupportingItem[] | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
 
   const [layoutName, setLayoutName] = useState<"fcose" | "circle" | "concentric" | "breadthfirst">(
     "fcose",
@@ -83,8 +83,7 @@ export default function PersonRelationshipNetwork({
   const [minEvidence, setMinEvidence] = useState(1);
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<Core | null>(null);
+  const graphLabels = useRef(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,6 +91,7 @@ export default function PersonRelationshipNetwork({
     setSelectedNode(null);
     setSelectedEdge(null);
     setEdgeEvidence(null);
+    setEvidenceError(null);
     try {
       const result = await relationshipNetwork({
         caseId: caseId ?? undefined,
@@ -123,13 +123,20 @@ export default function PersonRelationshipNetwork({
   const loadEdgeEvidence = useCallback(async (edge: RelationshipEdge) => {
     setEvidenceLoading(true);
     setEdgeEvidence(null);
+    setEvidenceError(null);
     try {
       const detail = await relationshipEvidence(edge.source, edge.target);
       setEdgeEvidence(detail.supporting_items);
-    } catch {
-      // The aggregated edge already carries its supporting items; a failed
-      // refresh must never blank them out.
+    } catch (err) {
+      // The aggregated edge already carries its supporting items, so the panel
+      // keeps showing them — but the failure is reported, never swallowed.
+      // Silently substituting the cached list is how a stale edge starts
+      // looking like a freshly verified one.
       setEdgeEvidence(edge.supporting_items);
+      setEvidenceError(
+        `Could not refresh the supporting records (${err instanceof Error ? err.message : String(err)}). ` +
+          "Showing the records already carried by this relationship.",
+      );
     } finally {
       setEvidenceLoading(false);
     }
@@ -169,18 +176,9 @@ export default function PersonRelationshipNetwork({
     return out;
   }, [data]);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    if (elements.length === 0) {
-      cyRef.current?.destroy();
-      cyRef.current = null;
-      return;
-    }
-
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements,
-      style: [
+  const style = useMemo(
+    () =>
+      [
         {
           selector: "node",
           style: {
@@ -197,8 +195,13 @@ export default function PersonRelationshipNetwork({
               Math.min(64, 30 + 3 * Number(ele.data("relationship_count") || 0)),
             height: (ele: any) =>
               Math.min(64, 30 + 3 * Number(ele.data("relationship_count") || 0)),
-            label: (ele: any) =>
-              ele.data("is_criminal") ? `★\n${ele.data("name")}` : String(ele.data("name")),
+            // The star is part of the label, so it survives any layout and any
+            // zoom level, and it is driven by criminal_status alone.
+            label: (ele: any) => {
+              const name = String(ele.data("name") ?? "");
+              const text = ele.data("is_criminal") ? `★\n${name}` : name;
+              return ele.selected() || graphLabels.current ? text : "";
+            },
             "text-wrap": "wrap",
             "text-max-width": "140px",
             "font-family": "Inter, system-ui, sans-serif",
@@ -233,7 +236,10 @@ export default function PersonRelationshipNetwork({
             "target-arrow-shape": "none",
             "curve-style": "bezier",
             opacity: 0.85,
-            label: "data(label)",
+            // Edge labels are only drawn when they can be read, or for the
+            // edge under inspection — otherwise 75 of them overlap into noise.
+            label: (ele: any) =>
+              ele.selected() || graphLabels.current ? String(ele.data("label") ?? "") : "",
             "font-size": "9px",
             "font-weight": 600,
             color: "#334155",
@@ -257,48 +263,32 @@ export default function PersonRelationshipNetwork({
             "z-index": 99,
           },
         },
-      ],
-      layout: {
-        name: layoutName,
-        animate: true,
-        animationDuration: 400,
-        padding: 48,
-        ...(layoutName === "fcose"
-          ? { nodeSeparation: 90, idealEdgeLength: 120, nodeRepulsion: 9000 }
-          : {}),
-      } as any,
-      minZoom: 0.15,
-      maxZoom: 3.5,
-      wheelSensitivity: 0.2,
-    });
+      ] as any,
+    [],
+  );
 
-    cy.on("tap", "node", (evt) => {
-      setSelectedNode(evt.target.data("raw_node") as RelationshipPersonNode);
+  const { containerRef, handle: graphHandle } = useGraphCanvas({
+    elements,
+    style,
+    labelsRef: graphLabels,
+    layoutName,
+    onTapNode: (node: any) => {
+      setSelectedNode(node.data("raw_node") as RelationshipPersonNode);
       setSelectedEdge(null);
       setEdgeEvidence(null);
-    });
-
-    cy.on("tap", "edge", (evt) => {
-      const edge = evt.target.data("raw_edge") as RelationshipEdge;
-      setSelectedEdge(edge);
+    },
+    onTapEdge: (edge: any) => {
+      const raw = edge.data("raw_edge") as RelationshipEdge;
+      setSelectedEdge(raw);
       setSelectedNode(null);
-      void loadEdgeEvidence(edge);
-    });
-
-    cy.on("tap", (evt) => {
-      if (evt.target === cy) {
-        setSelectedNode(null);
-        setSelectedEdge(null);
-        setEdgeEvidence(null);
-      }
-    });
-
-    cyRef.current = cy;
-    return () => {
-      cy.destroy();
-      cyRef.current = null;
-    };
-  }, [elements, layoutName, loadEdgeEvidence]);
+      void loadEdgeEvidence(raw);
+    },
+    onTapBackground: () => {
+      setSelectedNode(null);
+      setSelectedEdge(null);
+      setEdgeEvidence(null);
+    },
+  });
 
   const counts = data?.counts;
   const hasRelationships = (data?.edges.length ?? 0) > 0;
@@ -373,13 +363,7 @@ export default function PersonRelationshipNetwork({
               <option value="breadthfirst">Hierarchy</option>
             </select>
           </label>
-          <button
-            type="button"
-            className="btn btn-tertiary btn-small"
-            onClick={() => cyRef.current?.fit(undefined, 40)}
-          >
-            Fit view
-          </button>
+          <GraphViewControls handle={graphHandle} />
           <button type="button" className="btn btn-tertiary btn-small" onClick={() => void load()}>
             Refresh
           </button>
@@ -615,6 +599,18 @@ export default function PersonRelationshipNetwork({
                 (aggregated behind this single relationship)
               </span>
             </h5>
+            {evidenceError && (
+              <p
+                role="alert"
+                style={{
+                  margin: "var(--space-1) 0",
+                  fontSize: "var(--text-xs)",
+                  color: "var(--danger, #B91C1C)",
+                }}
+              >
+                {evidenceError}
+              </p>
+            )}
             {evidenceLoading ? (
               <Spinner label="Loading supporting evidence..." />
             ) : shownItems.length === 0 ? (
