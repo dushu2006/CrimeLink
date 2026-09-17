@@ -161,3 +161,120 @@ def test_contradiction_reduces_confidence():
             else:
                 # If no explicit note, confidence should be less than 1.0
                 assert r.confidence < 1.0 or r.classification != "FACT"
+
+
+# ---------------------------------------------------------------------------
+# The sufficiency gate must not report a consistency check it never ran.
+#
+# ``temporal_consistent`` used to be hardcoded True with a "for now, assume
+# consistent" note, which printed a green tick for an unperformed check.  It is
+# now tri-state: True = checked and consistent, False = contradiction found,
+# None = the records carry no timestamped location data, so it was not
+# assessable.
+# ---------------------------------------------------------------------------
+
+
+def test_gate_reports_not_assessable_when_there_is_no_location_data():
+    """No timestamped locations -> None, never a fabricated True."""
+    result = evidence_sufficiency_gate(
+        edges=[_edge("person:A", "person:B", "ASSOCIATE_OF", doc="doc-1")],
+        supporting_entities=[],
+        hop_count=1,
+        doc_ids={"doc-1"},
+        timeline=[
+            # Timestamps, but no location attached: nothing to compare.
+            {"timestamp": "2024-08-08T10:00:00Z", "participants": [{"name": "Alice"}]},
+            {"timestamp": "2024-08-08T11:00:00Z", "participants": [{"name": "Alice"}]},
+        ],
+        provenance=[{"kind": "document", "ref": "doc-1"}],
+    )
+    assert result.temporal_consistent is None, (
+        "a consistency check with no location data must report 'not assessable'"
+    )
+    assert result.has_contradiction is False
+    assert result.contradiction_details == []
+
+
+def test_gate_detects_a_real_location_contradiction():
+    """Same person, same timestamp, two places -> False, with the reason."""
+    timeline = [
+        {
+            "timestamp": "2024-08-08T10:00:00Z",
+            "location": "Kota Junction",
+            "participants": [{"name": "Alice"}],
+        },
+        {
+            "timestamp": "2024-08-08T10:00:00Z",
+            "location": "Jaipur Central",
+            "participants": [{"name": "Alice"}],
+        },
+    ]
+    result = evidence_sufficiency_gate(
+        edges=[_edge("person:A", "person:B", "ASSOCIATE_OF", doc="doc-1")],
+        supporting_entities=[],
+        hop_count=1,
+        doc_ids={"doc-1"},
+        timeline=timeline,
+        provenance=[{"kind": "document", "ref": "doc-1"}],
+    )
+    assert result.has_contradiction is True
+    assert result.temporal_consistent is False
+    assert result.contradiction_details, "the contradiction must name what conflicts"
+    assert any("Alice" in detail for detail in result.contradiction_details)
+
+
+def test_gate_reports_consistent_when_it_actually_checked():
+    """Two timestamped locations that agree -> True, because it was checked."""
+    timeline = [
+        {
+            "timestamp": "2024-08-08T10:00:00Z",
+            "location": "Kota Junction",
+            "participants": [{"name": "Alice"}],
+        },
+        {
+            "timestamp": "2024-08-08T12:00:00Z",
+            "location": "Kota Junction",
+            "participants": [{"name": "Alice"}],
+        },
+    ]
+    result = evidence_sufficiency_gate(
+        edges=[_edge("person:A", "person:B", "ASSOCIATE_OF", doc="doc-1")],
+        supporting_entities=[],
+        hop_count=1,
+        doc_ids={"doc-1"},
+        timeline=timeline,
+        provenance=[{"kind": "document", "ref": "doc-1"}],
+    )
+    assert result.temporal_consistent is True
+    assert result.has_contradiction is False
+
+
+def test_contradiction_downgrades_fact_to_inference():
+    """A real contradiction must cost the relationship its FACT status."""
+    timeline = [
+        {
+            "timestamp": "2024-08-08T10:00:00Z",
+            "location": "Kota Junction",
+            "participants": [{"name": "Alice"}],
+        },
+        {
+            "timestamp": "2024-08-08T10:00:00Z",
+            "location": "Jaipur Central",
+            "participants": [{"name": "Alice"}],
+        },
+    ]
+    contradicted = evidence_sufficiency_gate(
+        edges=[
+            _edge("person:A", "person:B", "ASSOCIATE_OF", doc="doc-1"),
+            _edge("person:A", "person:B", "CALLED", doc="doc-2"),
+        ],
+        supporting_entities=[{"key": "phone:X", "type": "Phone"}],
+        hop_count=1,
+        doc_ids={"doc-1", "doc-2"},
+        timeline=timeline,
+        provenance=[{"kind": "document", "ref": "doc-1"}, {"kind": "document", "ref": "doc-2"}],
+    )
+    assert contradicted.classification != "FACT", (
+        "a relationship with contradictory location evidence cannot be a FACT"
+    )
+    assert any("Downgraded" in reason for reason in contradicted.reasons)

@@ -235,7 +235,11 @@ class EvidenceSufficiencyResult:
     reasons: List[str] = field(default_factory=list)
     failed_checks: List[str] = field(default_factory=list)
     independent_records: int = 0
-    temporal_consistent: bool = True
+    #: Tri-state on purpose.  ``True`` = checked and consistent, ``False`` =
+    #: checked and a contradiction was found, ``None`` = the records carry no
+    #: timestamped location data, so consistency was *not assessable*.  A
+    #: hardcoded ``True`` would report a green tick for a check that never ran.
+    temporal_consistent: bool | None = None
     has_contradiction: bool = False
     contradiction_details: List[str] = field(default_factory=list)
 
@@ -688,25 +692,37 @@ def evidence_sufficiency_gate(
     else:
         reasons.append(f"Evidence types: {', '.join(set(valid_rel_types))}")
     
-    # Check 5: temporal consistency
-    temporal_consistent = True
+    # Check 5: temporal consistency.
+    #
+    # This used to set ``temporal_consistent = True`` unconditionally with a
+    # "for now, assume consistent" note, which reported a passed check that had
+    # never run.  The real detector already exists in this module, so run it —
+    # and when the records carry no timestamped location data at all, report
+    # *not assessable* rather than a green tick.
     contradiction_details: List[str] = []
-    has_contradiction = False
-    
-    # Simple temporal consistency: check if timestamps are contradictory
-    # e.g., same person in two places at same time
-    timestamps = []
+    has_contradiction, contradiction_details = detect_contradictions(timeline, edges, [])
+
+    located_timestamps = 0
     for ev in timeline:
         ts = ev.get("timestamp") or ev.get("at")
-        if ts and ts != "Timestamp unavailable":
-            timestamps.append(ts)
-    
-    # Check for contradictory evidence — e.g., same time different locations
-    # This is a simplified version; real implementation would need location data
-    if len(timestamps) >= 2:
-        # If we have timeline with same timestamp but different locations, flag
-        # For now, assume consistent unless explicit contradiction in data
+        if not ts or ts == "Timestamp unavailable":
+            continue
+        location = (
+            ev.get("location")
+            or ev.get("place")
+            or (ev.get("properties") or {}).get("location")
+        )
+        if location:
+            located_timestamps += 1
+
+    if has_contradiction:
+        temporal_consistent = False
+    elif located_timestamps >= 2:
+        # Enough timestamped location evidence to have actually tested it.
         temporal_consistent = True
+    else:
+        # Not assessable: say so instead of implying the records agreed.
+        temporal_consistent = None
     
     # Check 6: confidence from evidence (deterministic)
     max_conf = 0.0
