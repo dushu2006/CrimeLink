@@ -1309,21 +1309,22 @@ def gen_source_bytes(src: dict[str, Any], dataset: dict[str, Any]) -> bytes:
 # Database seeding
 # ---------------------------------------------------------------------------
 
-def seed_all() -> bool:
-    print(f"[seed] Building {DEMO_DATASET_ID}...")
-    settings = get_settings()
-    settings.ensure_directories()
+def doc_id_for(eid: str) -> str:
+    """CaseDocument id for an evidence/source id (``E-0042`` → ``doc-d2-0042``).
 
-    # Build canonical data
-    dataset = build_dataset()
-    # Add helper dicts
-    dataset["case_persons_dict"] = {}
-    for c in dataset["cases"]:
-        # Rebuild here (already built above)
-        pass
-    # Build case_persons_dict from what build_dataset produced
-    # Recompute deterministically (simpler than threading through)
-    # Actually case_persons was local; re-derive
+    Module level so the graph builder, the relational seeder and the
+    verification tests all resolve evidence ids the same way.
+    """
+    return f"{DOC_PREFIX}{eid.lower().replace('e-', '').replace('s-', '')}"
+
+
+def derive_case_persons(dataset: dict[str, Any]) -> dict[str, list[str]]:
+    """Deterministic case → person membership for the v2 demo dataset.
+
+    Recomputed from ``build_dataset()`` output rather than threaded through it,
+    so the relational rows, the generated documents and the graph all agree on
+    who belongs to which case.
+    """
     case_persons_dict: dict[str, list[str]] = {c["id"]: [] for c in dataset["cases"]}
     for ci, c in enumerate(dataset["cases"]):
         cid = c["id"]
@@ -1353,9 +1354,20 @@ def seed_all() -> bool:
     # Hero case must include its cast
     hero_case_id = dataset["cases"][0]["id"]
     hero_indices = list(range(0, 12))
-    hero_pids = [dataset["persons"][i]["id"] for i in hero_indices if i < len(dataset["persons"])]
-    case_persons_dict[hero_case_id] = hero_pids
-    dataset["case_persons_dict"] = case_persons_dict
+    case_persons_dict[hero_case_id] = [
+        dataset["persons"][i]["id"] for i in hero_indices if i < len(dataset["persons"])
+    ]
+    return case_persons_dict
+
+
+def seed_all() -> bool:
+    print(f"[seed] Building {DEMO_DATASET_ID}...")
+    settings = get_settings()
+    settings.ensure_directories()
+
+    # Build canonical data
+    dataset = build_dataset()
+    dataset["case_persons_dict"] = derive_case_persons(dataset)
 
     # Open DB session
     engine = get_sync_engine(settings)
@@ -1437,10 +1449,6 @@ def seed_all() -> bool:
         container = Container(settings)
         object_store = container.object_store
         bucket = settings.minio_bucket_documents
-
-        # Helper for doc id
-        def doc_id_for(eid: str) -> str:
-            return f"{DOC_PREFIX}{eid.lower().replace('e-', '').replace('s-', '')}"
 
         # Seed all files into object store first, then DB records
         evidence_file_map: dict[str, str] = {}
@@ -1772,6 +1780,61 @@ def seed_all() -> bool:
         engine.dispose()
 
 
+#: Authoritative criminal-status vocabulary.
+#:
+#: CrimeLink's authoritative field is ``criminal_status`` — it is the column the
+#: ingest pipeline maps (``app/datasets/schema_map.py`` → ``PERSON.criminal_status``),
+#: the property ``GraphService._node_row`` reads to set ``is_criminal``, and the
+#: property the console's ``isConfirmedCriminal`` checks before drawing the ★.
+#: Only values in ``CONFIRMED_CRIMINAL_STATUSES`` earn the star.
+CONFIRMED_CRIMINAL_STATUSES = {"CONFIRMED", "CONVICTED", "ACCUSED", "CHARGESHEETED", "CRIMINAL"}
+
+#: Person roles this dataset asserts as *actual criminal participation*.
+#:
+#: Deliberately absent: SUSPECT, PERSON_OF_INTEREST, WITNESS, VICTIM,
+#: ASSOCIATE and INFORMANT.  Suspicion, involvement, or appearing in a case,
+#: in evidence or in a witness list is **not** a confirmed criminal status and
+#: must never earn a ★.
+CRIMINAL_STATUS_BY_ROLE: dict[str, str] = {
+    "ACCOMPLICE": "CONFIRMED",
+}
+
+
+def confirmed_finding_person_keys(dataset: dict[str, Any]) -> set[str]:
+    """Person keys the dataset itself marks as CONFIRMED.
+
+    An ``InvestigationFinding`` whose ``status`` is ``CONFIRMED`` is this
+    dataset's explicit, reviewed assertion about the people it names — the
+    CR-2001 conspiracy finding, for example, confirms Rajesh Kumar and his two
+    named accomplices as the criminal network's coordinators.  Non-person
+    entity keys on the same finding (phones, vehicles, addresses) are ignored
+    by the caller, which only consults this set for PERSON nodes.
+    """
+    keys: set[str] = set()
+    for finding in dataset.get("findings", []):
+        if str(finding.get("status", "")).upper() != "CONFIRMED":
+            continue
+        for key in finding.get("entity_keys", []):
+            keys.add(str(key))
+    return keys
+
+
+def criminal_status_for_person(person: dict[str, Any], confirmed_keys: set[str]) -> str | None:
+    """The dataset's own criminal status for a person, or ``None``.
+
+    Two explicit sources only: the person's asserted criminal role, and being
+    named by a CONFIRMED investigation finding.  Everything else stays ``None``
+    so the graph renders an honest ★-free circle.
+    """
+    role = str(person.get("role", "")).upper()
+    status = "CONFIRMED" if person.get("id") in confirmed_keys else CRIMINAL_STATUS_BY_ROLE.get(role)
+    # Guard the vocabulary: a typo here would silently drop the star rather
+    # than fail, and a star is a legal statement.
+    if status is not None and status not in CONFIRMED_CRIMINAL_STATUSES:
+        raise ValueError(f"{person.get('id')}: {status!r} is not a confirmed criminal status")
+    return status
+
+
 def build_graph(dataset: dict[str, Any], container, doc_id_for):
     """Build the graph from canonical data — nodes and edges."""
     from app.domain.models import GraphNode, GraphEdge
@@ -1804,11 +1867,16 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
         ))
 
     # Person nodes
+    confirmed_keys = confirmed_finding_person_keys(dataset)
+    criminal_count = 0
     for p in dataset["persons"]:
         # Determine case_ids for this person
         case_ids = [cid for cid, plist in dataset["case_persons_dict"].items() if p["id"] in plist]
         # Find a source doc id from an evidence record that references this person
         source_doc = doc_id_for("E-0000")  # default
+        criminal_status = criminal_status_for_person(p, confirmed_keys)
+        if criminal_status:
+            criminal_count += 1
         nodes.append(GraphNode(
             provenance_key=p["id"],
             label="Person",
@@ -1820,6 +1888,11 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "gender": p["gender"],
                 "occupation": p["occupation"],
                 "role": p["role"],
+                # Authoritative criminal status.  Set only where this dataset
+                # explicitly establishes it; ``None`` otherwise, so the ★ in
+                # the console is never inferred from network position.  The
+                # graph layer derives ``is_criminal`` from this one field.
+                "criminal_status": criminal_status,
                 "case_id": case_ids[0] if case_ids else None,
                 "case_ids": case_ids,
                 "source_doc_id": source_doc,
@@ -2061,6 +2134,9 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
     graph_store.upsert_edges(edges)
     stats = graph_store.stats()
     print(f"    Graph stats: {stats}")
+    print(
+        f"    Confirmed criminal persons (authoritative criminal_status): {criminal_count}"
+    )
 
 
 if __name__ == "__main__":

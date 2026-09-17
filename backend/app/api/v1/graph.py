@@ -215,6 +215,120 @@ async def master_person_network(
     return payload
 
 
+@router.get("/master/relationships")
+async def master_relationship_network(
+    limit: int = Query(400, ge=1, le=5000, description="Max aggregated person-to-person edges"),
+    include_isolated: bool = Query(
+        False, description="Also return people with no verified relationship"
+    ),
+    max_fanout: int = Query(
+        12, ge=2, le=500, description="Skip pairwise derivation above this many people per entity"
+    ),
+    relationship_types: str | None = Query(
+        None,
+        description=(
+            "Comma-separated relationship types to keep "
+            "(COMMUNICATION, FINANCIAL_LINK, SHARED_PHONE, …)"
+        ),
+    ),
+    min_evidence: int = Query(
+        1, ge=1, description="Only return relationships backed by at least this many records"
+    ),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """The investigator-facing cross-case PERSON → PERSON relationship graph.
+
+    Nodes are PERSON only.  Phones, accounts, vehicles, locations and
+    organisations are walked internally to establish and evidence an edge
+    between two people — they are never returned as nodes.  Supporting
+    records between the same pair are aggregated into one edge that reports
+    how many items back it.
+    """
+    type_list = [t.strip().upper() for t in (relationship_types or "").split(",") if t.strip()]
+    payload = await GraphService().relationship_network(
+        session,
+        scope,
+        limit=limit,
+        include_isolated=include_isolated,
+        max_fanout=max_fanout,
+        relationship_types=type_list or None,
+        min_evidence=min_evidence,
+    )
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource="master_relationships",
+        details={
+            "kind": "master_relationship_network",
+            "persons": len(payload.get("nodes", [])),
+            "relationships": len(payload.get("edges", [])),
+        },
+    )
+    await recorder.flush()
+    return payload
+
+
+@router.get("/master/relationship-evidence")
+async def master_relationship_evidence(
+    source: str = Query(..., description="Source person provenance key"),
+    target: str = Query(..., description="Target person provenance key"),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """Every record supporting one PERSON ↔ PERSON relationship edge."""
+    payload = await GraphService().relationship_evidence(session, scope, source, target)
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource=f"{source}|{target}",
+        details={
+            "kind": "relationship_evidence",
+            "items": payload.get("supporting_item_count", 0),
+        },
+    )
+    await recorder.flush()
+    return payload
+
+
+@router.get("/cases/{case_id}/relationships")
+async def case_relationship_network(
+    case_id: str,
+    limit: int = Query(400, ge=1, le=5000),
+    include_isolated: bool = Query(False),
+    relationship_types: str | None = Query(None),
+    min_evidence: int = Query(1, ge=1),
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """PERSON → PERSON relationship graph for one case."""
+    type_list = [t.strip().upper() for t in (relationship_types or "").split(",") if t.strip()]
+    payload = await GraphService().relationship_network(
+        session,
+        scope,
+        case_id=case_id,
+        limit=limit,
+        include_isolated=include_isolated,
+        relationship_types=type_list or None,
+        min_evidence=min_evidence,
+    )
+    recorder.record(
+        "GRAPH_EXPAND",
+        target_resource=case_id,
+        details={
+            "kind": "case_relationship_network",
+            "persons": len(payload.get("nodes", [])),
+            "relationships": len(payload.get("edges", [])),
+        },
+    )
+    await recorder.flush()
+    return payload
+
+
 @router.get("/cases/{case_id}")
 async def case_graph(
     case_id: str,

@@ -2052,6 +2052,167 @@ export function masterCaseNetwork(
   return api(`/graph/master/case-network${qs ? `?${qs}` : ""}`);
 }
 
+// ---------------------------------------------------------------------------
+// PERSON → PERSON relationship network (the primary investigator graph).
+//
+// Nodes are PERSON and nothing else.  Phones, bank accounts, vehicles,
+// locations, organisations and documents are walked server-side to *establish*
+// and *evidence* an edge between two people; they never come back as nodes.
+// The full entity graph stays available through masterGraph() for the ENTITY
+// NETWORK view, which is a different graph, not a re-titled copy of this one.
+// ---------------------------------------------------------------------------
+
+/** Relationship types the person network can emit, in display order. */
+export const PERSON_RELATIONSHIP_TYPES = [
+  "COMMUNICATION",
+  "FINANCIAL_LINK",
+  "NAMED_ACCOMPLICE",
+  "ARRESTED_WITH",
+  "FAMILY_RELATIVE",
+  "SHARED_VEHICLE",
+  "SHARED_ACCOUNT",
+  "SHARED_PHONE",
+  "SHARED_ADDRESS",
+  "SHARED_ORGANIZATION",
+  "SHARED_IDENTIFIER",
+  "SOCIAL_LINK",
+  "KNOWN_ASSOCIATION",
+  "EVIDENCE_SUPPORTED",
+] as const;
+
+export type PersonRelationshipType = (typeof PERSON_RELATIONSHIP_TYPES)[number];
+
+/** One record behind a person-to-person edge (the evidence, not a node). */
+export interface RelationshipSupportingItem {
+  kind:
+    | "PHONE"
+    | "BANK_ACCOUNT"
+    | "VEHICLE"
+    | "LOCATION"
+    | "ORGANIZATION"
+    | "COMMUNICATION"
+    | "TRANSACTION"
+    | "DIRECT_RECORD";
+  relationship_type: PersonRelationshipType;
+  label: string;
+  ref: string;
+  detail?: string;
+  rel_types: string[];
+  source_doc_ids: string[];
+  case_ids: string[];
+  confidence: number;
+  evidence?: NodeEvidence | null;
+  via?: string[];
+  via_labels?: string[];
+  properties?: Record<string, unknown>;
+}
+
+/** A PERSON node in the relationship graph. */
+export interface RelationshipPersonNode extends GraphNodeRow {
+  /** Source-derived role (SUSPECT / WITNESS / …); never a criminality score. */
+  role?: string | null;
+  relationship_count: number;
+  evidence_count: number;
+}
+
+/** One aggregated person-to-person relationship. */
+export interface RelationshipEdge {
+  id: string;
+  source: string;
+  target: string;
+  relationship_type: PersonRelationshipType;
+  label: string;
+  relationship_types: PersonRelationshipType[];
+  relationship_type_counts: Record<string, number>;
+  supporting_items: RelationshipSupportingItem[];
+  supporting_item_count: number;
+  supporting_kinds: string[];
+  rel_types: string[];
+  evidence_count: number;
+  source_doc_ids: string[];
+  case_ids: string[];
+  cross_case: boolean;
+  strength: "STRONG" | "MODERATE" | "WEAK";
+  confidence: number;
+}
+
+export interface RelationshipNetworkResult {
+  mode: "master_relationships" | "case_relationships";
+  view: "PERSON_NETWORK";
+  node_types: string[];
+  dataset_id?: string | null;
+  case_id?: string | null;
+  case_ids: string[];
+  counts: {
+    persons: number;
+    relationships: number;
+    relationships_total: number;
+    by_relationship_type: Record<string, number>;
+    by_relationship_type_total: Record<string, number>;
+    persons_total: number;
+    persons_linked: number;
+    confirmed_criminals: number;
+    supporting_items: number;
+  };
+  truncated: boolean;
+  limit: number | null;
+  filters: { relationship_types: string[]; min_evidence: number };
+  suppressed_shared_entities: Record<string, number>;
+  nodes: RelationshipPersonNode[];
+  edges: RelationshipEdge[];
+  empty_reason?: string | null;
+}
+
+export interface RelationshipNetworkQuery {
+  caseId?: string;
+  limit?: number;
+  includeIsolated?: boolean;
+  relationshipTypes?: string[];
+  minEvidence?: number;
+}
+
+export function relationshipNetwork(
+  query: RelationshipNetworkQuery = {},
+): Promise<RelationshipNetworkResult> {
+  const params = new URLSearchParams();
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.includeIsolated) params.set("include_isolated", "true");
+  if (query.relationshipTypes?.length) {
+    params.set("relationship_types", query.relationshipTypes.join(","));
+  }
+  if (query.minEvidence && query.minEvidence > 1) {
+    params.set("min_evidence", String(query.minEvidence));
+  }
+  const qs = params.toString();
+  const base = query.caseId
+    ? `/graph/cases/${encodeURIComponent(query.caseId)}/relationships`
+    : "/graph/master/relationships";
+  return api(`${base}${qs ? `?${qs}` : ""}`);
+}
+
+/** The evidence behind one person-to-person edge. */
+export interface RelationshipEvidenceResult {
+  mode: "relationship_evidence";
+  case_id?: string | null;
+  case_ids: string[];
+  source: string;
+  target: string;
+  source_person: GraphNodeRow;
+  target_person: GraphNodeRow;
+  relationship: RelationshipEdge | null;
+  supporting_items: RelationshipSupportingItem[];
+  supporting_item_count: number;
+  empty_reason?: string | null;
+}
+
+export function relationshipEvidence(
+  source: string,
+  target: string,
+): Promise<RelationshipEvidenceResult> {
+  const params = new URLSearchParams({ source, target });
+  return api(`/graph/master/relationship-evidence?${params.toString()}`);
+}
+
 /** One selectable person target in the active dataset (cross-case). */
 export interface MasterPersonTarget extends PersonTarget {
   case_ids: string[];

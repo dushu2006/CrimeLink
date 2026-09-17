@@ -25,9 +25,10 @@ from app.container import Container, get_container
 from app.db.models import Case
 from app.domain.enums import canonical_label, is_document_artifact_node
 from app.domain.models import GraphNode
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ValidationFailedError
 from app.logging import get_logger
 from app.security.deps import JurisdictionScope
+from app.services.person_relationships import DEFAULT_SHARED_ENTITY_FANOUT
 
 log = get_logger("crimelink.services.graph")
 
@@ -641,6 +642,255 @@ class GraphService:
             },
             "nodes": [_node_row(n) for n in nodes],
             "edges": [_edge_row(e) for e in unique_edges.values()],
+        }
+
+    # ------------------------------- person-to-person relationship views
+    async def _relationship_snapshot(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        case_id: str | None,
+    ) -> tuple[Any, list[str]]:
+        """Snapshot + case scope shared by every person-to-person view.
+
+        One implementation for the case-scoped and the master (cross-case)
+        surfaces, so the two can never disagree about which people exist or
+        what counts as a relationship.
+        """
+        if case_id:
+            from app.services.cases import require_case
+
+            await require_case(session, scope, case_id)
+            return (
+                self.container.graph_store.snapshot(case_id, include_staging=False),
+                [case_id],
+            )
+        allowed = await self._strict_case_ids(session, scope)
+        case_ids = sorted(allowed)
+        if not case_ids:
+            return None, []
+        return (
+            self.container.graph_store.multi_case_snapshot(
+                case_ids, include_inactive=False
+            ),
+            case_ids,
+        )
+
+    @staticmethod
+    def _relationship_node_row(node: GraphNode, stats: dict[str, int]) -> dict[str, Any]:
+        """A PERSON row for the relationship graph.
+
+        ``is_criminal`` / ``criminal_status`` come from ``_node_row``, i.e. from
+        the dataset's own ``criminal_status`` field — never from degree,
+        centrality or the presence of evidence.
+        """
+        row = _node_row(node)
+        props = node.properties or {}
+        row["role"] = props.get("role") or props.get("legal_status") or None
+        row["relationship_count"] = int(stats.get("relationships", 0))
+        row["evidence_count"] = int(stats.get("evidence", 0))
+        return row
+
+    async def relationship_network(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        *,
+        case_id: str | None = None,
+        limit: int = 400,
+        include_isolated: bool = False,
+        max_fanout: int = DEFAULT_SHARED_ENTITY_FANOUT,
+        relationship_types: list[str] | None = None,
+        min_evidence: int = 1,
+    ) -> dict[str, Any]:
+        """The investigator-facing PERSON → PERSON graph.
+
+        **Nodes are PERSON and nothing else.**  Phones, bank accounts,
+        vehicles, locations, organisations, transactions and documents are
+        walked internally to *establish and support* an edge between two
+        people; they never appear as nodes here.  The full entity graph is
+        still available, unchanged, through :meth:`master_graph`.
+
+        Multiple supporting records between the same two people collapse into
+        a single edge that reports how many items support it, so a phone, a
+        transfer and a call record produce one relationship rather than three
+        entity chains.
+
+        A relationship exists only when the graph already holds a record for
+        it.  When no such record exists the response says so explicitly
+        (``empty_reason``) instead of manufacturing connections.
+        """
+        from app.services.person_relationships import derive_person_relationships
+
+        mode = "case_relationships" if case_id else "master_relationships"
+        snapshot, case_ids = await self._relationship_snapshot(session, scope, case_id)
+        if snapshot is None:
+            return {
+                "mode": mode,
+                "view": "PERSON_NETWORK",
+                "node_types": ["PERSON"],
+                "dataset_id": None,
+                "case_id": case_id,
+                "case_ids": [],
+                "counts": {
+                    "persons": 0,
+                    "relationships": 0,
+                    "relationships_total": 0,
+                    "by_relationship_type": {},
+                    "by_relationship_type_total": {},
+                    "persons_total": 0,
+                    "persons_linked": 0,
+                    "confirmed_criminals": 0,
+                    "supporting_items": 0,
+                },
+                "nodes": [],
+                "edges": [],
+                "truncated": False,
+                "limit": int(limit) if limit and limit > 0 else None,
+                "filters": {
+                    "relationship_types": sorted(
+                        {t.strip().upper() for t in (relationship_types or []) if t.strip()}
+                    ),
+                    "min_evidence": int(min_evidence or 1),
+                },
+                "suppressed_shared_entities": {},
+                "empty_reason": "No active dataset is available.",
+            }
+
+        derived = derive_person_relationships(snapshot, max_fanout=max_fanout)
+        edges = derived["edges"]
+        person_stats = derived["persons"]
+        total_relationships = len(edges)
+
+        # Progressive disclosure: the canvas shows the strongest slice first,
+        # and the filters below narrow *which* relationships that slice is
+        # drawn from.  Neither ever manufactures an edge.
+        wanted_types = {t.strip().upper() for t in (relationship_types or []) if t.strip()}
+        if wanted_types:
+            edges = [
+                e for e in edges
+                if wanted_types & set(e["relationship_types"])
+            ]
+        if min_evidence and min_evidence > 1:
+            edges = [e for e in edges if e["evidence_count"] >= int(min_evidence)]
+
+        truncated = False
+        if limit and limit > 0 and len(edges) > limit:
+            edges = edges[:limit]
+            truncated = True
+        if wanted_types or (min_evidence and min_evidence > 1) or truncated:
+            keep: set[str] = set()
+            for edge in edges:
+                keep.add(edge["source"])
+                keep.add(edge["target"])
+            person_stats = {k: v for k, v in person_stats.items() if k in keep}
+
+        linked_keys = set(person_stats)
+        node_keys = set(linked_keys)
+        if include_isolated:
+            node_keys |= set(derived["person_keys"])
+
+        nodes = [
+            self._relationship_node_row(
+                snapshot.nodes[key], person_stats.get(key, {"relationships": 0, "evidence": 0})
+            )
+            for key in node_keys
+            if key in snapshot.nodes
+        ]
+        nodes.sort(key=lambda n: (-n["relationship_count"], -n["evidence_count"], n["name"]))
+
+        by_type: dict[str, int] = {}
+        for edge in edges:
+            by_type[edge["relationship_type"]] = by_type.get(edge["relationship_type"], 0) + 1
+
+        empty_reason: str | None = None
+        if not edges:
+            empty_reason = (
+                "No verified person-to-person relationships found in the active dataset."
+            )
+        elif not nodes:
+            empty_reason = "No people are attached to a verified relationship."
+
+        from app.datasets import registry
+
+        return {
+            "mode": mode,
+            "view": "PERSON_NETWORK",
+            "node_types": ["PERSON"],
+            "dataset_id": await registry.active_dataset_id(session),
+            "case_id": case_id,
+            "case_ids": case_ids,
+            "counts": {
+                "persons": len(nodes),
+                "relationships": len(edges),
+                "relationships_total": total_relationships,
+                "by_relationship_type": by_type,
+                "by_relationship_type_total": derived["counts"]["by_relationship_type"],
+                "persons_total": derived["counts"]["persons_total"],
+                "persons_linked": len(linked_keys),
+                "confirmed_criminals": sum(1 for n in nodes if n.get("is_criminal")),
+                "supporting_items": sum(e["evidence_count"] for e in edges),
+            },
+            "truncated": truncated,
+            "limit": int(limit) if limit and limit > 0 else None,
+            "filters": {
+                "relationship_types": sorted(wanted_types),
+                "min_evidence": int(min_evidence or 1),
+            },
+            "suppressed_shared_entities": derived["suppressed_shared_entities"],
+            "nodes": nodes,
+            "edges": edges,
+            "empty_reason": empty_reason,
+        }
+
+    async def relationship_evidence(
+        self,
+        session: AsyncSession,
+        scope: JurisdictionScope,
+        source: str,
+        target: str,
+        *,
+        case_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Every record supporting one PERSON ↔ PERSON edge.
+
+        This is the progressive-disclosure half of the relationship graph: the
+        canvas shows one edge, and the evidence behind it stays one click away
+        rather than being rendered as nodes.
+        """
+        from app.services.person_relationships import derive_person_relationships
+
+        snapshot, case_ids = await self._relationship_snapshot(session, scope, case_id)
+        if snapshot is None:
+            raise NotFoundError("No active dataset is available.")
+        for key in (source, target):
+            node = snapshot.nodes.get(key)
+            if node is None:
+                raise NotFoundError(f"{key} is not part of the active dataset graph.")
+            if not canonical_person(node):
+                raise NotFoundError(f"{key} is not a person.")
+        if source == target:
+            raise ValidationFailedError("A person cannot have a relationship with themselves.")
+
+        derived = derive_person_relationships(
+            snapshot, pair_filter=[frozenset((source, target))]
+        )
+        edge = derived["edges"][0] if derived["edges"] else None
+        return {
+            "mode": "relationship_evidence",
+            "case_id": case_id,
+            "case_ids": case_ids,
+            "source": source,
+            "target": target,
+            "source_person": _node_row(snapshot.nodes[source]),
+            "target_person": _node_row(snapshot.nodes[target]),
+            "relationship": edge,
+            "supporting_items": list(edge["supporting_items"]) if edge else [],
+            "supporting_item_count": int(edge["supporting_item_count"]) if edge else 0,
+            "empty_reason": (
+                None if edge else
+                "No record in the active dataset supports a relationship between these two people."
+            ),
         }
 
     # ---------------------------------------------------------------- timeline

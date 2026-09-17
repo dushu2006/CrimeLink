@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   masterGraph,
+  relationshipNetwork,
   type GraphNodeRow,
   type GraphEdgeRow,
   type InvestigatorResponse,
@@ -59,8 +60,16 @@ export default function InvestigatorWorkspace() {
   const [masterEdges, setMasterEdges] = useState<GraphEdgeRow[]>([]);
   const [personNodes, setPersonNodes] = useState<GraphNodeRow[]>([]);
   const [personRelationships, setPersonRelationships] = useState<GraphEdgeRow[]>([]);
+  const [relationshipCounts, setRelationshipCounts] = useState<{
+    persons: number;
+    relationships: number;
+    relationships_total: number;
+    supporting_items: number;
+    confirmed_criminals: number;
+  } | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [entityLoading, setEntityLoading] = useState(false);
   const [showSupporting, setShowSupporting] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNodeRow | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdgeRow | null>(null);
@@ -74,28 +83,74 @@ export default function InvestigatorWorkspace() {
   const [showEvidenceDrawer, setShowEvidenceDrawer] = useState(false);
   const [investigationJob, setInvestigationJob] = useState<InvestigationJob | null>(null);
 
-  const loadMasterGraph = useCallback(async () => {
+  /**
+   * The primary graph is PERSON → PERSON, and it is *derived on the server*.
+   *
+   * This used to fetch the whole master entity graph (~575 nodes) and filter
+   * it down to people in the browser, which is exactly the wrong place to do
+   * it: the browser had already paid for every phone, account, vehicle and
+   * location before a single one was discarded.  `/graph/cases/{id}/relationships`
+   * walks those supporting entities server-side and returns only people plus
+   * one aggregated edge per relationship, carrying its evidence with it.
+   */
+  const loadRelationshipGraph = useCallback(async () => {
     if (!caseParam) return;
     setGraphLoading(true);
     setGraphError(null);
     try {
-      const graph = await masterGraph();
-      const nodes: GraphNodeRow[] = graph.nodes || [];
-      const edges: GraphEdgeRow[] = graph.edges || [];
-      setMasterNodes(nodes);
-      setMasterEdges(edges);
-      setPersonNodes(nodes.filter((n) => isPersonLabel(n.label)));
-      setPersonRelationships(edges.filter((e) => {
-        const fromNode = nodes.find((n) => n.provenance_key === e.source);
-        const toNode = nodes.find((n) => n.provenance_key === e.target);
-        return fromNode && toNode && isPersonLabel(fromNode.label) && isPersonLabel(toNode.label);
+      const network = await relationshipNetwork({ caseId: caseParam, limit: 200 });
+      const nodes: GraphNodeRow[] = network.nodes || [];
+      const edges: GraphEdgeRow[] = (network.edges || []).map((e) => ({
+        key: e.id,
+        source: e.source,
+        target: e.target,
+        rel_type: e.label,
+        confidence: e.confidence,
+        source_doc_ids: e.source_doc_ids,
+        source_doc_id: e.source_doc_ids[0] ?? null,
+        staging: false,
+        evidence: e.supporting_items[0]?.evidence ?? null,
+        properties: {
+          relationship_type: e.relationship_type,
+          relationship_types: e.relationship_types,
+          evidence_count: e.evidence_count,
+          supporting_items: e.supporting_items,
+          strength: e.strength,
+          cross_case: e.cross_case,
+          case_ids: e.case_ids,
+        },
       }));
+      setPersonNodes(nodes);
+      setPersonRelationships(edges);
+      setRelationshipCounts(network.counts);
     } catch (err: any) {
       setGraphError(err.message || "Failed to load graph");
     } finally {
       setGraphLoading(false);
     }
   }, [caseParam]);
+
+  /**
+   * The supporting entity layer is loaded on demand, never on page load.
+   * Requirement: the person graph must not drag the full entity graph with it.
+   */
+  const loadSupportingEntities = useCallback(async () => {
+    if (masterNodes.length > 0) {
+      setShowSupporting(true);
+      return;
+    }
+    setEntityLoading(true);
+    try {
+      const graph = await masterGraph();
+      setMasterNodes(graph.nodes || []);
+      setMasterEdges(graph.edges || []);
+      setShowSupporting(true);
+    } catch (err: any) {
+      setGraphError(err.message || "Failed to load supporting entities");
+    } finally {
+      setEntityLoading(false);
+    }
+  }, [masterNodes.length]);
 
   const loadEnhancedTimeline = useCallback(async () => {
     if (!caseParam) return;
@@ -112,10 +167,10 @@ export default function InvestigatorWorkspace() {
 
   useEffect(() => {
     if (caseParam) {
-      void loadMasterGraph();
+      void loadRelationshipGraph();
       void loadEnhancedTimeline();
     }
-  }, [caseParam, loadMasterGraph, loadEnhancedTimeline]);
+  }, [caseParam, loadRelationshipGraph, loadEnhancedTimeline]);
 
   const graphData = useMemo(() => {
     if (showSupporting) {
@@ -198,7 +253,9 @@ export default function InvestigatorWorkspace() {
             <span>·</span>
             <span>{personRelationships.length} relationships</span>
             <span>·</span>
-            <span>{masterEdges.length} evidence records</span>
+            <span>{relationshipCounts?.supporting_items ?? 0} supporting records</span>
+            <span>·</span>
+            <span>{relationshipCounts?.confirmed_criminals ?? 0} confirmed criminals</span>
           </div>
           <div className="investigator-questions">Who is involved? · What connects them? · What evidence supports?</div>
         </div>
@@ -272,17 +329,31 @@ export default function InvestigatorWorkspace() {
         <div className="investigator-main">
           <div className="graph-section">
             <div className="section-header">
-              <h2>{graphData.isFocused ? "People Network — PERSON → PERSON" : "Full Network"}</h2>
+              <h2>{graphData.isFocused ? "People Network — PERSON → PERSON" : "Supporting Entity Network"}</h2>
               <div className="section-actions">
-                <span className="cl-badge cl-badge-info">{graphData.isFocused ? "FOCUSED" : "MASTER"} · {graphData.nodes.length} persons · {graphData.edges.length} edges</span>
-                <button className="cl-btn cl-btn-sm" onClick={() => setShowSupporting(!showSupporting)}>
-                  {showSupporting ? "PERSON only" : "Show Evidence"}
+                <span className="cl-badge cl-badge-info">
+                  {graphData.isFocused
+                    ? `PEOPLE · ${graphData.nodes.length} persons · ${graphData.edges.length} relationships`
+                    : `ENTITIES · ${graphData.nodes.length} nodes · ${graphData.edges.length} edges`}
+                </span>
+                <button
+                  className="cl-btn cl-btn-sm"
+                  disabled={entityLoading}
+                  onClick={() => (showSupporting ? setShowSupporting(false) : void loadSupportingEntities())}
+                >
+                  {entityLoading ? "Loading entities…" : showSupporting ? "People only" : "Show supporting entities"}
                 </button>
-                <button className="cl-btn cl-btn-sm" onClick={() => void loadMasterGraph()}>Refresh</button>
+                <button className="cl-btn cl-btn-sm" onClick={() => void loadRelationshipGraph()}>Refresh</button>
               </div>
             </div>
 
-            <div className="graph-explanation">Primary graph emphasizes PEOPLE. Supporting entities (phone, vehicle, location, file, CCTV, doc, org, address) are internal evidence, not final nodes. Example: A owns PHONE-X contacted PHONE-Y belongs to B → A↔B with evidence.</div>
+            <div className="graph-explanation">
+              Primary graph is PERSON → PERSON. Supporting entities (phone, account, vehicle, address,
+              organization, call record, transaction) are walked server-side and collapse into one
+              relationship edge that carries its evidence — for example A and B both use PHONE-X and
+              PHONE-X called PHONE-Y used by B becomes a single “Communication · 4 records” edge.
+              The entity layer is loaded only when you ask for it.
+            </div>
 
             <ErrorBoundary>
               <div style={{ border: "1px solid var(--border-primary)", borderRadius: "8px", overflow: "hidden" }}>
@@ -291,7 +362,7 @@ export default function InvestigatorWorkspace() {
                   edges={graphData.edges}
                   loading={graphLoading}
                   error={graphError}
-                  onRetry={() => void loadMasterGraph()}
+                  onRetry={() => void loadRelationshipGraph()}
                   onSelectNode={(node) => {
                     setSelectedNode(node);
                     if (node) setSelectedEdge(null);
@@ -337,7 +408,7 @@ export default function InvestigatorWorkspace() {
                 {response && response.relationships.length === 0 && (
                   <NoConnectionCard
                     peopleSearched={personNodes.length}
-                    evidenceExamined={masterEdges.length}
+                    evidenceExamined={relationshipCounts?.supporting_items ?? 0}
                     reliableRelationshipsFound={0}
                     onExpandSearch={() => setQuestion("")}
                     onImportEvidence={() => navigate("/cases")}
