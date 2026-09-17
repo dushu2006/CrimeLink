@@ -20,6 +20,8 @@ const __dirname = path.dirname(__filename);
 const read = (rel) => fs.readFileSync(path.resolve(__dirname, rel), "utf8");
 
 const CLIENT = read("../src/api/client.ts");
+const HOOK = read("../src/lib/useGraphCanvas.ts");
+
 const HOST = read("../src/components/investigator/MasterCaseNetwork.tsx");
 const GRAPH = read("../src/components/investigator/PersonRelationshipNetwork.tsx");
 
@@ -56,14 +58,16 @@ test("MASTER CASE NETWORK defaults to the PEOPLE NETWORK tab", () => {
 });
 
 test("each tab renders a different graph, not the same graph re-titled", () => {
-  // PEOPLE: the person graph owns the canvas and the entity instance is torn down.
-  assert.match(HOST, /if \(level === "people"\) \{[\s\S]*?cyRef\.current\?\.destroy\(\)/);
+  // PEOPLE: the person graph owns the canvas, and the shared canvas used by the
+  // CASE and ENTITY tabs is unmounted (not merely hidden) while it is active.
+  assert.match(HOST, /useGraphCanvas\(\{[\s\S]*?enabled: level !== "people"/);
+  assert.match(HOOK, /if \(!el \|\| !enabled\) \{[\s\S]*?cyRef\.current\?\.destroy\(\)/);
   assert.match(HOST, /\{level === "people" && \(/);
   assert.match(HOST, /\{level !== "people" && \(/);
 
   // CASE and ENTITY keep their own fetchers.
   assert.match(HOST, /masterCaseNetwork\(\)/);
-  assert.match(HOST, /masterGraph\(\)/);
+  assert.match(HOST, /masterGraph\(\{/);
 });
 
 test("the legend states how many stars are actually on screen", () => {
@@ -96,7 +100,9 @@ test("only PERSON nodes are pushed onto the person canvas", () => {
 });
 
 test("the star is driven only by the authoritative criminal flag", () => {
-  assert.match(GRAPH, /ele\.data\("is_criminal"\) \? `★\\n\$\{ele\.data\("name"\)\}`/);
+  // The star is part of the label, gated only on the authoritative flag (and on
+  // the zoom level, which hides *all* labels — never the star alone).
+  assert.match(GRAPH, /ele\.data\("is_criminal"\) \? `★\\n\$\{name\}` : name/);
   assert.match(GRAPH, /"background-color": \(ele: any\) =>\s*\n?\s*ele\.data\("is_criminal"\) \? CRIMINAL_FILL : PERSON_FILL/);
   assert.match(GRAPH, /CRIMINAL_BORDER = "#F59E0B"/);
   // Person nodes stay circles so the star can't be confused with a shape change.

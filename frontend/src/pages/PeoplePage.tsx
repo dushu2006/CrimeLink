@@ -6,12 +6,14 @@
  * RBAC: Investigator sees Investigate, Viewer read-only
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PersonList } from "../components/investigator/PersonList";
 import { masterPersons } from "../api/client";
 import { useAuth } from "../store/auth";
 import { isInvestigator, getRoleBadge } from "../lib/rbac";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import StaleDataNotice from "../components/common/StaleDataNotice";
 
 export default function PeoplePage() {
   const [people, setPeople] = useState<any[]>([]);
@@ -27,16 +29,16 @@ export default function PeoplePage() {
   const caseParam = searchParams.get("case") || undefined;
   const focusParam = searchParams.get("focus") || undefined;
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      try {
-        // People come from the active dataset only.  This used to also pull the
-        // whole 575-node entity graph just to count edges per person; the
-        // person endpoint already carries the connection count.
-        const personsRes = await masterPersons();
-        const items = (personsRes as any).items || [];
-        setPeople(items.map((p: any) => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // People come from the active dataset only.  This used to also pull the
+      // whole 575-node entity graph just to count edges per person; the
+      // person endpoint already carries the connection count.
+      const personsRes = await masterPersons();
+      const items = (personsRes as any).items || [];
+      setPeople(
+        items.map((p: any) => {
           const key = p.provenance_key || p.id;
           return {
             id: key,
@@ -46,17 +48,25 @@ export default function PeoplePage() {
             evidenceCount: p.source_doc_ids?.length || 0,
             casesCount: p.case_ids?.length || 0,
             role: p.role ?? null,
+            // Authoritative criminal_status only — the star is never inferred.
             criminalStatus: p.criminal_status ?? null,
             isCriminal: Boolean(p.criminal_status),
           };
-        }));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-      setLoading(false);
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
-    void load();
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // People are re-derived whenever the dataset gains records; a failed refresh
+  // is surfaced instead of leaving a stale directory on screen.
+  const live = useLiveRefresh(load);
 
   if (loading) {
     return (
@@ -110,6 +120,11 @@ export default function PeoplePage() {
 
   return (
     <div className="people-page">
+      <StaleDataNotice
+        error={live.error}
+        lastRefreshedAt={live.lastRefreshedAt}
+        onRetry={live.refreshNow}
+      />
       <div className="page-header">
         <div>
           <h1>People</h1>

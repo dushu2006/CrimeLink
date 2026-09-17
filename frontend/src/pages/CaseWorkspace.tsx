@@ -31,6 +31,8 @@ import {
 import { useAuth } from "../store/auth";
 import { isInvestigator, getRoleBadge } from "../lib/rbac";
 import { classifyRelationship } from "../lib/classification";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import StaleDataNotice from "../components/common/StaleDataNotice";
 
 export default function CaseWorkspace() {
   const { caseId } = useParams();
@@ -74,6 +76,13 @@ export default function CaseWorkspace() {
   }, [caseId]);
 
   useEffect(load, [load]);
+
+  // Bounded live refresh: the same dataset can gain evidence, findings or
+  // relationships while this page is open.  A failed refresh is reported, so
+  // the page never silently presents stale numbers as current.
+  const live = useLiveRefresh(async () => {
+    await load();
+  });
 
   const people = network?.nodes ?? [];
   const nameOf = new Map(people.map((n) => [n.provenance_key, n.name]));
@@ -177,6 +186,11 @@ export default function CaseWorkspace() {
 
   return (
     <div className="case-workspace">
+      <StaleDataNotice
+        error={live.error}
+        lastRefreshedAt={live.lastRefreshedAt}
+        onRetry={live.refreshNow}
+      />
       <CaseHeader
         caseId={header.case_number}
         status={header.status}
@@ -184,7 +198,9 @@ export default function CaseWorkspace() {
         relationshipsCount={network?.counts.relationships_total ?? relationships.length}
         evidenceCount={stats.evidence}
         lastActivity={
-          header.updated_at ? new Date(header.updated_at).toLocaleString() : "No recorded activity"
+          header.last_activity_at
+            ? new Date(header.last_activity_at).toLocaleString()
+            : "No recorded activity yet"
         }
         onContinue={investigator ? () => navigate(`/investigate?case=${caseId}`) : undefined}
       />

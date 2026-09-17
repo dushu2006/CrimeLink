@@ -38,8 +38,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
-import fcose from "cytoscape-fcose";
+import { type ElementDefinition } from "cytoscape";
 import {
   masterCaseNetwork,
   masterGraph,
@@ -54,9 +53,47 @@ import { Badge, Empty, ErrorState, Spinner } from "../Status";
 import { DocumentFileLink, EvidencePointerLink, ReferenceLink } from "../EvidenceLink";
 import { TechnicalDetails } from "../TechnicalDetails";
 import PersonRelationshipNetwork from "./PersonRelationshipNetwork";
+import GraphViewControls from "../common/GraphViewControls";
+import { useGraphCanvas } from "../../lib/useGraphCanvas";
 import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../../lib/displayLabels";
 
-cytoscape.use(fcose);
+/**
+ * Entity types the ENTITY NETWORK can show.  A supporting entity (phone,
+ * account, vehicle, address, organisation, event) is *evidence* for a
+ * relationship between people; the ENTITY NETWORK is the one view where it is
+ * allowed to appear as a node, and even there it is behind a filter so the
+ * graph stays readable.
+ */
+const ENTITY_LABELS = [
+  "PERSON",
+  "PHONE",
+  "BANK_ACCOUNT",
+  "VEHICLE",
+  "LOCATION",
+  "ORGANIZATION",
+  "EVENT",
+] as const;
+
+const ENTITY_REL_TYPES = [
+  "ASSOCIATE_OF",
+  "RELATIVE_OF",
+  "USES_PHONE",
+  "OWNS_ACCOUNT",
+  "OWNS_VEHICLE",
+  "LOCATED_AT",
+  "MEMBER_OF",
+  "CALLED",
+  "TRANSFER_TO",
+  "PARTICIPATED_IN",
+] as const;
+
+/**
+ * Default node budget for the ENTITY NETWORK.  The full active-dataset graph is
+ * 500+ nodes and 2500+ edges; rendering all of it at once is an unreadable
+ * mesh, not an investigation aid.  The complete graph stays reachable through
+ * the "Max nodes" control — it is an intentional mode, not the default.
+ */
+const DEFAULT_ENTITY_NODE_BUDGET = 80;
 
 type NetworkLevel = "people" | "case" | "entity";
 
@@ -108,8 +145,15 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
   const [selectedEntityNode, setSelectedEntityNode] = useState<GraphNodeRow | null>(null);
   const [filterCaseId, setFilterCaseId] = useState<string | null>(null);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<Core | null>(null);
+  // ENTITY NETWORK progressive disclosure.  People first, supporting entities
+  // only on request, and a bounded node count — the full graph stays available
+  // but is an explicit choice rather than the first thing that renders.
+  const [entityLabels, setEntityLabels] = useState<string[]>(["PERSON"]);
+  const [entityRelTypes, setEntityRelTypes] = useState<string[]>([]);
+  const [entityBudget, setEntityBudget] = useState<number>(DEFAULT_ENTITY_NODE_BUDGET);
+  const [entityTotal, setEntityTotal] = useState<{ nodes: number; edges: number } | null>(null);
+
+  const showSupporting = entityLabels.some((label) => label !== "PERSON");
 
   // ---- Fetch Master Case Network --------------------------------------------
   const loadCaseNetwork = useCallback(async () => {
@@ -136,7 +180,17 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
     setEntityLoading(true);
     setEntityError(null);
     try {
-      const data = await masterGraph();
+      const data = await masterGraph({
+        labels: entityLabels.length ? entityLabels : undefined,
+        relTypes: entityRelTypes.length ? entityRelTypes : undefined,
+        limit: entityBudget,
+      });
+      setEntityTotal({
+        nodes: data.counts?.by_label
+          ? Object.values(data.counts.by_label).reduce((a, b) => a + b, 0)
+          : data.nodes.length,
+        edges: data.edges.length,
+      });
       setEntityNodes(data.nodes);
       setEntityEdges(data.edges);
     } catch (err) {
@@ -144,7 +198,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
     } finally {
       setEntityLoading(false);
     }
-  }, []);
+  }, [entityLabels, entityRelTypes, entityBudget]);
 
   useEffect(() => {
     if (level === "entity" && entityNodes.length === 0 && !entityLoading) {
@@ -241,36 +295,19 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
     return elements;
   }, [visibleEntityNodes, visibleEntityEdges]);
 
-  // ---- Initialize & Update Cytoscape Canvas ----------------------------------
-  useEffect(() => {
-    if (!containerRef.current) return;
-    if (level === "people") {
-      // The person-to-person graph owns its own canvas; make sure no stale
-      // entity/case instance is left mounted underneath it.
-      cyRef.current?.destroy();
-      cyRef.current = null;
-      return;
-    }
+  // ---- Cytoscape canvas: one instance for the CASE and ENTITY tabs ----------
+  // The PEOPLE NETWORK owns its own canvas inside <PersonRelationshipNetwork />.
+  const graphLabels = useRef(true);
 
-    const currentElements = level === "case" ? caseElements : entityElements;
-    if (currentElements.length === 0) {
-      if (cyRef.current) {
-        cyRef.current.destroy();
-        cyRef.current = null;
-      }
-      return;
-    }
-
-    // Stylesheet enforcing universal node shape rules:
-    // ONLY confirmed criminals get "star"; EVERY OTHER ENTITY gets "ellipse" (circle).
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements: currentElements,
-      style: [
+  const canvasStyle = useMemo(
+    () =>
+      [
         {
           selector: "node",
           style: {
-            // Rule: ONLY confirmed criminals get star, everything else is a circle
+            // Universal shape rule: ONLY confirmed criminals are a star; every
+            // other entity is a circle.  Degree, centrality or having a phone
+            // never earns the star — only the dataset's criminal_status does.
             shape: (ele: any) => (ele.data("is_criminal") ? "star" : "ellipse"),
             "background-color": (ele: any) => {
               if (ele.data("is_criminal")) return CRIMINAL_FILL;
@@ -279,7 +316,10 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             },
             "border-width": (ele: any) => (ele.data("is_criminal") ? 3 : 2),
             "border-color": (ele: any) => (ele.data("is_criminal") ? CRIMINAL_BORDER : "#CBD5E1"),
-            label: "data(name)",
+            // Labels disappear when the zoom is too low to read them; the
+            // selected node always keeps its label.
+            label: (ele: any) =>
+              ele.selected() || graphLabels.current ? String(ele.data("name") ?? "") : "",
             color: "#FFFFFF",
             "font-family": "Inter, system-ui, sans-serif",
             "font-size": level === "case" ? "13px" : "11px",
@@ -314,7 +354,10 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               return "#94A3B8";
             },
             "curve-style": "bezier",
-            label: "data(label)",
+            // Edge labels are the densest text on the canvas: they are only
+            // drawn when there is room, or for the edge under inspection.
+            label: (ele: any) =>
+              ele.selected() || graphLabels.current ? String(ele.data("label") ?? "") : "",
             "font-size": "10px",
             "font-weight": 500,
             color: "#475569",
@@ -322,7 +365,6 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             "text-background-color": "#FFFFFF",
             "text-background-opacity": 0.85,
             "text-background-padding": "2px",
-            "text-border-opacity": 0,
           },
         },
         {
@@ -333,55 +375,40 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             "font-weight": 700,
           },
         },
-      ],
-      layout: {
-        name: layoutName,
-        animate: true,
-        animationDuration: 400,
-        padding: 40,
-      } as any,
-      minZoom: 0.2,
-      maxZoom: 3.5,
-    });
+      ] as any,
+    [level],
+  );
 
-    cy.on("tap", "node", (evt) => {
-      const data = evt.target.data();
+  const {
+    containerRef,
+    handle: graphHandle,
+  } = useGraphCanvas({
+    elements: level === "case" ? caseElements : entityElements,
+    style: canvasStyle,
+    labelsRef: graphLabels,
+    layoutName,
+    enabled: level !== "people",
+    onTapNode: (node: any) => {
+      const data = node.data();
       if (level === "case") {
         setSelectedCase(data.raw_node as MasterCaseNode);
         setSelectedEdge(null);
       } else {
         setSelectedEntityNode(data.raw_node as GraphNodeRow);
       }
-    });
-
-    cy.on("tap", "edge", (evt) => {
-      const data = evt.target.data();
-      if (level === "case") {
-        setSelectedEdge(data.raw_edge as MasterCaseEdge);
-        setSelectedCase(null);
-      }
-    });
-
-    cy.on("tap", (evt) => {
-      if (evt.target === cy) {
-        setSelectedCase(null);
-        setSelectedEdge(null);
-        setSelectedEntityNode(null);
-      }
-    });
-
-    cyRef.current = cy;
-
-    return () => {
-      cy.destroy();
-      cyRef.current = null;
-    };
-  }, [level, caseElements, entityElements, layoutName]);
-
-  const fitView = () => {
-    cyRef.current?.fit(undefined, 30);
-  };
-
+    },
+    onTapEdge: (edge: any) => {
+      if (level !== "case") return;
+      const data = edge.data();
+      setSelectedEdge(data.raw_edge as MasterCaseEdge);
+      setSelectedCase(null);
+    },
+    onTapBackground: () => {
+      setSelectedCase(null);
+      setSelectedEdge(null);
+      setSelectedEntityNode(null);
+    },
+  });
   const switchToEntityView = (caseNumberOrId?: string) => {
     if (caseNumberOrId) {
       setFilterCaseId(caseNumberOrId);
@@ -535,9 +562,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             <option value="concentric">Concentric</option>
           </select>
         </label>
-        <button type="button" className="btn btn-tertiary btn-small" onClick={fitView}>
-          Fit view
-        </button>
+        <GraphViewControls handle={graphHandle} />
         {level === "entity" && filterCaseId && (
           <button
             type="button"
@@ -548,6 +573,80 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
           </button>
         )}
       </div>
+
+      {/* ENTITY NETWORK progressive disclosure: the full graph is a mode, not
+          the default.  People first, supporting entities on request. */}
+      {level === "entity" && (
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--space-2)",
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginBottom: "var(--space-2)",
+            fontSize: "var(--text-xs)",
+          }}
+        >
+          <span className="muted">Node types:</span>
+          {ENTITY_LABELS.map((label) => {
+            const on = entityLabels.includes(label);
+            return (
+              <button
+                key={label}
+                type="button"
+                className={`btn btn-small ${on ? "btn-primary" : "btn-tertiary"}`}
+                onClick={() =>
+                  setEntityLabels((prev) => {
+                    const next = on ? prev.filter((l) => l !== label) : [...prev, label];
+                    // An empty graph is not a useful filter state.
+                    return next.length ? next : ["PERSON"];
+                  })
+                }
+              >
+                {label.replace(/_/g, " ").toLowerCase()}
+              </button>
+            );
+          })}
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
+            <span className="muted">Max nodes:</span>
+            <select
+              value={entityBudget}
+              onChange={(e) => setEntityBudget(Number(e.target.value))}
+              style={{ fontSize: "var(--text-xs)", padding: "2px 6px" }}
+            >
+              <option value={40}>40</option>
+              <option value={80}>80</option>
+              <option value={200}>200</option>
+              <option value={600}>600 (full graph)</option>
+              <option value={3000}>Everything</option>
+            </select>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
+            <span className="muted">Relationships:</span>
+            <select
+              value={entityRelTypes.join(",") || "ALL"}
+              onChange={(e) =>
+                setEntityRelTypes(e.target.value === "ALL" ? [] : [e.target.value])
+              }
+              style={{ fontSize: "var(--text-xs)", padding: "2px 6px" }}
+            >
+              <option value="ALL">All relationship types</option>
+              {ENTITY_REL_TYPES.map((rt) => (
+                <option key={rt} value={rt}>
+                  {rt.replace(/_/g, " ").toLowerCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="muted">
+            {entityNodes.length} nodes · {entityEdges.length} edges in view
+            {entityTotal && entityTotal.nodes > entityNodes.length
+              ? ` · raise “Max nodes” for the remaining ${entityTotal.nodes - entityNodes.length}`
+              : ""}
+            {!showSupporting ? " · people only — supporting entities are hidden" : ""}
+          </span>
+        </div>
+      )}
 
       {/* States */}
       {loading && <Spinner label="Building master case network..." />}

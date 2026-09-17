@@ -1,19 +1,25 @@
 /**
  * Case Header — Hero screen for Case Workspace
  * Investigation status, People, Relationships, Evidence, Last activity, [Continue Investigation]
+ *
+ * Every field is a required prop with no default: a header that quietly prints
+ * "Active" or "12 min ago" when the caller forgets a value is reporting an
+ * invented fact about a real case.  Where the data genuinely does not exist the
+ * caller passes the explicit "not recorded" string below.
  */
 
 interface Props {
   caseId: string;
-  status?: string;
-  peopleCount?: number;
-  relationshipsCount?: number;
-  evidenceCount?: number;
-  lastActivity?: string;
+  status: string;
+  peopleCount: number;
+  relationshipsCount: number;
+  evidenceCount: number;
+  /** Human-readable newest record timestamp, or the explicit "no activity" note. */
+  lastActivity: string;
   onContinue?: () => void;
 }
 
-export function CaseHeader({ caseId, status = "Active", peopleCount = 0, relationshipsCount = 0, evidenceCount = 0, lastActivity = "12 min ago", onContinue }: Props) {
+export function CaseHeader({ caseId, status, peopleCount, relationshipsCount, evidenceCount, lastActivity, onContinue }: Props) {
   return (
     <div className="case-header-hero">
       <div className="case-header-top">

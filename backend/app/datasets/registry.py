@@ -153,12 +153,26 @@ async def active_dataset_id(session: AsyncSession) -> str | None:
 
 
 async def set_only_active(session: AsyncSession, dataset: Dataset) -> Dataset:
-    """Set the registry flag without deleting any dataset-owned records."""
+    """Set the registry flag without deleting any dataset-owned records.
+
+    The two writes are flushed *separately, in this order*.  ``datasets``
+    carries a partial unique index on ``is_active``, and when the outgoing and
+    the incoming dataset are both dirty in the unit of work SQLAlchemy batches
+    them into a single ``executemany`` whose row order is not guaranteed — so
+    roughly half the time the ``is_active=1`` row is applied before the
+    ``is_active=0`` row and the constraint rejects the statement
+    (``UNIQUE constraint failed: datasets.is_active``).  Landing the
+    deactivation first makes the transition deterministic; the invariant the
+    index enforces is never relaxed to get there.
+    """
     await session.execute(
         update(Dataset)
         .where(Dataset.id != dataset.id, Dataset.is_active.is_(True))
         .values(is_active=False)
+        .execution_options(synchronize_session="fetch")
     )
+    await session.flush()
+
     dataset.is_active = True
     dataset.activated_at = utcnow()
     await session.flush()
@@ -166,10 +180,15 @@ async def set_only_active(session: AsyncSession, dataset: Dataset) -> Dataset:
 
 
 def set_only_active_sync(session: Any, dataset: Dataset) -> Dataset:
-    """Synchronous counterpart used by bootstrap and built-in seed scripts."""
+    """Synchronous counterpart used by bootstrap and built-in seed scripts.
+
+    Same two-step ordering as :func:`set_only_active`, for the same reason.
+    """
     session.query(Dataset).filter(
         Dataset.id != dataset.id, Dataset.is_active.is_(True)
-    ).update({Dataset.is_active: False}, synchronize_session=False)
+    ).update({Dataset.is_active: False}, synchronize_session="fetch")
+    session.flush()
+
     dataset.is_active = True
     dataset.activated_at = utcnow()
     session.flush()

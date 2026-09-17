@@ -10,6 +10,7 @@ Internal identifiers, raw Cypher and stack traces are never leaked to clients
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -17,9 +18,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.config import get_settings
 from app.logging import get_logger, get_trace_id
 
 log = get_logger("crimelink.errors")
+
+#: ``backend/app`` — used to pick the application frame out of a traceback.
+APP_ROOT = str(Path(__file__).resolve().parent)
 
 GENERIC_DETAIL = "Request could not be completed."
 
@@ -33,6 +38,12 @@ class CrimeLinkError(Exception):
 
     def __init__(self, message: str | None = None, **context: Any) -> None:
         self.detail = message or self.public_message
+        #: A caller may narrow the machine-readable code without inventing a
+        #: new exception class — "no dataset is active" and "no such source
+        #: file" are both 404s that a client must be able to tell apart.
+        code = context.pop("code", None)
+        if code is not None:
+            self.code = str(code)
         self.context = context
         super().__init__(self.detail)
 
@@ -204,13 +215,58 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
         trace_id = get_trace_id()
         log.exception("request.unhandled_exception", path=request.url.path)
+        payload: dict[str, Any] = {
+            "code": "internal_error",
+            "message": GENERIC_DETAIL,
+            "trace_id": trace_id,
+        }
+        # Development needs the *reason* a request failed, not only a trace id
+        # that requires a server log to interpret.  In the production
+        # profile/environment nothing beyond the contract above is sent: an
+        # exception class name and the frame that raised it are internal
+        # details (PRD 12.6).  Everywhere else the developer gets them inline,
+        # so a browser console shows exactly which line blew up.
+        try:
+            is_prod = get_settings().is_production_deployment
+        except Exception:  # a broken settings load must not break the handler
+            is_prod = True
+        if not is_prod:
+            payload["exception"] = type(exc).__name__
+            frame = _raising_frame(exc)
+            if frame is not None:
+                payload["location"] = frame
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "error": {
-                    "code": "internal_error",
-                    "message": GENERIC_DETAIL,
-                    "trace_id": trace_id,
-                }
-            },
+            content={"error": payload},
         )
+
+
+def _raising_frame(exc: BaseException) -> dict[str, Any] | None:
+    """The innermost application frame of ``exc``, for developer diagnostics.
+
+    Walks the traceback to the last frame that belongs to this codebase, so a
+    failure inside a library still reports *our* call site.  Returns ``None``
+    when no traceback is attached (an exception raised and caught before it
+    ever propagated).
+    """
+
+    import traceback
+
+    tb = exc.__traceback__
+    if tb is None:
+        return None
+    frames = traceback.extract_tb(tb)
+    last: traceback.FrameSummary | None = None
+    for frame in frames:
+        if frame.filename.startswith(APP_ROOT):
+            last = frame
+    if last is None and frames:
+        last = frames[-1]
+    if last is None:
+        return None
+    return {
+        "file": last.filename,
+        "line": last.lineno,
+        "function": last.name,
+        "statement": (last.line or "").strip(),
+    }
