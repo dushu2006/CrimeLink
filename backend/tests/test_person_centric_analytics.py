@@ -33,19 +33,26 @@ from app.investigator.patterns import (
 )
 
 
+def _node_name_for(snapshot: CaseGraphSnapshot, key: str) -> str:
+    node = snapshot.nodes.get(key)
+    return (node.properties or {}).get("name") or key if node else key
+
+
 def _node(key: str, label: str, name: str, cases: list[str], **extra) -> GraphNode:
     node = GraphNode(provenance_key=key, label=label)
     node.properties = {"name": name, "case_ids": list(cases), **extra}
     return node
 
 
-def _edge(source: str, target: str, rel: str, doc: str = "doc-auto") -> GraphEdge:
+def _edge(
+    source: str, target: str, rel: str, doc: str = "doc-auto", **extra
+) -> GraphEdge:
     """An edge always cites a record: the domain refuses an unevidenced write."""
     return GraphEdge(
         source_key=source,
         target_key=target,
         rel_type=rel,
-        properties={"source_doc_id": doc},
+        properties={"source_doc_id": doc, **extra},
     )
 
 
@@ -208,8 +215,16 @@ def test_community_signal_names_people_not_the_shared_entity(shared_hub_graph) -
         )
     )
     communities = [p for p in patterns if p.kind == "COMMUNITY_SIGNAL" and not p.excluded]
+    assert communities, "the fixture must produce at least one community signal"
     for pattern in communities:
-        assert "people" in pattern.title, pattern.title
+        # The subject must be the people themselves.  The reframing layer names
+        # them directly (e.g. "Priya Kumar ↔ Dinesh Malhotra"), which is
+        # stronger than the earlier "Group of N people" wording -- so assert the
+        # intent: a real person's name appears, and no supporting entity does.
+        assert any(
+            _node_name_for(shared_hub_graph, key) in pattern.title
+            for key in pattern.entity_keys
+        ), pattern.title
         assert "+919000000000" not in pattern.title
         assert "0000" not in pattern.title
         for key in pattern.entity_keys:
@@ -306,3 +321,172 @@ def test_subject_defaults_to_person(shared_hub_graph) -> None:
     for pattern in patterns:
         for key in pattern.entity_keys:
             assert _is_person(shared_hub_graph.nodes.get(key))
+
+
+# ---------------------------------------------------------------------------
+# 6. Every detector, not just the two that happened to fire on the demo data.
+#
+# The first person-centric fix covered cross-case entities and communities.
+# Seven more detectors could still put a supporting entity in the subject
+# position: communication anomalies titled phone↔phone pairs, financial flows
+# titled the account, bridge signals ranked by betweenness over every node,
+# cross-case links, temporal bursts and repeated combinations over arbitrary
+# edge endpoints.  A single reframing layer now covers all of them.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def leaking_detector_graph() -> CaseGraphSnapshot:
+    """A snapshot built specifically to fire the detectors that leaked."""
+    snapshot = CaseGraphSnapshot(case_id="scope")
+    snapshot.nodes.update(
+        {
+            "P1": _node("P1", "Person", "Priya Kumar", ["C1"]),
+            "P2": _node("P2", "Person", "Dinesh Malhotra", ["C2"]),
+            "P3": _node("P3", "Person", "Amit Sharma", ["C1"]),
+            "P4": _node("P4", "Person", "Vikram Verma", ["C3"]),
+            "NA": _node("NA", "Phone", "+919000000000", ["C1"]),
+            "NB": _node("NB", "Phone", "+919000000137", ["C2"]),
+            "ACC": _node("ACC", "BankAccount", "ACC-0000", ["C1", "C2", "C3"]),
+            "VEH": _node("VEH", "Vehicle", "RJ-14-CX-1234", ["C1"],
+                         plate="RJ-14-CX-1234"),
+        }
+    )
+    edges = [
+        _edge("P1", "NA", "USES_PHONE", "d1"),
+        _edge("P2", "NB", "USES_PHONE", "d2"),
+        _edge("P4", "ACC", "OWNS_ACCOUNT", "d-own"),
+        _edge("P1", "VEH", "ASSOCIATE_OF", "d-v1"),
+        _edge("P3", "VEH", "OWNS_VEHICLE", "d-v2"),
+        _edge("NA", "NB", "CALLED", "d-span"),
+    ]
+    # 12 call records between the two numbers -> COMMUNICATION_ANOMALY, whose
+    # raw subject is the phone pair.
+    edges += [
+        _edge("NA", "NB", "CALLED", f"d-call-{i}", count=3) for i in range(12)
+    ]
+    # 6 dated transfers touching one account -> FINANCIAL_FLOW on the account.
+    edges += [
+        _edge("P3", "ACC", "TRANSFER_TO", f"d-tx-{i}",
+              timestamp=f"2024-08-0{i + 1}T10:00:00Z")
+        for i in range(6)
+    ]
+    snapshot.edges = edges
+    return snapshot
+
+
+def test_no_detector_puts_a_supporting_entity_in_the_subject_position(
+    leaking_detector_graph,
+) -> None:
+    centrality = compute_centrality(leaking_detector_graph)
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=leaking_detector_graph, centrality=centrality, subject="PERSON"
+        )
+    )
+    live = [p for p in patterns if not p.excluded]
+    assert live, "the fixture must fire at least one detector"
+
+    for pattern in live:
+        people = [
+            key for key in (pattern.entity_keys or [])
+            if _is_person(leaking_detector_graph.nodes.get(key))
+        ]
+        assert people, (
+            f"{pattern.kind} named no person as its subject: {pattern.title!r}"
+        )
+        for name in pattern.entities:
+            assert name not in {"+919000000000", "+919000000137", "ACC-0000",
+                                "RJ-14-CX-1234"}, (
+                f"{pattern.kind} surfaced a supporting entity as a subject: {name}"
+            )
+
+
+def test_the_leaking_kinds_are_all_covered(leaking_detector_graph) -> None:
+    """Name the detectors that used to leak, so a regression is attributable."""
+    centrality = compute_centrality(leaking_detector_graph)
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=leaking_detector_graph, centrality=centrality, subject="PERSON"
+        )
+    )
+    kinds = {p.kind for p in patterns if not p.excluded}
+    for expected in (
+        "COMMUNICATION_ANOMALY",   # was "+919000000000 ↔ +919000000137: 37 calls"
+        "FINANCIAL_FLOW",          # was "ACC-0000: 6 transfers in 7 days"
+        "CROSS_CASE_LINK",         # was phone ↔ phone spanning cases
+        "REPEATED_COMBINATION",    # was phone ↔ phone across documents
+    ):
+        assert expected in kinds, f"{expected} did not fire; fixture needs updating"
+
+
+def test_entity_scope_is_untouched_by_the_reframing(leaking_detector_graph) -> None:
+    """The deep evidence view keeps its entity-level findings verbatim."""
+    centrality = compute_centrality(leaking_detector_graph)
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=leaking_detector_graph, centrality=centrality, subject="ENTITY"
+        )
+    )
+    titles = {p.title for p in patterns if not p.excluded}
+    assert any("+919000000000" in t for t in titles)
+    assert any("ACC-0000" in t for t in titles)
+
+
+def test_repeated_findings_about_one_pair_are_collapsed(leaking_detector_graph) -> None:
+    """13 parallel call records must not produce 13 identical findings."""
+    centrality = compute_centrality(leaking_detector_graph)
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=leaking_detector_graph, centrality=centrality, subject="PERSON"
+        )
+    )
+    live = [p for p in patterns if not p.excluded]
+    identities = [(p.kind, tuple(sorted(p.entity_keys or []))) for p in live]
+    assert len(identities) == len(set(identities)), (
+        f"duplicated person-subject findings: {identities}"
+    )
+    collapsed = [p for p in live if "collapsed" in p.title]
+    assert collapsed, "the 13 parallel call records should collapse into one finding"
+    for pattern in collapsed:
+        # The suffix is applied once, from the final count.
+        assert pattern.title.count("collapsed") == 1, pattern.title
+
+
+def test_a_finding_with_no_person_is_set_aside_with_a_reason(
+    leaking_detector_graph,
+) -> None:
+    """Never silently dropped, never surfaced with an entity in front."""
+    centrality = compute_centrality(leaking_detector_graph)
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=leaking_detector_graph, centrality=centrality, subject="PERSON"
+        )
+    )
+    aside = [p for p in patterns if p.excluded]
+    for pattern in aside:
+        assert pattern.exclusion_reason, (
+            f"{pattern.kind} was set aside without saying why"
+        )
+
+
+def test_reframing_keeps_the_original_evidence(leaking_detector_graph) -> None:
+    """Reframing changes the subject, not what was actually found."""
+    centrality = compute_centrality(leaking_detector_graph)
+    patterns = detect_all_patterns(
+        DetectorContext(
+            snapshot=leaking_detector_graph, centrality=centrality, subject="PERSON"
+        )
+    )
+    comms = next(
+        p for p in patterns
+        if p.kind == "COMMUNICATION_ANOMALY" and not p.excluded
+    )
+    joined = " ".join(item.summary for item in comms.evidence)
+    # The call volume survives, and the phones are named as the mechanism.
+    assert "calls" in joined.lower()
+    assert "+919000000000" in joined or "+919000000137" in joined
+    assert any("reframe" in (ptr.ref or "") for item in comms.evidence
+               for ptr in (item.provenance or [])), (
+        "the reframing must be disclosed in provenance, not applied silently"
+    )

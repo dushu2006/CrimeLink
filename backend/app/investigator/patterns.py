@@ -1456,6 +1456,181 @@ _DETECTORS = (
 )
 
 
+#: How many people a reframed pattern may name before it stops being legible.
+REFRAME_MAX_PEOPLE = 6
+
+
+def _person_subjects(ctx: DetectorContext, keys: list[str]) -> tuple[list[str], list[str]]:
+    """Split a pattern's entity keys into (people, supporting entities).
+
+    Uses each node's canonical label — never its graph position.
+    """
+    nodes = ctx.snapshot.nodes or {}
+    people = [key for key in keys if _is_person(nodes.get(key))]
+    support = [key for key in keys if key not in set(people)]
+    return people, support
+
+
+def _people_via_support(ctx: DetectorContext, support: list[str]) -> dict[str, list[str]]:
+    """The people attached to a set of supporting entities, and how.
+
+    Returns ``{person_key: [entity_name, ...]}`` so the reframed finding can
+    name the mechanism ("connected through +919000000000") rather than the
+    entity itself.
+    """
+    found: dict[str, list[str]] = {}
+    for entity_key in support:
+        for person_key in _persons_linked_through(ctx.snapshot, entity_key):
+            found.setdefault(person_key, []).append(_node_name(ctx.snapshot, entity_key))
+    return found
+
+
+def _reframe_for_person_subject(
+    ctx: DetectorContext, pattern: SuspiciousPattern
+) -> SuspiciousPattern | None:
+    """Put people at the front of a finding without discarding what it found.
+
+    Every detector keeps its own logic, evidence, strength, cases,
+    contradictions and innocent alternatives.  This layer only changes *who the
+    finding is about*, which is what a person-centric scope requires:
+
+    * two or more people are already named — keep them as the subject and move
+      the supporting entities into the basis;
+    * one person is named — that person stays the subject;
+    * nobody is named — resolve the people the supporting entities connect and
+      report the connection between them, naming the entity as the reason.
+
+    A finding that cannot be attached to at least one person returns ``None``
+    and is set aside with a reason.  It is never silently dropped and never
+    surfaced with a phone number or account in the subject position.
+    """
+    nodes = ctx.snapshot.nodes or {}
+    keys = list(pattern.entity_keys or [])
+    if not keys:
+        return None
+
+    people, support = _person_subjects(ctx, keys)
+
+    if len(people) >= 2:
+        subject_keys = people
+    elif len(people) == 1:
+        subject_keys = people
+    else:
+        linked = _people_via_support(ctx, support)
+        subject_keys = list(linked)
+        if not subject_keys:
+            return None
+
+    subject_keys = subject_keys[:REFRAME_MAX_PEOPLE]
+    subject_names = [_node_name(ctx.snapshot, key) for key in subject_keys]
+    support_names = [
+        _node_name(ctx.snapshot, key) for key in support if key in nodes
+    ]
+
+    # The mechanism words: what kind of thing the supporting entities are.
+    mechanisms = sorted(
+        {
+            supporting_entity_word(str((nodes[key].label or "")).strip())
+            for key in support
+            if key in nodes
+        }
+    )
+
+    if len(subject_names) >= 2:
+        title = " ↔ ".join(subject_names[:2]) + (
+            f" (+{len(subject_names) - 2} more)" if len(subject_names) > 2 else ""
+        )
+    else:
+        title = subject_names[0]
+
+    basis = ""
+    if support_names:
+        basis = (
+            f" Supporting basis: {', '.join(support_names[:4])}"
+            f"{'…' if len(support_names) > 4 else ''}"
+            + (f" ({', '.join(mechanisms)})." if mechanisms else ".")
+        )
+
+    reframed = pattern.model_copy(deep=True)
+    reframed.title = title
+    reframed.entities = subject_names
+    reframed.entity_keys = subject_keys
+    reframed.explanation = (
+        f"{pattern.explanation.rstrip()} {title} is the investigative subject here;"
+        f"{basis}"
+        if basis
+        else f"{pattern.explanation.rstrip()} {title} is the investigative subject here."
+    )
+    # Keep the original wording available: the detector's own account of what it
+    # saw is evidence context, not something to overwrite.
+    reframed.evidence = [
+        *pattern.evidence,
+        make_evidence(
+            "record",
+            f"Detector {pattern.kind} originally centred on "
+            f"{', '.join(_node_name(ctx.snapshot, key) for key in keys[:4])}"
+            f"{'; reframed onto the people it connects.' if support_names else '.'}",
+            label=FACT,
+            provenance=[
+                metric_pointer(
+                    name=f"reframe:{pattern.kind}",
+                    label="subject reframed to people",
+                    detail=", ".join(support_names[:4]) or None,
+                )
+            ],
+        ),
+    ]
+    return reframed
+
+
+def _dedupe_person_patterns(patterns: list[SuspiciousPattern]) -> list[SuspiciousPattern]:
+    """Collapse repeated findings about the same people into one.
+
+    Detectors fire per graph edge, so thirteen parallel call records between one
+    phone pair used to produce thirteen identical findings.  Once the subject is
+    a person pair that duplication is obvious noise, and the brief's rule is
+    explicit: one unordered person pair is one relationship with its supporting
+    records aggregated.  Cases and evidence are merged; nothing is discarded.
+    """
+    grouped: dict[tuple[str, tuple[str, ...]], SuspiciousPattern] = {}
+    merged_count: dict[tuple[str, tuple[str, ...]], int] = {}
+    for pattern in patterns:
+        identity = (pattern.kind, tuple(sorted(pattern.entity_keys or [])))
+        kept = grouped.get(identity)
+        if kept is None:
+            grouped[identity] = pattern
+            merged_count[identity] = 1
+            continue
+        # Merge rather than drop: the union of cases and evidence is the honest
+        # aggregate, and the stronger of the two strengths wins.
+        rank = {"STRONG": 0, "MODERATE": 1, "WEAK": 2, "INSUFFICIENT": 3}
+        merged = kept.model_copy(deep=True)
+        merged.cases = sorted(set(kept.cases or []) | set(pattern.cases or []))
+        seen = {id(item) for item in merged.evidence}
+        merged.evidence = [
+            *merged.evidence,
+            *[item for item in pattern.evidence if id(item) not in seen],
+        ]
+        if rank.get(pattern.strength, 4) < rank.get(kept.strength, 4):
+            merged.strength = pattern.strength
+            merged.strength_factors = pattern.strength_factors
+        grouped[identity] = merged
+        merged_count[identity] += 1
+
+    # Annotate the collapsed findings once, from the final counts -- appending
+    # per merge produced "(6 records) (9 records) (12 records) ...".
+    out: list[SuspiciousPattern] = []
+    for identity, pattern in grouped.items():
+        folded = merged_count[identity]
+        if folded > 1:
+            pattern.title = (
+                f"{pattern.title} — {folded} records collapsed from the same "
+                f"{'people' if len(pattern.entity_keys or []) > 1 else 'person'}"
+            )
+        out.append(pattern)
+    return out
+
+
 def detect_all_patterns(
     ctx: DetectorContext,
     *,
@@ -1463,15 +1638,35 @@ def detect_all_patterns(
     include_excluded: bool = True,
 ) -> list[SuspiciousPattern]:
     """Run every detector, apply dismissals, and cap the output."""
+    person_centric = ctx.subject.upper() != "ENTITY"
     live: list[SuspiciousPattern] = []
     aside: list[SuspiciousPattern] = []
     for detector in _DETECTORS:
         for pattern in detector(ctx):
             if pattern.excluded:
                 aside.append(pattern)
-            else:
-                live.append(_apply_dismissal(ctx, pattern))
+                continue
+            if person_centric:
+                # Put a person in the subject position before anything else
+                # reads the finding.  A finding that cannot be attached to a
+                # person is set aside *with a reason* — visible, never dropped.
+                reframed = _reframe_for_person_subject(ctx, pattern)
+                if reframed is None:
+                    pattern.excluded = True
+                    pattern.exclusion_reason = (
+                        "Evidence-layer finding: it describes supporting entities "
+                        "that attach to no person in this scope, so it is not a "
+                        "person-centric investigative subject. Open the Entity "
+                        "Network to see it in context."
+                    )
+                    aside.append(pattern)
+                    continue
+                pattern = reframed
+            live.append(_apply_dismissal(ctx, pattern))
     aside.extend(detect_social_only_exclusions(ctx))
+
+    if person_centric:
+        live = _dedupe_person_patterns(live)
 
     strength_rank = {"STRONG": 0, "MODERATE": 1, "WEAK": 2, "INSUFFICIENT": 3}
     live.sort(key=lambda item: (strength_rank.get(item.strength, 4), item.kind, item.title))
