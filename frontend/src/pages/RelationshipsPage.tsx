@@ -19,6 +19,7 @@ import { ClassificationBadge } from "../components/investigator/ClassificationBa
 import { relationshipNetwork } from "../api/client";
 import { useAuth } from "../store/auth";
 import { isInvestigator, getRoleBadge } from "../lib/rbac";
+import { classifyRelationship } from "../lib/classification";
 
 export default function RelationshipsPage() {
   const [searchParams] = useSearchParams();
@@ -70,7 +71,13 @@ export default function RelationshipsPage() {
             source_real_key: e.source,
             target_real_key: e.target,
             relationship_type: e.label,
-            classification: "FACT" as const,
+            // Derived from the edge, not stamped: a weak relationship is not a fact.
+            classification: classifyRelationship({
+              strength: e.strength,
+              confidence: e.confidence,
+              supportingCount: e.supporting_items.length,
+            }),
+
             confidence: e.confidence,
             confidence_label: (
               e.strength === "STRONG" ? "High" : e.strength === "MODERATE" ? "Medium" : "Low"

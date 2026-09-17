@@ -296,3 +296,36 @@ test("the workspace trust panel reports on a selection, not on nothing", () => {
   assert.match(WORKSPACE2, /trustTarget \?/);
   assert.match(WORKSPACE2, /Select a person or a relationship to assess/);
 });
+
+test("relationship classification is derived from the evidence, not stamped", async () => {
+  // Both pages stamped every relationship `classification: "FACT"` while
+  // reading confidence and strength off the same edge.  A weak relationship is
+  // not a verified fact, so the value is now computed by a shared helper.
+  assert.doesNotMatch(WORKSPACE, /classification: "FACT" as const,/);
+  assert.doesNotMatch(RELATIONSHIPS, /classification: "FACT" as const,/);
+  assert.match(WORKSPACE, /classifyRelationship\(\{/);
+  assert.match(RELATIONSHIPS, /classifyRelationship\(\{/);
+
+  // Exercise the real helper, compiled from source, not a restatement of it.
+  const { execFileSync } = await import("node:child_process");
+  const { pathToFileURL } = await import("node:url");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "cl-class-"));
+  const out = join(dir, "classification.mjs");
+  execFileSync(
+    join(process.cwd(), "node_modules", ".bin", "esbuild"),
+    ["src/lib/classification.ts", "--format=esm", `--outfile=${out}`, "--log-level=error"],
+  );
+  const { classifyRelationship } = await import(pathToFileURL(out).href);
+
+  assert.equal(classifyRelationship({ strength: "STRONG", confidence: 0.96, supportingCount: 12 }), "FACT");
+  assert.equal(classifyRelationship({ strength: "WEAK", confidence: 0.95, supportingCount: 1 }), "INFERENCE");
+  assert.equal(classifyRelationship({ strength: "WEAK", confidence: 0.3, supportingCount: 1 }), "HYPOTHESIS");
+  assert.equal(classifyRelationship({ strength: "INSUFFICIENT", confidence: 0, supportingCount: 0 }), "UNKNOWN");
+  // Strength alone never promotes a low-confidence edge to a fact.
+  assert.equal(classifyRelationship({ strength: "STRONG", confidence: 0.4, supportingCount: 3 }), "INFERENCE");
+  // Confidence alone never promotes an unstrengthed edge to a fact either.
+  assert.equal(classifyRelationship({ confidence: 0.5, supportingCount: 1 }), "HYPOTHESIS");
+});
