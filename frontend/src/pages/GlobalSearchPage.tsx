@@ -5,25 +5,14 @@
  * Actions navigate/focus
  */
 
-import { useEffect, useState } from "react";
 import { GlobalSearch } from "../components/investigator/GlobalSearch";
 import { AttentionCenterPanel } from "../components/investigator/AttentionCenter";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { globalSearch, type GlobalSearchResult } from "../api/client";
 
 export default function GlobalSearchPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialQuery = searchParams.get("q") || "";
-  const [autoResult, setAutoResult] = useState<GlobalSearchResult | null>(null);
-
-  useEffect(() => {
-    if (initialQuery) {
-      globalSearch(initialQuery, 20)
-        .then(setAutoResult)
-        .catch(() => {});
-    }
-  }, [initialQuery]);
 
   return (
     <div className="global-search-page">
@@ -40,6 +29,7 @@ export default function GlobalSearchPage() {
       </div>
 
       <GlobalSearch
+        initialQuery={initialQuery}
         onFocusEntity={(key) => navigate(`/investigate?focus=${encodeURIComponent(key)}`)}
         onOpenEvidence={(docId) => navigate(`/documents/${docId}`)}
         onFocusPattern={(patternId, caseId) => navigate(`/cases/${caseId}`)}

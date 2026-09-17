@@ -446,6 +446,54 @@ export async function uploadDocument(
   return api(`/cases/${caseId}/documents`, { method: "POST", body });
 }
 
+/** One stored evidence document, exactly as the backend records it. */
+export interface EvidenceDocumentRow {
+  id: string;
+  case_id: string | null;
+  case_number: string | null;
+  filename: string;
+  document_type: string;
+  ingestion_status: string;
+  source_confidence: string;
+  quarantined: boolean;
+  failure_reason: string | null;
+  size_bytes: number;
+  language: string | null;
+  reference_count: number;
+  origin: string | null;
+  relative_path: string | null;
+  created_at: string;
+}
+
+export interface EvidenceDocumentPage {
+  items: EvidenceDocumentRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Evidence documents across every case the caller may see.
+ *
+ * Every field comes from the stored record — there is no synthesised id,
+ * confidence or timestamp.  Discarded documents are excluded by the backend.
+ */
+export async function evidenceDocuments(params: {
+  caseId?: string;
+  status?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<EvidenceDocumentPage> {
+  const query = new URLSearchParams();
+  if (params.caseId) query.set("case_id", params.caseId);
+  if (params.status) query.set("status", params.status);
+  if (params.q) query.set("q", params.q);
+  query.set("limit", String(params.limit ?? 50));
+  query.set("offset", String(params.offset ?? 0));
+  return api<EvidenceDocumentPage>(`/explore/documents?${query.toString()}`);
+}
+
 /**
  * Live processing status for a case (PRD: "Stage 3/6 — NLP extraction").
  *

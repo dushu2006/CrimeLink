@@ -121,10 +121,21 @@ def classify(
     report("dataset-file row -> missing document",
            [f.id for f in dataset_files if not f.doc_id or f.doc_id not in doc_ids])
 
+    # A deliberately retired record is a tombstone, not an orphan.  It is kept
+    # so the chain of custody stays auditable and it is never served to an
+    # investigator, so a dangling document reference on one is expected.  Only
+    # *active* records can orphan a live view.
+    def _live(item) -> bool:
+        return bool((item.properties or {}).get("is_active", True))
+
+    live_nodes = [n for n in nodes if _live(n)]
+    live_edges = [e for e in edges if _live(e)]
+
     # 6. relationship edge with no supporting record
     node_keys = {n.provenance_key for n in nodes}
+    live_node_keys = {n.provenance_key for n in live_nodes}
     edges_no_doc, edges_bad_endpoints = [], []
-    for e in edges:
+    for e in live_edges:
         props = e.properties or {}
         docs = props.get("source_doc_ids") or (
             [props["source_doc_id"]] if props.get("source_doc_id") else []
@@ -132,14 +143,14 @@ def classify(
         edge_id = getattr(e, "key", None) or f"{e.source}->{e.target}"
         if not docs or not (set(map(str, docs)) & doc_ids):
             edges_no_doc.append(edge_id)
-        if e.source not in node_keys or e.target not in node_keys:
+        if e.source not in live_node_keys or e.target not in live_node_keys:
             edges_bad_endpoints.append(edge_id)
     report("relationship edge with no supporting document", edges_no_doc)
     report("relationship edge with an unknown endpoint", edges_bad_endpoints)
 
     # 7. entity with an invalid case or document reference
     nodes_bad_case, nodes_bad_doc = [], []
-    for n in nodes:
+    for n in live_nodes:
         props = n.properties or {}
         for cid in props.get("case_ids") or []:
             if cid not in cases:
@@ -281,6 +292,12 @@ async def audit() -> int:
         print(f"  {mark} {count:>5}  {name}" + (f"   e.g. {sample}" if sample else ""))
     print("-" * 72)
     print(f"total orphan / integrity problems: {total}")
+    retired = [n for n in nodes if not (n.properties or {}).get("is_active", True)]
+    if retired:
+        print(
+            f"({len(retired)} retired graph record(s) are kept as tombstones and "
+            "excluded above; they are never served but stay auditable.)"
+        )
     return 1 if total else 0
 
 

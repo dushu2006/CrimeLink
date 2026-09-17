@@ -271,13 +271,38 @@ live: `doc-s2-0000` and `doc-s2-0039` both resolve through
 `/evidence/{id}/provenance` with all four checks green and the hash matching
 storage.
 
-**2. Deleting a document does not retire the graph entities it produced.**
-Three CSVs uploaded during the audit were removed from the database, which
-left one graph node and one edge citing a document that no longer resolved,
-plus three stray objects in storage. All were cleaned up. The underlying gap
-is still open: `services/documents.py::discard_quarantined` soft-deletes the
-row but has no graph-store API for retiring the derived entities, and
-`snapshot()` skips `is_active=False` nodes. See limitation 7.
+**2. Deleting a document did not retire the graph entities it produced.**
+An upload injects graph nodes and edges citing the new document.
+`discard_quarantined` soft-deleted the row and stopped there, leaving those
+records standing and citing a document that no longer resolves — so an
+investigator could still see the edge, click "Show Provenance", and land on
+"Provenance unavailable" for a record that was still displayed. Reproduced
+live: uploading a CDR injected 3 nodes and 5 edges, and discarding it left all
+8 behind.
+
+Fix: a new `retire_document(doc_id)` on the `GraphStore` port, implemented in
+both the embedded and Neo4j adapters. It deactivates every record whose
+*only* support was that document and drops the edges that lose support or an
+endpoint. A record citing other documents keeps standing on those. Retirement
+is a deactivation rather than a deletion, so the node still exists and still
+names the document that produced it — the chain of custody stays auditable —
+while `snapshot()` stops serving it.
+
+`discard_quarantined` now takes the container, calls it, and returns what it
+retired. The admin endpoint reports that in its message, and says so
+explicitly when the graph cleanup failed rather than claiming a clean discard
+it did not perform.
+
+Verified live: `graph.document_retired doc_id=4b01f725… edges=5 nodes=3`, and
+the audit went from 10 problems to 0.
+
+**Retired records are tombstones, not orphans.** The audit now skips
+`is_active=False` records when looking for dangling references — a correct
+retirement leaves a node that deliberately still names a deleted document, and
+counting that as an orphan would cry wolf on every discard. They are reported
+separately as an informational count. `tests/test_data_integrity_audit.py`
+pins both directions: retired-and-dangling is clean, active-and-dangling is a
+finding.
 
 ### Correction to an earlier claim
 

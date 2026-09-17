@@ -523,12 +523,44 @@ async def release_from_quarantine(session: AsyncSession, document: CaseDocument)
     return document
 
 
-async def discard_quarantined(session: AsyncSession, document: CaseDocument) -> CaseDocument:
-    """ADMIN action: soft-delete a quarantined document (never a row delete)."""
+async def discard_quarantined(
+    session: AsyncSession,
+    document: CaseDocument,
+    container: Container | None = None,
+) -> dict[str, Any]:
+    """ADMIN action: soft-delete a quarantined document (never a row delete).
+
+    The document is soft-deleted **and** the graph entities it produced are
+    retired.  Doing only the first leaves an orphan behind: the pipeline
+    injected nodes and edges citing this document, and after the row is gone
+    those records cite a document that no longer resolves.  The integrity audit
+    flags exactly that, and an investigator following the edge lands on
+    "Provenance unavailable" for a record that is still displayed.
+
+    Retirement deactivates rather than deletes, so the chain of custody stays
+    auditable.  Returns what was retired so the API can report it instead of
+    claiming a clean discard it did not perform.
+    """
     document.is_deleted = True
     document.quarantined = False
     await session.flush()
-    return document
+
+    retired = 0
+    if container is not None:
+        try:
+            retired = int(container.graph_store.retire_document(document.id) or 0)
+        except Exception:
+            # The document is already soft-deleted; failing the whole request
+            # now would report a failure for an operation that succeeded.  The
+            # orphan is real and must be visible, so surface it in the result
+            # rather than swallowing it.
+            log.exception(
+                "document.graph_retire_failed",
+                doc_id=document.id,
+            )
+            return {"document": document, "retired_nodes": 0, "retire_failed": True}
+
+    return {"document": document, "retired_nodes": retired, "retire_failed": False}
 
 
 def settings_snapshot() -> Settings:

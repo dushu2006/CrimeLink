@@ -155,6 +155,7 @@ export default function GraphPage() {
   const [pathFrom, setPathFrom] = useState("");
   const [pathTo, setPathTo] = useState("");
   const [paths, setPaths] = useState<unknown[] | null>(null);
+  const [pathError, setPathError] = useState<string | null>(null);
 
   // The graph backend actually in use, reported honestly (neo4j | embedded).
   useEffect(() => {
@@ -755,13 +756,27 @@ export default function GraphPage() {
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ source_key: pathFrom, target_key: pathTo }),
                     })
-                      .then((data) => setPaths(data.paths))
-                      .catch(() => setPaths([]))
+                      .then((data) => {
+                        setPaths(data.paths);
+                        setPathError(null);
+                      })
+                      // "No path found" and "the request failed" are different
+                      // answers; conflating them tells the investigator the two
+                      // entities are unconnected when we simply do not know.
+                      .catch((err: Error) => {
+                        setPaths(null);
+                        setPathError(err.message);
+                      })
                   }
                 >
                   {t("graph.pathSearch")}
                 </button>
               </div>
+              {pathError && (
+                <p className="muted" role="alert">
+                  {t("state.error")}: {pathError}
+                </p>
+              )}
               {paths && paths.length === 0 && (
                 <p className="muted">{t("graph.noPath")}</p>
               )}

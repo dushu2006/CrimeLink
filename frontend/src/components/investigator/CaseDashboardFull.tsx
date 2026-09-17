@@ -24,6 +24,7 @@ export function CaseDashboardFull({ caseId, onContinueInvestigation, onFocusEnti
   const [data, setData] = useState<CaseDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [restoreWarning, setRestoreWarning] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -54,7 +55,15 @@ export function CaseDashboardFull({ caseId, onContinueInvestigation, onFocusEnti
         state.focus = caseId;
         localStorage.setItem(stateKey, JSON.stringify(state));
       }
-    } catch {}
+    } catch (err) {
+      // Navigation still happens; the workspace just will not be pre-focused.
+      // Say so rather than pretending the restore succeeded.
+      setRestoreWarning(
+        `Could not save the continue-investigation state (${
+          err instanceof Error ? err.message : String(err)
+        }); the workspace will open without this case pre-selected.`,
+      );
+    }
     if (onContinueInvestigation) onContinueInvestigation(caseId);
     else navigate(`/investigate?case=${caseId}`);
   };
@@ -86,6 +95,14 @@ export function CaseDashboardFull({ caseId, onContinueInvestigation, onFocusEnti
 
   return (
     <div className={`case-dashboard-full ${className || ""}`}>
+      {restoreWarning && (
+        <div className="cl-error" role="alert">
+          <div className="cl-empty-desc">{restoreWarning}</div>
+          <button className="cl-btn" onClick={() => setRestoreWarning(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="case-dashboard-full-header">
         <div className="case-dashboard-full-header-top">
           <div className="case-dashboard-full-title-group">

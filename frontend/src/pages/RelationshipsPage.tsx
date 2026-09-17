@@ -39,11 +39,13 @@ export default function RelationshipsPage() {
   const [showEvidence, setShowEvidence] = useState(false);
   const [evidenceData, setEvidenceData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [focusMode, setFocusMode] = useState(false);
   const [showContradiction, setShowContradiction] = useState(false);
 
   useEffect(() => {
     async function load() {
+      setError(null);
       setLoading(true);
       try {
         // Person → Person comes from the relationship endpoint, which derives
@@ -120,11 +122,32 @@ export default function RelationshipsPage() {
             setSelectedPath(found.reasoning_path_typed || []);
           }
         }
-      } catch {}
+      } catch (err) {
+        // A failed request is a failure.  An empty network reads as "no
+        // relationships exist", which is a different and false claim.
+        setError(err instanceof Error ? err.message : String(err));
+      }
       setLoading(false);
     }
     void load();
   }, [focusParam, caseParam]);
+
+  if (error) {
+    return (
+      <div className="relationships-page">
+        <div className="page-header">
+          <h1>Relationships</h1>
+        </div>
+        <div className="cl-error">
+          <div className="cl-empty-title">Could not load the relationship network</div>
+          <div className="cl-empty-desc">{error}</div>
+          <button className="cl-btn" onClick={() => window.location.reload()}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

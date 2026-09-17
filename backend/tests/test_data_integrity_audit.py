@@ -340,3 +340,50 @@ def test_the_audit_tool_classifies_orphans_correctly():
     assert counts["finding with no resolvable evidence"] == 1
     assert counts["evidence record with no dataset-file row"] == 1
     assert counts["stored object with no document/dataset-file record"] == 1
+
+def test_retired_records_are_tombstones_not_orphans():
+    """A deliberately retired entity must not be reported as an orphan.
+
+    ``retire_document`` keeps the node so the chain of custody stays
+    auditable, which means it still names the document that produced it.  If
+    the audit counted that as an orphan it would cry wolf on every correct
+    retirement -- and an audit nobody trusts is worse than none.
+    """
+    from types import SimpleNamespace
+
+    from scripts.audit_data_quality import _Snap, classify
+
+    doc = SimpleNamespace(id="d1", storage_key="case-a/d1/f.pdf", case_id="c1",
+                          content_hash="x")
+    file_row = SimpleNamespace(id="df1", doc_id="d1", relative_path="case-a/d1/f.pdf")
+
+    live = _Snap("p:live", "Person", {"is_active": True, "case_ids": ["c1"],
+                                      "source_doc_ids": ["d1"]})
+    retired = _Snap("p:gone", "Phone", {"is_active": False, "case_ids": ["c1"],
+                                        "source_doc_ids": ["deleted-doc"],
+                                        "retired_by_document": "deleted-doc"})
+
+    counts = {
+        name: n
+        for name, n, _sample in classify(
+            cases={"c1"}, documents=[doc], dataset_files=[file_row], references=[],
+            findings=[], nodes=[live, retired], edges=[],
+            stored_keys={"case-a/d1/f.pdf"},
+        )
+    }
+
+    assert counts["entity -> unknown source document"] == 0, counts
+    assert sum(counts.values()) == 0, f"a correct retirement must audit clean: {counts}"
+
+    # …but the same record *while still active* is a genuine orphan.
+    active_orphan = _Snap("p:gone", "Phone", {"is_active": True, "case_ids": ["c1"],
+                                              "source_doc_ids": ["deleted-doc"]})
+    counts = {
+        name: n
+        for name, n, _sample in classify(
+            cases={"c1"}, documents=[doc], dataset_files=[file_row], references=[],
+            findings=[], nodes=[live, active_orphan], edges=[],
+            stored_keys={"case-a/d1/f.pdf"},
+        )
+    }
+    assert counts["entity -> unknown source document"] == 1, counts

@@ -217,12 +217,31 @@ async def quarantine_discard(
     document = await session.get(CaseDocument, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    await document_service.discard_quarantined(session, document)
+    result = await document_service.discard_quarantined(
+        session, document, container=_container()
+    )
+    retired = result["retired_nodes"]
+    message = "Document soft-deleted. No row is ever physically removed."
+    if retired:
+        message += (
+            f" {retired} graph entit{'y' if retired == 1 else 'ies'} derived from it "
+            "were retired so no edge cites a document that no longer resolves."
+        )
+    if result["retire_failed"]:
+        # Do not report a clean discard when the derived entities are still
+        # standing. The soft-delete happened; the graph cleanup did not.
+        message += (
+            " WARNING: the derived graph entities could not be retired, so this "
+            "document may still be cited by the graph. Run the data-integrity "
+            "audit."
+        )
     return {
         "document_id": document.id,
         "case_id": document.case_id,
         "status": "DISCARDED",
-        "message": "Document soft-deleted. No row is ever physically removed.",
+        "retired_nodes": retired,
+        "retire_failed": result["retire_failed"],
+        "message": message,
     }
 
 

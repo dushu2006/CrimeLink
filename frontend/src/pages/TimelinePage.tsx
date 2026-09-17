@@ -1,107 +1,240 @@
 /**
- * Timeline Page — Evidence-oriented, not generic event feed
- * FEB 18, 14:32 Communication Person A ↔ Person B Evidence E-103
+ * Timeline Page — Evidence-oriented, not a generic event feed.
  * RBAC: Both Investigator and Viewer can view (read-only)
+ *
+ * Every event comes from `/cases/{id}/timeline`, which is built from stored
+ * graph records.  A timestamp is shown only when the record has one, and the
+ * evidence chip opens the real document behind the event — never a synthesised
+ * `E-042` that resolves to nothing.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { masterGraph } from "../api/client";
+import { enhancedTimeline, type EnhancedTimelineEvent } from "../api/client";
 import { EvidenceDrawer } from "../components/investigator/EvidenceDrawer";
 import { useAuth } from "../store/auth";
 import { getRoleBadge } from "../lib/rbac";
 
+type EventRow = {
+  key: string;
+  timestamp: string | null;
+  type: string;
+  title: string;
+  description: string;
+  location: string | null;
+  participants: string[];
+  docIds: string[];
+  confidence: number;
+};
+
+function toRow(event: EnhancedTimelineEvent, index: number): EventRow {
+  const participants = (event.participants || [])
+    .map((p: any) => (typeof p === "string" ? p : p?.name))
+    .filter(Boolean);
+  const docIds = [
+    ...(event.evidence_doc_ids || []),
+    ...(event.source_doc_id ? [event.source_doc_id] : []),
+  ];
+  return {
+    key: event.event_key || `event-${index}`,
+    timestamp: event.timestamp ?? event.at ?? null,
+    type: event.event_type || event.type || "EVENT",
+    title: event.name || event.description || "Untitled event",
+    description: event.description || "",
+    location: event.location ?? null,
+    participants,
+    docIds: Array.from(new Set(docIds)),
+    confidence: typeof event.confidence === "number" ? event.confidence : 0,
+  };
+}
+
+function dayKey(timestamp: string | null): string {
+  if (!timestamp) return "No recorded timestamp";
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "No recorded timestamp";
+  return parsed.toLocaleDateString();
+}
+
+function timeLabel(timestamp: string | null): string {
+  if (!timestamp) return "Timestamp unavailable";
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "Timestamp unavailable";
+  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 export default function TimelinePage() {
-  const [events, setEvents] = useState<any[]>([]);
-  const [filterPerson, setFilterPerson] = useState("");
+  const [rows, setRows] = useState<EventRow[]>([]);
   const [filterType, setFilterType] = useState("");
+  const [filterParticipant, setFilterParticipant] = useState("");
   const [showDrawer, setShowDrawer] = useState(false);
-  const [drawerData, setDrawerData] = useState<any>(null);
+  const [drawerDocId, setDrawerDocId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchParams] = useSearchParams();
+  const [error, setError] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const session = useAuth((s) => s.session);
   const roleBadge = getRoleBadge(session?.role as any);
-  const caseParam = searchParams.get("case") || undefined;
+  const caseParam = searchParams.get("case") || "";
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      try {
-        const graph = await masterGraph();
-        const edges = graph.edges || [];
-        const grouped: Record<string, any[]> = {};
-        edges.forEach((e: any, i: number) => {
-          const date = "Unknown date";
-          if (!grouped[date]) grouped[date] = [];
-          grouped[date].push({
-            id: `E-${String(i + 42).padStart(3, "0")}`,
-            time: "Timestamp unavailable",
-            type: e.rel_type,
-            persons: `${e.source.slice(0, 12)} ↔ ${e.target.slice(0, 12)}`,
-            evidence: `E-${String(i + 42).padStart(3, "0")}`,
-            docId: e.source_doc_id,
-          });
-        });
-        const sorted = Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 10);
-        setEvents(sorted);
-      } catch {}
+  const load = useCallback(() => {
+    // The timeline is per-case: there is no cross-case timeline in the data,
+    // and inventing one would mean inventing events.
+    if (!caseParam) {
+      setRows([]);
       setLoading(false);
+      setError(null);
+      return;
     }
-    void load();
-  }, []);
+    setLoading(true);
+    setError(null);
+    enhancedTimeline(caseParam, {
+      event_type: filterType || undefined,
+      entity: filterParticipant || undefined,
+      limit: 500,
+    })
+      .then((res) => setRows(res.events.map(toRow)))
+      // A failed request is a failure — never an empty timeline.
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [caseParam, filterType, filterParticipant]);
 
-  if (loading) {
-    return (
-      <div className="timeline-page">
-        <div className="page-header">
-          <h1>Timeline</h1>
-          <p className="page-subtitle">Evidence-oriented timeline — When did connection occur?</p>
-        </div>
-        <div className="skeleton-timeline">
-          {[1,2,3].map((i) => (
-            <div key={i} className="skeleton-line w-80" />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  useEffect(load, [load]);
+
+  const grouped = useMemo(() => {
+    const buckets = new Map<string, EventRow[]>();
+    for (const row of rows) {
+      const key = dayKey(row.timestamp);
+      const existing = buckets.get(key);
+      if (existing) existing.push(row);
+      else buckets.set(key, [row]);
+    }
+    return Array.from(buckets.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [rows]);
+
+  const types = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.type))).sort(),
+    [rows],
+  );
 
   return (
     <div className="timeline-page">
       <div className="page-header">
         <div>
           <h1>Timeline</h1>
-          <p className="page-subtitle">Evidence-oriented timeline — When did connection occur?</p>
-          <div style={{ fontSize: "11px", fontFamily: "var(--font-mono)", color: "var(--muted)", marginTop: "4px" }}>
-            Evidence-grounded with real timestamps only. "Timestamp unavailable" if missing. · <span className={`badge badge-${roleBadge.tone}`}>{roleBadge.label}</span> · Read-only {caseParam ? `· Case: ${caseParam}` : ""}
+          <p className="page-subtitle">Evidence-oriented timeline — When did the connection occur?</p>
+          <div
+            style={{
+              fontSize: "11px",
+              fontFamily: "var(--font-mono)",
+              color: "var(--muted)",
+              marginTop: "4px",
+            }}
+          >
+            Evidence-grounded, real timestamps only ·{" "}
+            <span className={`badge badge-${roleBadge.tone}`}>{roleBadge.label}</span> · Read-only
+            {caseParam ? ` · Case: ${caseParam}` : ""}
           </div>
         </div>
         <div className="timeline-filters">
-          <select value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)}><option value="">Person</option></select>
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)}><option value="">Evidence type</option><option>Communication</option><option>Co-location</option></select>
-          <select><option>Location</option></select>
-          <select><option>Date</option></select>
+          <input
+            type="search"
+            value={caseParam}
+            placeholder="Case id (required)"
+            onChange={(event) => {
+              const merged = new URLSearchParams(searchParams);
+              if (event.target.value) merged.set("case", event.target.value);
+              else merged.delete("case");
+              setSearchParams(merged);
+            }}
+          />
+          <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+            <option value="">All event types</option>
+            {types.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+          <input
+            type="search"
+            value={filterParticipant}
+            placeholder="Entity name"
+            onChange={(e) => setFilterParticipant(e.target.value)}
+          />
         </div>
       </div>
 
-      {events.length === 0 ? (
-        <div className="cl-empty">
-          <div className="cl-empty-title">No timeline events yet</div>
-          <div className="cl-empty-desc">Timeline will show evidence-oriented events once data is available. Viewer sees only authorized timeline.</div>
+      {error && (
+        <div className="cl-error">
+          <div className="cl-empty-title">Could not load the timeline</div>
+          <div className="cl-empty-desc">{error}</div>
+          <button className="cl-btn" onClick={load}>
+            Retry
+          </button>
         </div>
-      ) : (
+      )}
+
+      {loading && !error && (
+        <div className="skeleton-timeline">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="skeleton-line w-80" />
+          ))}
+        </div>
+      )}
+
+      {!loading && !error && !caseParam && (
+        <div className="cl-empty">
+          <div className="cl-empty-title">Choose a case</div>
+          <div className="cl-empty-desc">
+            The timeline is built from a case's stored records, so it needs a case id. Pick one from
+            the Cases page or type it above.
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && caseParam && rows.length === 0 && (
+        <div className="cl-empty">
+          <div className="cl-empty-title">
+            {filterType || filterParticipant
+              ? "No events match this filter"
+              : "No timeline events for this case"}
+          </div>
+          <div className="cl-empty-desc">
+            {filterType || filterParticipant
+              ? "Clear the filters to see every recorded event."
+              : "Viewer sees only the authorized timeline."}
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && grouped.length > 0 && (
         <div className="timeline">
-          {events.map(([date, dayEvents]) => (
+          {grouped.map(([date, dayEvents]) => (
             <div key={date} className="timeline-date-group">
               <div className="timeline-date">{date}</div>
               <div className="timeline-events">
-                {(dayEvents as any[]).map((ev, idx) => (
-                  <button key={idx} className="timeline-event" onClick={() => { setDrawerData({ id: ev.evidence, title: ev.evidence, type: ev.type }); setShowDrawer(true); }}>
-                    <span className="timeline-time">{ev.time}</span>
+                {dayEvents.map((ev) => (
+                  <div key={ev.key} className="timeline-event">
+                    <span className="timeline-time">{timeLabel(ev.timestamp)}</span>
                     <span className="timeline-type">{ev.type}</span>
-                    <span className="timeline-persons">{ev.persons}</span>
-                    <span className="evidence-chip clickable">{ev.evidence}</span>
-                  </button>
+                    <span className="timeline-persons">
+                      {ev.title}
+                      {ev.participants.length > 0 && ` — ${ev.participants.join(", ")}`}
+                      {ev.location ? ` · ${ev.location}` : ""}
+                    </span>
+                    {ev.docIds.length > 0 ? (
+                      <button
+                        className="evidence-chip clickable"
+                        onClick={() => {
+                          setDrawerDocId(ev.docIds[0]);
+                          setShowDrawer(true);
+                        }}
+                      >
+                        {ev.docIds[0]}
+                      </button>
+                    ) : (
+                      <span className="evidence-chip">No source document recorded</span>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
@@ -109,7 +242,11 @@ export default function TimelinePage() {
         </div>
       )}
 
-      <EvidenceDrawer open={showDrawer} onClose={() => setShowDrawer(false)} data={drawerData} />
+      <EvidenceDrawer
+        open={showDrawer}
+        onClose={() => setShowDrawer(false)}
+        data={drawerDocId ? { id: drawerDocId } : null}
+      />
     </div>
   );
 }

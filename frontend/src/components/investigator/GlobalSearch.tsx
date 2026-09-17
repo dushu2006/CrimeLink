@@ -7,7 +7,7 @@
  * Actions: navigate / focus drawer / graph
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { globalSearch, type GlobalSearchResult } from "../../api/client";
 
@@ -16,6 +16,8 @@ interface Props {
   onOpenEvidence?: (docId: string) => void;
   onFocusPattern?: (patternId: string, caseId: string) => void;
   className?: string;
+  /** Runs the first search through the same path as a typed one. */
+  initialQuery?: string;
 }
 
 const CATEGORY_ORDER = ["entities", "cases", "evidence", "documents", "patterns", "locations"] as const;
@@ -37,9 +39,9 @@ const CATEGORY_ICONS: Record<string, string> = {
   locations: "📍",
 };
 
-export function GlobalSearch({ onFocusEntity, onOpenEvidence, onFocusPattern, className }: Props) {
+export function GlobalSearch({ onFocusEntity, onOpenEvidence, onFocusPattern, className, initialQuery }: Props) {
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [result, setResult] = useState<GlobalSearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +70,14 @@ export function GlobalSearch({ onFocusEntity, onOpenEvidence, onFocusPattern, cl
       setLoading(false);
     }
   }, []);
+
+  // A deep link (?q=...) must actually search.  Fetching the result in the
+  // page and never rendering it left the box empty with no error either.
+  useEffect(() => {
+    const trimmed = (initialQuery ?? "").trim();
+    if (trimmed) void doSearch(trimmed);
+    // Only on mount / when the link's query changes.
+  }, [initialQuery, doSearch]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
