@@ -73,6 +73,52 @@ FINANCIAL_WINDOW_DAYS = 7
 #: Transparency cap: at most this many set-aside entries per answer.
 MAX_EXCLUDED = 10
 
+#: Entity types that may be the *subject* of the person-centric analytical
+#: result.  Everything else — phones, bank accounts, vehicles, locations,
+#: organisations, events, documents — is supporting evidence: it can establish
+#: or explain a connection between people, but it is never the finding itself.
+PERSON_LABELS = frozenset({"PERSON", "SUSPECT"})
+
+#: Human reading of a supporting-entity label, used when a shared entity is
+#: reported as the *reason* two people are connected.
+#: Keys are normalised (upper, no separators) so ``BankAccount``,
+#: ``BANK_ACCOUNT`` and ``bank account`` all resolve the same way.
+SUPPORTING_ENTITY_WORD = {
+    "PHONE": "phone number",
+    "BANKACCOUNT": "bank account",
+    "ACCOUNT": "bank account",
+    "VEHICLE": "vehicle",
+    "ORGANIZATION": "organisation",
+    "ORGANISATION": "organisation",
+    "EVENT": "event",
+    "DOCUMENT": "document",
+    "CCTV": "CCTV record",
+    "LOCATION": "location",
+    "ADDRESS": "location",
+    "PLACE": "location",
+}
+def supporting_entity_word(label: str) -> str:
+    """Human reading of an entity label, for use inside a sentence.
+
+    Graph labels arrive in whatever case the injector used (``BankAccount``,
+    ``BANK_ACCOUNT``, ``Phone``), so a plain ``label.lower()`` produced
+    "bankaccount".  Normalise first: camel-case and snake-case both collapse to
+    the same key.
+    """
+    raw = str(label or "").strip()
+    if not raw:
+        return "record"
+    key = raw.upper().replace("_", "").replace("-", "").replace(" ", "")
+    if key in SUPPORTING_ENTITY_WORD:
+        return SUPPORTING_ENTITY_WORD[key]
+    # Fall back to a readable split of the label itself.
+    spaced = raw.replace("_", " ").replace("-", " ")
+    if spaced == raw and any(char.isupper() for char in raw[1:]):
+        spaced = "".join(
+            (" " + char) if char.isupper() else char for char in raw
+        ).strip()
+    return spaced.lower() or "record"
+
 LOCATION_LABELS = frozenset({"LOCATION", "ADDRESS", "PLACE"})
 PRESENCE_RELS = frozenset(
     {"PRESENT_AT", "OBSERVED_AT", "LOCATED_AT", "VISITED", "SEEN_AT", "RESIDES_AT"}
@@ -125,6 +171,12 @@ class DetectorContext:
     pending_aliases: list = field(default_factory=list)
     dismissed_signatures: set[str] = field(default_factory=set)
     dismissed_notes: dict[str, str] = field(default_factory=dict)
+    #: The analytical subject this run answers for.  ``"PERSON"`` (the default,
+    #: and what every investigator-facing scope uses) means findings must name
+    #: people; a supporting entity may appear inside the supporting basis but
+    #: never as the finding's subject.  ``"ENTITY"`` is the master/entity
+    #: deep-dive, where entity-level metrics are the point.
+    subject: str = "PERSON"
 
 
 def pair_signature(kind: str, entity_keys: list[str]) -> str:
@@ -147,6 +199,69 @@ def _node_name(snapshot: CaseGraphSnapshot, key: str) -> str:
     if node is None:
         return key
     return node.name or key
+
+
+def _is_person(node) -> bool:
+    """Whether a node is a person — by its canonical label, never its position."""
+    if node is None:
+        return False
+    return str(getattr(node, "label", "") or "").strip().upper() in PERSON_LABELS
+
+
+def _persons_linked_through(
+    snapshot: CaseGraphSnapshot,
+    entity_key: str,
+    *,
+    max_hops: int = 2,
+) -> dict[str, list[tuple[str, str]]]:
+    """The PEOPLE reachable from a supporting entity, with how they got there.
+
+    A shared phone or bank account is only ever interesting because of the
+    people attached to it, so this walks out from the entity and collects the
+    persons on the other side.  ``max_hops=2`` covers both shapes that occur in
+    the data::
+
+        Person → PHONE → Person                (1 hop out, the account/phone is shared)
+        Person → PHONE → PHONE → Person        (a recorded call between two numbers)
+
+    Returns ``{person_key: [(rel_type, via_node_name), ...]}``.  The path is kept
+    so the finding can say *why* the two people are connected instead of merely
+    asserting it.
+    """
+    nodes = snapshot.nodes or {}
+    edges = snapshot.edges or []
+
+    adjacency: dict[str, list] = defaultdict(list)
+    for edge in edges:
+        if edge.rel_type in META_RELS:
+            continue
+        adjacency[edge.source_key].append(edge)
+        adjacency[edge.target_key].append(edge)
+
+    found: dict[str, list[tuple[str, str]]] = {}
+    # (node_key, hops_used, human trail of rel_type/via pairs)
+    frontier: list[tuple[str, int, list[tuple[str, str]]]] = [(entity_key, 0, [])]
+    seen = {entity_key}
+
+    while frontier:
+        current, hops, trail = frontier.pop(0)
+        if hops >= max_hops:
+            continue
+        for edge in adjacency.get(current, []):
+            nxt = edge.target_key if edge.source_key == current else edge.source_key
+            if nxt in seen:
+                continue
+            node = nodes.get(nxt)
+            step_trail = [*trail, (edge.rel_type, _node_name(snapshot, current))]
+            if _is_person(node):
+                found.setdefault(nxt, []).append((edge.rel_type, _node_name(snapshot, current)))
+                # A person is a dead end: we do not walk through people to reach
+                # other people here, that is what the relationship graph is for.
+                continue
+            seen.add(nxt)
+            frontier.append((nxt, hops + 1, step_trail))
+
+    return found
 
 
 def _edge_docs(edges: list) -> set[str]:
@@ -304,47 +419,213 @@ def _apply_dismissal(
     return pattern
 
 
+#: Cap on person↔person findings emitted per shared supporting entity, so a
+#: hub phone attached to 40 people cannot flood the answer with 780 pairs.
+CROSS_CASE_PAIRS_PER_ENTITY = 6
+
+
+def _cross_case_entity_row(
+    key: str, node, cases: list[str]
+) -> SuspiciousPattern:
+    """The legacy entity-level finding, used only in ENTITY-subject scope.
+
+    A phone or bank account spanning several cases is a real structural fact,
+    but it is a fact about the *evidence graph*, not an investigative
+    conclusion about a person — so it is only surfaced where the analytical
+    subject is explicitly the entity graph.
+    """
+    name = node.name or key
+    evidence = [
+        make_evidence(
+            "record",
+            f"{name} is attributed to {len(cases)} in-scope cases.",
+            label=FACT,
+            provenance=[metric_pointer(name=f"case-span:{key}", label=f"spans {len(cases)} cases")],
+        )
+    ]
+    strength, factors = score_strength(independent_sources=len(cases))
+    return SuspiciousPattern(
+        kind="CROSS_CASE_ENTITY",
+        title=f"{name} appears in {len(cases)} cases",
+        explanation=(
+            f"The same canonical record ({key}) carries case attribution "
+            f"in {len(cases)} in-scope cases. This describes the evidence graph, "
+            "not a person: cross-case presence is worth checking and proves "
+            "nothing by itself."
+        ),
+        entities=[name],
+        entity_keys=[key],
+        cases=cases,
+        evidence=evidence,
+        inference_label=LEAD if strength in ("WEAK", "INSUFFICIENT") else CORROBORATED_LEAD,
+        strength=strength,
+        strength_factors=factors,
+        contradictions_considered=[
+            "The cases may legitimately share a witness, victim, or official."
+        ],
+        innocent_alternatives=[
+            "Same person, unrelated roles in each case (e.g. witness in one, complainant in another)."
+        ],
+    )
+
+
+def _shared_entity_pair_patterns(
+    ctx: DetectorContext, key: str, node, cases: list[str]
+) -> list[SuspiciousPattern]:
+    """Translate a cross-case supporting entity into the PEOPLE it connects.
+
+    This is the person-centric form of the cross-case signal.  A phone number
+    that appears in nine cases is not an investigative finding; the finding is
+    that *these two people* are attached to the same number, across these
+    cases.  The entity itself is demoted to the supporting basis, which is
+    where the investigator needs it — as the reason, never as the subject.
+    """
+    snapshot = ctx.snapshot
+    entity_name = node.name or key
+    entity_label = str(getattr(node, "label", "") or "").strip().upper()
+    entity_word = supporting_entity_word(entity_label)
+
+    persons = _persons_linked_through(snapshot, key)
+    if len(persons) < 2:
+        return []
+
+    # Order deterministically, then pair.  Pairs whose two people carry the
+    # widest case spread come first: those are the ones that actually bridge
+    # case boundaries rather than sitting inside one case.
+    ordered = sorted(persons)
+    ordered.sort(
+        key=lambda person_key: (
+            -len(set(_node_cases((snapshot.nodes or {}).get(person_key)))),
+            _node_name(snapshot, person_key),
+        )
+    )
+
+    out: list[SuspiciousPattern] = []
+    emitted = 0
+    for i, first in enumerate(ordered):
+        if emitted >= CROSS_CASE_PAIRS_PER_ENTITY:
+            break
+        for second in ordered[i + 1 :]:
+            if emitted >= CROSS_CASE_PAIRS_PER_ENTITY:
+                break
+            first_name = _node_name(snapshot, first)
+            second_name = _node_name(snapshot, second)
+            first_cases = set(_node_cases((snapshot.nodes or {}).get(first)))
+            second_cases = set(_node_cases((snapshot.nodes or {}).get(second)))
+            pair_cases = sorted(first_cases | second_cases)
+            if len(pair_cases) < 2:
+                # Both people sit inside a single case: nothing cross-case here,
+                # and the relationship graph already covers that connection.
+                continue
+
+            # The recorded links that actually attach each person to the entity.
+            first_links = persons[first]
+            second_links = persons[second]
+            evidence = [
+                make_evidence(
+                    "relationship",
+                    f"{first_name} is linked to {entity_name} via "
+                    f"{', '.join(sorted({rel for rel, _ in first_links})) or 'a recorded link'}.",
+                    label=FACT,
+                    provenance=[
+                        metric_pointer(
+                            name=f"shared-entity:{key}:{first}",
+                            label=f"{entity_word} {entity_name} → {first_name}",
+                        )
+                    ],
+                ),
+                make_evidence(
+                    "relationship",
+                    f"{second_name} is linked to {entity_name} via "
+                    f"{', '.join(sorted({rel for rel, _ in second_links})) or 'a recorded link'}.",
+                    label=FACT,
+                    provenance=[
+                        metric_pointer(
+                            name=f"shared-entity:{key}:{second}",
+                            label=f"{entity_word} {entity_name} → {second_name}",
+                        )
+                    ],
+                ),
+                make_evidence(
+                    "record",
+                    f"The shared {entity_word} {entity_name} is attributed to "
+                    f"{len(cases)} in-scope cases.",
+                    label=FACT,
+                    provenance=[
+                        metric_pointer(name=f"case-span:{key}", label=f"spans {len(cases)} cases")
+                    ],
+                ),
+            ]
+
+            strength, factors = score_strength(
+                independent_sources=max(len(pair_cases), 1)
+            )
+            out.append(
+                SuspiciousPattern(
+                    kind="CROSS_CASE_PERSON_LINK",
+                    title=f"{first_name} ↔ {second_name}: connected through {entity_name}",
+                    explanation=(
+                        f"Both people are attached to the same {entity_word} "
+                        f"({entity_name}), which is attributed to {len(cases)} "
+                        f"in-scope cases; between them the pair spans "
+                        f"{len(pair_cases)} case(s). The {entity_word} is the "
+                        "reason the connection exists — it is not itself the "
+                        "subject of this finding."
+                    ),
+                    entities=[first_name, second_name],
+                    entity_keys=[first, second],
+                    cases=pair_cases,
+                    evidence=evidence,
+                    inference_label=LEAD
+                    if strength in ("WEAK", "INSUFFICIENT")
+                    else CORROBORATED_LEAD,
+                    strength=strength,
+                    strength_factors=factors,
+                    contradictions_considered=[
+                        f"Sharing a {entity_word} can be innocent: a household "
+                        "line, a family account, an employer's vehicle.",
+                        "The cases may legitimately share a witness, victim, or official.",
+                    ],
+                    innocent_alternatives=[
+                        f"Both people legitimately use the same {entity_word} "
+                        "(household, family, or shared workplace).",
+                        "Same person, unrelated roles in each case.",
+                    ],
+                )
+            )
+            emitted += 1
+    return out
+
+
 def detect_cross_case_entities(ctx: DetectorContext) -> list[SuspiciousPattern]:
-    """One canonical entity appearing in two or more in-scope cases."""
+    """Canonical entities appearing in two or more in-scope cases.
+
+    Person-centric subject (the default, and what every investigator-facing
+    scope uses): a PERSON spanning cases is reported as that person; any other
+    entity spanning cases is *translated* into the person↔person connections it
+    carries, because "phone +919000000000 appears in 9 cases" is not an
+    investigative conclusion while "Priya Kumar ↔ Dinesh Malhotra share that
+    number across 4 cases" is.
+
+    Entity subject (the master/entity deep-dive): the entity-level row is kept,
+    labelled as a statement about the evidence graph rather than about a person.
+    """
     found: list[SuspiciousPattern] = []
+    person_centric = ctx.subject.upper() != "ENTITY"
+
     for key, node in (ctx.snapshot.nodes or {}).items():
         cases = sorted(set(_node_cases(node)))
         if len(cases) < 2:
             continue
-        name = node.name or key
-        evidence = [
-            make_evidence(
-                "record",
-                f"{name} is attributed to {len(cases)} in-scope cases.",
-                label=FACT,
-                provenance=[metric_pointer(name=f"case-span:{key}", label=f"spans {len(cases)} cases")],
-            )
-        ]
-        strength, factors = score_strength(independent_sources=len(cases))
-        found.append(
-            SuspiciousPattern(
-                kind="CROSS_CASE_ENTITY",
-                title=f"{name} appears in {len(cases)} cases",
-                explanation=(
-                    f"The same canonical record ({key}) carries case attribution "
-                    f"in {len(cases)} in-scope cases. Cross-case presence is worth "
-                    "checking and proves nothing by itself."
-                ),
-                entities=[name],
-                entity_keys=[key],
-                cases=cases,
-                evidence=evidence,
-                inference_label=LEAD if strength in ("WEAK", "INSUFFICIENT") else CORROBORATED_LEAD,
-                strength=strength,
-                strength_factors=factors,
-                contradictions_considered=[
-                    "The cases may legitimately share a witness, victim, or official."
-                ],
-                innocent_alternatives=[
-                    "Same person, unrelated roles in each case (e.g. witness in one, complainant in another)."
-                ],
-            )
-        )
+
+        if _is_person(node):
+            # A person spanning cases is a legitimate person-centric finding.
+            found.append(_cross_case_entity_row(key, node, cases))
+        elif person_centric:
+            found.extend(_shared_entity_pair_patterns(ctx, key, node, cases))
+        else:
+            found.append(_cross_case_entity_row(key, node, cases))
+
     return found
 
 
@@ -792,21 +1073,62 @@ def detect_community_signals(ctx: DetectorContext) -> list[SuspiciousPattern]:
         if len(keys) < MIN_COMMUNITY or frozenset(keys) in seen_groups:
             continue
         seen_groups.add(frozenset(keys))
-        names = [_node_name(ctx.snapshot, key) for key in keys]
+        nodes = ctx.snapshot.nodes or {}
+        person_centric = ctx.subject.upper() != "ENTITY"
+
+        if person_centric:
+            # Person-centric scope: the community is described by the PEOPLE in
+            # it.  Supporting entities are named as the mechanism that holds the
+            # group together, never listed as fellow members — otherwise a
+            # shared phone reads as a person in the group.
+            person_keys = [key for key in keys if _is_person(nodes.get(key))]
+            support_keys = [key for key in keys if not _is_person(nodes.get(key))]
+            if len(person_keys) < 2:
+                # Fewer than two people: there is no person-to-person group to
+                # report here, only evidence structure.
+                continue
+            names = [_node_name(ctx.snapshot, key) for key in person_keys]
+            support_names = [_node_name(ctx.snapshot, key) for key in support_keys]
+            title = (
+                f"Group of {len(person_keys)} people: "
+                f"{', '.join(names[:4])}{'…' if len(names) > 4 else ''}"
+            )
+            explanation = (
+                f"{len(person_keys)} people cluster as one community"
+                + (
+                    f", linked through {', '.join(support_names[:3])}"
+                    f"{'…' if len(support_names) > 3 else ''}"
+                    if support_names
+                    else ""
+                )
+                + ". Groups share routines — colleagues, neighbours, families — "
+                "far more often than they share intent."
+            )
+            entity_keys_out = person_keys
+        else:
+            names = [_node_name(ctx.snapshot, key) for key in keys]
+            support_names = []
+            title = (
+                f"Group of {len(keys)}: {', '.join(names[:4])}"
+                f"{'…' if len(names) > 4 else ''}"
+            )
+            explanation = (
+                f"{len(keys)} records cluster as one community. Groups share "
+                "routines — colleagues, neighbours, families — far more often "
+                "than they share intent."
+            )
+            entity_keys_out = keys
+
         strength, factors = score_strength(
             independent_sources=1, notes=["Community membership is a grouping, not an accusation."]
         )
         found.append(
             SuspiciousPattern(
                 kind="COMMUNITY_SIGNAL",
-                title=f"Group of {len(keys)}: {', '.join(names[:4])}{'…' if len(names) > 4 else ''}",
-                explanation=(
-                    f"{len(keys)} records cluster as one community. Groups share "
-                    "routines — colleagues, neighbours, families — far more often "
-                    "than they share intent."
-                ),
+                title=title,
+                explanation=explanation,
                 entities=names,
-                entity_keys=keys,
+                entity_keys=entity_keys_out,
                 evidence=[
                     make_evidence(
                         "metric",
@@ -1058,9 +1380,17 @@ def _enrich_pattern(ctx: DetectorContext, pattern: SuspiciousPattern) -> Suspici
         }
     )
 
+    # "Why was this surfaced?" must describe only what the numbers actually
+    # show.  Every metric is reported when it was computed, and the value is
+    # always printed next to the adjective — so a betweenness of 0.00 can never
+    # be described as "elevated", which is what `is not None` used to allow.
     why_parts: list[str] = []
     if basis.betweenness_centrality is not None:
-        why_parts.append(f"elevated betweenness centrality ({basis.betweenness_centrality:.2f})")
+        betweenness_value = float(basis.betweenness_centrality)
+        if betweenness_value > 0:
+            why_parts.append(f"betweenness centrality {betweenness_value:.2f} (above zero)")
+        else:
+            why_parts.append("betweenness centrality 0.00 (not a structural bridge)")
     if basis.cross_case_count:
         why_parts.append(f"cross-case presence in {basis.cross_case_count} case(s)")
     if basis.bridge_info and basis.bridge_info.get("bridge_count"):

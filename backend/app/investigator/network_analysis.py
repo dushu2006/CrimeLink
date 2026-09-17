@@ -65,7 +65,7 @@ from .orchestrator import (
     load_inputs,
     scope_label,
 )
-from .patterns import detect_all_patterns
+from .patterns import _is_person, detect_all_patterns
 from .prompts import build_investigation_prompt
 from .relationships import discover_relationships
 from .schemas import (
@@ -136,15 +136,31 @@ def node_shape_rule(node: Any) -> str:
 
 
 def _top_metric(
-    centrality: CentralityResult, snapshot: CaseGraphSnapshot, metric: str, limit: int
+    centrality: CentralityResult,
+    snapshot: CaseGraphSnapshot,
+    metric: str,
+    limit: int,
+    subject: str = "PERSON",
 ) -> list[dict[str, Any]]:
+    """Top nodes by one centrality metric, restricted to the analytical subject.
+
+    Ranking is taken over the whole computed graph — the numbers are real
+    graph metrics either way — but a person-centric scope only *reports* the
+    people.  A hub phone outranking every person on weighted degree is a true
+    statement about the evidence graph and a misleading one about an
+    investigation, so it stays out of the person-centric answer.
+    """
     scores = getattr(centrality, metric, None)
     if not isinstance(scores, dict) or not scores:
         return []
-    ordered = sorted(scores.items(), key=lambda kv: -kv[1])[:limit]
+    ordered = sorted(scores.items(), key=lambda kv: -kv[1])
     out: list[dict[str, Any]] = []
     for key, value in ordered:
         node = snapshot.nodes.get(key)
+        if subject.upper() != "ENTITY" and not _is_person(node):
+            continue
+        if len(out) >= limit:
+            break
         case_ids = list((node.properties or {}).get("case_ids", []) or []) if node else []
         out.append(
             {
@@ -186,10 +202,22 @@ def _communities(
 
 
 def _cross_case(
-    snapshot: CaseGraphSnapshot, centrality: CentralityResult, limit: int
+    snapshot: CaseGraphSnapshot,
+    centrality: CentralityResult,
+    limit: int,
+    subject: str = "PERSON",
 ) -> list[dict[str, Any]]:
+    """Entities spanning more than one case, restricted to the subject.
+
+    A person-centric scope lists the PEOPLE who span cases.  Supporting
+    entities that span cases are handled by the pattern detectors, which
+    translate them into the person↔person connections they carry — that is the
+    form an investigator can act on.
+    """
     rows: list[tuple[str, Any, int, float]] = []
     for key, node in snapshot.nodes.items():
+        if subject.upper() != "ENTITY" and not _is_person(node):
+            continue
         cids = set((node.properties or {}).get("case_ids", []) or [])
         if len(cids) > 1:
             rows.append((key, node, len(cids), float(centrality.betweenness.get(key, 0.0))))
@@ -409,6 +437,13 @@ async def analyze_network(
     if mode not in ("master", "case", "person"):
         raise ValidationFailedError(f"Unknown network analysis mode '{mode}'.")
 
+    # The analytical subject this run answers for.  CASE and PERSON scopes are
+    # investigator-facing and therefore person-centric: metrics, rankings and
+    # cross-case lists must name people.  MASTER is the entity/evidence
+    # deep-dive, where entity-level structure is genuinely the point — and is
+    # labelled as such wherever it is rendered.
+    subject = "ENTITY" if mode == "master" else "PERSON"
+
     await _report("PREPARING", 5, "Preparing scope and loading graph snapshot")
     stage_t = time.monotonic()
 
@@ -509,6 +544,7 @@ async def analyze_network(
             pending_aliases=inputs.pending_aliases,
             dismissed_signatures=inputs.dismissed_signatures,
             dismissed_notes=inputs.dismissed_notes,
+            subject=subject,
         ),
         max_patterns=max_patterns,
         include_excluded=include_excluded,
@@ -823,15 +859,16 @@ async def analyze_network(
             "edges": len(inputs.snapshot.edges or []),
             "communities": len(centrality.community_members),
         },
+        "subject": subject,
         "metrics": {
-            "betweenness": _top_metric(centrality, inputs.snapshot, "betweenness", METRIC_TOP),
-            "degree": _top_metric(centrality, inputs.snapshot, "degree", METRIC_TOP),
-            "weighted_degree": _top_metric(centrality, inputs.snapshot, "weighted_degree", METRIC_TOP),
-            "pagerank": _top_metric(centrality, inputs.snapshot, "pagerank", METRIC_TOP),
+            "betweenness": _top_metric(centrality, inputs.snapshot, "betweenness", METRIC_TOP, subject),
+            "degree": _top_metric(centrality, inputs.snapshot, "degree", METRIC_TOP, subject),
+            "weighted_degree": _top_metric(centrality, inputs.snapshot, "weighted_degree", METRIC_TOP, subject),
+            "pagerank": _top_metric(centrality, inputs.snapshot, "pagerank", METRIC_TOP, subject),
             "explanations": _METRIC_EXPLANATIONS,
         },
         "communities": _communities(centrality, inputs.snapshot, COMMUNITY_TOP),
-        "cross_case": _cross_case(inputs.snapshot, centrality, CROSS_CASE_TOP),
+        "cross_case": _cross_case(inputs.snapshot, centrality, CROSS_CASE_TOP, subject),
     }
 
     thread = await create_session(
