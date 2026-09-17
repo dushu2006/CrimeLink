@@ -1577,7 +1577,13 @@ def _preview_pptx_from_bytes(data: bytes) -> list[dict[str, Any]]:
                         pass
                 pages.append("\n".join(texts))
     except zipfile.BadZipFile as exc:
-        raise SourceAccessError(f"the PPTX could not be parsed ({type(exc).__name__}: {exc})", code="CORRUPTED") from exc
+        # ``SourceAccessError`` takes ``status``, not ``code``: this used to
+        # raise TypeError, turning a damaged presentation into a 500 instead of
+        # the CORRUPTED state the viewer knows how to explain.
+        raise SourceAccessError(
+            f"the PPTX could not be parsed ({type(exc).__name__}: {exc})",
+            status=STATUS_CORRUPTED,
+        ) from exc
 
     if not pages:
         raise SourceAccessError("the presentation contains no slides", status=STATUS_NO_EXTRACTED_TEXT)

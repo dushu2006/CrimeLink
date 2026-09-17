@@ -843,7 +843,12 @@ async def preview_file(
             result["file"]["doc_id"] = case_doc.id
             result["file"]["filename"] = case_doc.filename
         if minio_bytes is not None:
-            result["file"]["storage"] = "minio"
+            # The bytes came from the *object store*, which is only MinIO when
+            # the deployment says so.  Labelling a local-filesystem object
+            # store "minio" tells an investigator the wrong thing about where
+            # their evidence lives.
+            _store, _bucket, _is_minio, _is_prod = _get_object_store_for_sources()
+            result["file"]["storage"] = "minio" if _is_minio else "object_store"
             result["file"]["size_bytes"] = len(minio_bytes)
     if result["status"] in {source_viewer.STATUS_AVAILABLE, source_viewer.STATUS_NO_EXTRACTED_TEXT}:
         recorder.record("DOC_VIEW", target_resource=f"source:{resolved_relative_path}", details={"kind": result.get("render_kind")})
