@@ -314,6 +314,95 @@ export default function InvestigatorWorkspace() {
     };
   }, [selectedNode, personRelationships]);
 
+  /**
+   * The selected relationship's own evidence, for the Relationship sidebar.
+   *
+   * That panel used to print FACT / STRONG / count 1 for whatever edge was
+   * selected, and handed ContradictionAlert an empty list so it could never
+   * fire.  Strength, document count and contradictions now come from the edge.
+   */
+  const selectedEdgeSummary = useMemo(() => {
+    const empty = {
+      docCount: 0,
+      strength: "INSUFFICIENT" as "STRONG" | "MODERATE" | "WEAK" | "INSUFFICIENT",
+      contradictions: [] as string[],
+    };
+    if (!selectedEdge) return empty;
+
+    const props = (selectedEdge.properties ?? {}) as Record<string, unknown>;
+    const docs = new Set<string>(selectedEdge.source_doc_ids ?? []);
+    const items =
+      (props.supporting_items as
+        | Array<{
+            label?: string;
+            evidence?: { source_doc_id?: string };
+            source_doc_ids?: string[];
+          }>
+        | undefined) ?? [];
+    for (const item of items) {
+      const docId = item.evidence?.source_doc_id ?? item.source_doc_ids?.[0];
+      if (docId) docs.add(docId);
+    }
+
+    const rank = ["INSUFFICIENT", "WEAK", "MODERATE", "STRONG"];
+    const raw = typeof props.strength === "string" ? props.strength : "INSUFFICIENT";
+    const strength = (rank.includes(raw) ? raw : "INSUFFICIENT") as
+      | "STRONG"
+      | "MODERATE"
+      | "WEAK"
+      | "INSUFFICIENT";
+
+    return { docCount: docs.size, strength, contradictions: [] as string[] };
+  }, [selectedEdge]);
+
+  /**
+   * What the "Trust & Provenance" sidebar reports on.
+   *
+   * Four ticks used to sit there permanently, attached to nothing at all.  The
+   * panel now describes the current selection — the relationship if one is
+   * open, otherwise the selected person — and asks for a selection when there
+   * is neither.
+   */
+  const trustTarget = useMemo(() => {
+    if (selectedEdge) {
+      const props = (selectedEdge.properties ?? {}) as Record<string, unknown>;
+      const items =
+        (props.supporting_items as
+          | Array<{
+              label?: string;
+              evidence?: { source_doc_id?: string };
+              source_doc_ids?: string[];
+              properties?: Record<string, unknown>;
+            }>
+          | undefined) ?? [];
+      return {
+        checks: provenanceChecksFor({
+          supporting_evidence: items.map((item) => ({
+            timestamp: String(item.properties?.first_ts ?? item.properties?.ts ?? ""),
+            source_doc_id: item.evidence?.source_doc_id ?? item.source_doc_ids?.[0] ?? "",
+          })),
+          evidence_refs: selectedEdge.source_doc_ids ?? [],
+          provenance: items
+            .map((item) => ({
+              ref: item.evidence?.source_doc_id ?? item.source_doc_ids?.[0] ?? "",
+            }))
+            .filter((entry) => entry.ref !== ""),
+          // A relationship record states what the evidence does not establish.
+          limitations:
+            typeof props.limitations === "string" && props.limitations
+              ? [props.limitations]
+              : Array.isArray(props.limitations)
+                ? (props.limitations as string[])
+                : [],
+        }),
+      };
+    }
+    if (selectedNode && selectedNodeSummary.edgeCount > 0) {
+      return { checks: selectedNodeSummary.checks };
+    }
+    return null;
+  }, [selectedEdge, selectedNode, selectedNodeSummary]);
+
   return (
     <div className="investigator-workspace">
       <header className="page-header">
@@ -620,23 +709,33 @@ export default function InvestigatorWorkspace() {
                 <div><strong>{selectedEdge.source} ↔ {selectedEdge.target}</strong></div>
                 <div>Type: {selectedEdge.rel_type}</div>
                 <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                  {/* FACT / STRONG / count 1 were literals here too, and the
+                      contradiction alert was handed an empty list, so it could
+                      never fire.  Both now read the selected edge's own
+                      records. */}
                   <ClassificationBadge classification="FACT" />
-                  <EvidenceStrength strength="STRONG" count={1} />
+                  <EvidenceStrength
+                    strength={selectedEdgeSummary.strength}
+                    count={selectedEdgeSummary.docCount}
+                  />
                 </div>
-                <ContradictionAlert details={[]} />
+                {selectedEdgeSummary.contradictions.length > 0 && (
+                  <ContradictionAlert details={selectedEdgeSummary.contradictions} />
+                )}
               </div>
             </div>
           )}
 
           <div className="sidebar-section">
             <h3>Trust & Provenance</h3>
-            <div style={{ fontSize: "11px", color: "var(--text-secondary)", display: "flex", flexDirection: "column", gap: "6px" }}>
-              <div>✓ Evidence verified</div>
-              <div>✓ Source traceable</div>
-              <div>✓ Provenance available</div>
-              <div>✓ No unsupported claims</div>
-              <div style={{ marginTop: "8px", fontFamily: "var(--font-mono)", fontSize: "10px", background: "var(--surface-secondary)", padding: "6px", borderRadius: "4px" }}>Based only on evidence shown. Unsupported claims excluded by grounding validation.</div>
-            </div>
+            {/* Four green ticks used to sit here permanently, attached to
+                nothing.  The panel now reports on the current selection and
+                says so when there is none. */}
+            {trustTarget ? (
+              <ProvenanceBadge {...trustTarget.checks} />
+            ) : (
+              <ProvenanceBadge unavailableReason="Select a person or a relationship to assess its evidence and provenance." />
+            )}
           </div>
 
           <div className="sidebar-section">

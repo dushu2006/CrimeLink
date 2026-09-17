@@ -279,3 +279,20 @@ test("the selected-node badges are derived, not literal", () => {
   assert.match(WORKSPACE2, /count=\{selectedNodeSummary\.docCount\}/);
   assert.match(WORKSPACE2, /No relationship records for this entity/);
 });
+
+test("the workspace's selected-edge badges and trust panel are derived", () => {
+  // The edge sidebar hardcoded FACT / STRONG / count 1 and handed the
+  // contradiction alert an empty list, so it could never fire.
+  assert.doesNotMatch(WORKSPACE2, /<EvidenceStrength strength="STRONG" count=\{1\} \/>/);
+  assert.doesNotMatch(WORKSPACE2, /<ContradictionAlert details=\{\[\]\} \/>/);
+  assert.match(WORKSPACE2, /strength=\{selectedEdgeSummary\.strength\}/);
+  assert.match(WORKSPACE2, /count=\{selectedEdgeSummary\.docCount\}/);
+  assert.match(WORKSPACE2, /selectedEdgeSummary\.contradictions\.length > 0/);
+});
+
+test("the workspace trust panel reports on a selection, not on nothing", () => {
+  assert.doesNotMatch(WORKSPACE2, /<div>✓ Evidence verified<\/div>/);
+  assert.doesNotMatch(WORKSPACE2, /<div>✓ No unsupported claims<\/div>/);
+  assert.match(WORKSPACE2, /trustTarget \?/);
+  assert.match(WORKSPACE2, /Select a person or a relationship to assess/);
+});
