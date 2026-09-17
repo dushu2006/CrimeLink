@@ -33,7 +33,7 @@ import { DeterministicFallbackCard } from "../components/investigator/Determinis
 import { PersonList } from "../components/investigator/PersonList";
 import { EvidenceStrength } from "../components/investigator/EvidenceStrength";
 import { ClassificationBadge } from "../components/investigator/ClassificationBadge";
-import { ProvenanceBadge } from "../components/investigator/ProvenanceBadge";
+import { ProvenanceBadge, provenanceChecksFor } from "../components/investigator/ProvenanceBadge";
 import { ContradictionAlert } from "../components/investigator/ContradictionAlert";
 
 function isPersonLabel(label: string): boolean {
@@ -241,6 +241,78 @@ export default function InvestigatorWorkspace() {
       casesCount: n.case_ids.length,
     }));
   }, [personNodes, personRelationships]);
+
+  /**
+   * Everything the "Selected" sidebar claims about a node, derived from the
+   * relationships that node actually has in this case.
+   *
+   * The badges here used to be literals (FACT / STRONG / count 2) with a trust
+   * indicator that ticked all four boxes, printed for whatever node was
+   * selected.  Nothing about a node is asserted now: strength is the strongest
+   * of its own edges, the count is its distinct supporting documents, and the
+   * trust checks come from those same records.
+   */
+  const selectedNodeSummary = useMemo(() => {
+    const empty = {
+      edgeCount: 0,
+      docCount: 0,
+      strength: "INSUFFICIENT" as "STRONG" | "MODERATE" | "WEAK" | "INSUFFICIENT",
+      checks: provenanceChecksFor({}),
+    };
+    if (!selectedNode) return empty;
+
+    const key = selectedNode.provenance_key;
+    const edges = personRelationships.filter(
+      (e) => e.source === key || e.target === key,
+    );
+    if (edges.length === 0) return empty;
+
+    const docs = new Set<string>();
+    const strengths: string[] = [];
+    const supporting: Array<{ timestamp?: string; source_doc_id?: string }> = [];
+    const provenance: Array<{ ref?: string }> = [];
+    for (const edge of edges) {
+      for (const docId of edge.source_doc_ids ?? []) docs.add(docId);
+      const strength = (edge.properties as Record<string, unknown> | undefined)?.strength;
+      if (typeof strength === "string") strengths.push(strength);
+      const items =
+        ((edge.properties as Record<string, unknown> | undefined)?.supporting_items as
+          | Array<{
+              label?: string;
+              evidence?: { source_doc_id?: string };
+              source_doc_ids?: string[];
+              properties?: Record<string, unknown>;
+            }>
+          | undefined) ?? [];
+      for (const item of items) {
+        const docId = item.evidence?.source_doc_id ?? item.source_doc_ids?.[0];
+        supporting.push({
+          timestamp: String(item.properties?.first_ts ?? item.properties?.ts ?? ""),
+          source_doc_id: docId ?? "",
+        });
+        if (docId) provenance.push({ ref: docId });
+      }
+    }
+
+    const rank = ["INSUFFICIENT", "WEAK", "MODERATE", "STRONG"];
+    const strength = strengths.reduce(
+      (best, current) => (rank.indexOf(current) > rank.indexOf(best) ? current : best),
+      "INSUFFICIENT",
+    ) as "STRONG" | "MODERATE" | "WEAK" | "INSUFFICIENT";
+
+    return {
+      edgeCount: edges.length,
+      docCount: docs.size,
+      strength,
+      // A relationship panel states its own limits; the sidebar has no
+      // limitations list, so "no unsupported claim" stays unassessed.
+      checks: provenanceChecksFor({
+        supporting_evidence: supporting,
+        evidence_refs: Array.from(docs),
+        provenance,
+      }),
+    };
+  }, [selectedNode, personRelationships]);
 
   return (
     <div className="investigator-workspace">
@@ -507,15 +579,31 @@ export default function InvestigatorWorkspace() {
             </ErrorBoundary>
           </div>
 
+
           {selectedNode && (
             <div className="sidebar-section">
               <h3>Selected</h3>
               <div style={{ padding: "8px", background: "var(--surface-secondary)", borderRadius: "6px", fontSize: "12px" }}>
                 <strong>{getDisplayLabel(selectedNode)}</strong> ({selectedNode.label})
                 <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                  <ClassificationBadge classification="FACT" />
-                  <EvidenceStrength strength="STRONG" count={2} />
-                  <ProvenanceBadge />
+                  {/* These used to be literals -- FACT, STRONG, count 2, and a
+                      trust badge that ticked all four boxes -- printed for
+                      whatever node happened to be selected.  They are now
+                      derived from the relationships that node actually has. */}
+                  {selectedNodeSummary.edgeCount === 0 ? (
+                    <span className="muted">
+                      No relationship records for this entity.
+                    </span>
+                  ) : (
+                    <>
+                      <ClassificationBadge classification="FACT" />
+                      <EvidenceStrength
+                        strength={selectedNodeSummary.strength}
+                        count={selectedNodeSummary.docCount}
+                      />
+                      <ProvenanceBadge {...selectedNodeSummary.checks} />
+                    </>
+                  )}
                 </div>
                 <div style={{ marginTop: "8px" }}>
                   <button className="cl-btn cl-btn-sm" onClick={() => setActiveTab("evidence")}>View Evidence</button>

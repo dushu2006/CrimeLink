@@ -221,3 +221,61 @@ test("the activity feed explains a failed check instead of only ticking", () => 
   assert.match(ACTIVITY, /provenanceChecks\.detail/);
   assert.match(ACTIVITY, /verified" : "unverified"/);
 });
+
+// ---------------------------------------------------------------------------
+// Relationship panel: derived ticks, not printed ones
+// ---------------------------------------------------------------------------
+
+const REL_PANEL = read("../src/components/investigator/RelationshipPanel.tsx");
+
+test("the relationship panel derives its checks from the records", () => {
+  assert.doesNotMatch(REL_PANEL, /<div>Temporal consistency: ✓<\/div>/);
+  assert.doesNotMatch(REL_PANEL, /<div>Provenance: ✓<\/div>/);
+  assert.match(REL_PANEL, /timestampsRecorded/);
+  assert.match(REL_PANEL, /provenanceRefs/);
+  // A placeholder string must not count as a recorded time.
+  assert.match(REL_PANEL, /value\.toLowerCase\(\) !== NO_TIMESTAMP/);
+});
+
+test("the relationship panel explains why a check failed", () => {
+  assert.match(REL_PANEL, /temporalDetail/);
+  assert.match(REL_PANEL, /provenanceDetail/);
+  assert.match(REL_PANEL, /No supporting record carries a recorded time/);
+  assert.match(REL_PANEL, /No provenance entry names a source document/);
+});
+
+// ---------------------------------------------------------------------------
+// Trust badge: a check with no input must not render as a pass
+// ---------------------------------------------------------------------------
+
+const BADGE = read("../src/components/investigator/ProvenanceBadge.tsx");
+const REL_PANEL2 = read("../src/components/investigator/RelationshipPanel.tsx");
+const WORKSPACE2 = read("../src/pages/InvestigatorWorkspace.tsx");
+const REL_PAGE2 = read("../src/pages/RelationshipsPage.tsx");
+
+test("the trust badge no longer defaults every check to true", () => {
+  assert.doesNotMatch(
+    BADGE,
+    /evidenceVerified = true, sourceTraceable = true, provenanceAvailable = true, noUnsupported = true/,
+    "a trust indicator must never default to trusted",
+  );
+  // An unassessed check renders as unknown, not as a tick.
+  assert.match(BADGE, /ok === undefined/);
+  assert.match(BADGE, /\? \{label\}/);
+});
+
+test("every trust badge call site passes real derived values", () => {
+  assert.doesNotMatch(REL_PANEL2, /<ProvenanceBadge \/>/);
+  assert.doesNotMatch(WORKSPACE2, /<ProvenanceBadge \/>/);
+  assert.doesNotMatch(REL_PAGE2, /<ProvenanceBadge \/>/);
+  assert.match(REL_PANEL2, /provenanceChecksFor\(relationship\)/);
+  assert.match(WORKSPACE2, /selectedNodeSummary\.checks/);
+  assert.match(REL_PAGE2, /provenanceChecksFor\(selected\)/);
+});
+
+test("the selected-node badges are derived, not literal", () => {
+  assert.doesNotMatch(WORKSPACE2, /<EvidenceStrength strength="STRONG" count=\{2\} \/>/);
+  assert.match(WORKSPACE2, /strength=\{selectedNodeSummary\.strength\}/);
+  assert.match(WORKSPACE2, /count=\{selectedNodeSummary\.docCount\}/);
+  assert.match(WORKSPACE2, /No relationship records for this entity/);
+});

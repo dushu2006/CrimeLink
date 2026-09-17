@@ -10,11 +10,11 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { PersonConnectionCard } from "../components/investigator/PersonConnectionCard";
 import { RelationshipPanel } from "../components/investigator/RelationshipPanel";
+import { ProvenanceBadge, provenanceChecksFor } from "../components/investigator/ProvenanceBadge";
 import { RelationshipPath } from "../components/investigator/RelationshipPath";
 import { EvidenceDrawer } from "../components/investigator/EvidenceDrawer";
 import { NoConnectionCard } from "../components/investigator/NoConnectionCard";
 import { ContradictionAlert } from "../components/investigator/ContradictionAlert";
-import { ProvenanceBadge } from "../components/investigator/ProvenanceBadge";
 import { ClassificationBadge } from "../components/investigator/ClassificationBadge";
 import { relationshipNetwork } from "../api/client";
 import { useAuth } from "../store/auth";
@@ -232,7 +232,11 @@ export default function RelationshipsPage() {
 
           <div className="relationships-sidebar">
             <div className="trust-provenance">
-              <ProvenanceBadge />
+              {selected ? (
+                <ProvenanceBadge {...provenanceChecksFor(selected)} />
+              ) : (
+                <ProvenanceBadge unavailableReason="Select a relationship to assess its evidence and provenance." />
+              )}
             </div>
 
             <div className="classification-legend" style={{ marginTop: "16px", padding: "12px", background: "var(--surface-secondary)", borderRadius: "8px", border: "1px solid var(--border-secondary)" }}>
