@@ -38,7 +38,7 @@ from app.config import get_settings
 from app.datasets import registry
 from app.db.models import Case, CaseDocument, Dataset, DatasetFile, SourceReference
 from app.db.session import get_db_session
-from app.errors import NotFoundError
+from app.errors import NotFoundError, ServiceUnavailableError
 from app.security.deps import (
     AuditRecorder,
     JurisdictionScope,
@@ -86,6 +86,13 @@ async def _active_dataset(session: AsyncSession) -> Dataset | None:
 async def _dataset_root(
     session: AsyncSession, dataset_id: str | None = None
 ) -> Path | None:
+    """The dataset's on-disk workspace, or ``None``.
+
+    ``None`` is **not** an error and must never be turned into one by a caller.
+    The object store is CrimeLink's storage architecture; a dataset whose files
+    live only there (the seeded demo corpus, any MinIO-backed deployment) has
+    no workspace directory at all, and every source still opens normally.
+    """
     dataset: Dataset | None = None
     if dataset_id:
         dataset = await registry.get_dataset(session, dataset_id)
@@ -95,6 +102,26 @@ async def _dataset_root(
         return None
     root = Path(dataset.root_path)
     return root if root.is_dir() else None
+
+
+def _assert_some_storage() -> None:
+    """Fail only when *neither* a workspace nor the object store can serve a file.
+
+    This is the honest "we cannot reach storage" error.  It is deliberately
+    distinct from "the file you asked for does not exist", which is a 404
+    naming the file — conflating the two is what made a missing-file question
+    answer "Active dataset workspace is unavailable."
+    """
+    try:
+        store, _bucket, _is_minio, _is_prod = _get_object_store_for_sources()
+    except SourceAccessError:
+        raise
+    except Exception as exc:
+        raise ServiceUnavailableError(f"Object storage is unreachable: {exc}") from exc
+    if store is None:
+        raise ServiceUnavailableError(
+            "Object storage is not configured, so source files cannot be opened."
+        )
 
 
 def _sign_source_path(relative_path: str, expires_s: int = SOURCE_URL_TTL_SECONDS) -> tuple[int, str]:
@@ -131,7 +158,14 @@ def _raw_url(relative_path: str) -> str:
 
 
 def _get_object_store_for_sources():
-    """Get object store — MinIO mandatory in production, fail loudly."""
+    """Get object store — MinIO mandatory in production, fail loudly.
+
+    The **container's** store is preferred over a freshly constructed one: the
+    container is built from the application's live settings, so the sources
+    routes read from exactly the same storage root the ingest pipeline wrote
+    to.  Constructing a second store from ``get_settings()`` is what let the
+    routes look in one directory while the dataset lived in another.
+    """
     settings = get_settings()
     is_prod = settings.profile == "production" or settings.environment == "production"
     backend = settings.effective_object_store_backend
@@ -140,12 +174,18 @@ def _get_object_store_for_sources():
             from app.adapters.objectstore.minio_store import MinioObjectStore
             store = MinioObjectStore(settings)
             return store, settings.minio_bucket_documents, True, is_prod
-        else:
-            if is_prod:
-                raise RuntimeError("MinIO mandatory in production but backend is not minio — refusing Local fallback")
-            from app.adapters.objectstore.local import LocalObjectStore
-            store = LocalObjectStore(settings)
-            return store, settings.minio_bucket_documents, False, is_prod
+        from app.container import get_container
+        try:
+            container_store = get_container().object_store
+            if container_store is not None:
+                return container_store, settings.minio_bucket_documents, False, is_prod
+        except Exception:
+            pass
+        if is_prod:
+            raise RuntimeError("MinIO mandatory in production but backend is not minio — refusing Local fallback")
+        from app.adapters.objectstore.local import LocalObjectStore
+        store = LocalObjectStore(settings)
+        return store, settings.minio_bucket_documents, False, is_prod
     except Exception as exc:
         if is_prod:
             from app.logging import get_logger
@@ -385,19 +425,60 @@ def _evaluation_guard(clean: str) -> None:
         )
 
 
+def _reject_unsafe_path(clean: str) -> None:
+    """Reject traversal, absolute and drive-qualified paths up front.
+
+    Runs *before* the evaluation guard so a traversal attempt is answered with
+    "your path is illegal" (422) rather than being misreported as
+    evaluation-only material.  Resolution itself is additionally sandboxed by
+    ``Path.is_relative_to`` and by the object store's own key lookup, so this
+    is defence in depth, not the only barrier — but it is the one that gives
+    the caller an accurate reason.
+    """
+    normalized = (clean or "").replace("\\", "/").split("#", 1)[0]
+    if not normalized.strip():
+        raise SourceAccessError(
+            "No source file was specified.", status=source_viewer.STATUS_NOT_FOUND
+        )
+    if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
+        raise SourceAccessError("Source paths must be relative to the dataset root.")
+    if any(part == ".." for part in Path(normalized).parts):
+        raise SourceAccessError("Source paths must not traverse outside the dataset.")
+
+
 async def _resolve_source_path(
     session: AsyncSession,
     dataset: Dataset,
-    root: Path,
+    root: Path | None,
     path: str | None = None,
     doc_id: str | None = None,
     dataset_file_id: str | None = None,
 ) -> tuple[Path | None, str, DatasetFile | None, CaseDocument | None, bytes | None]:
     """Resolve source file — MinIO-aware: returns (fs_path_or_none, relative_path, dataset_file, case_doc, minio_bytes_or_none).
 
-    Tries MinIO first when backend is minio, then filesystem. In production, MinIO mandatory.
+    Tries object storage first (MinIO in production, the local object store in
+    dev), then the dataset workspace on disk.
+
+    ``root`` may be ``None``.  That is a normal state, not an error: a dataset
+    whose files live only in the object store — which is exactly how the
+    seeded demo corpus and any MinIO-backed deployment are built — has no
+    workspace directory at all.  Callers must not treat that as "workspace
+    unavailable"; the object store is the storage architecture, and the
+    workspace copy is only ever a convenience.
     """
-    base = root.resolve()
+    base = root.resolve() if root is not None else None
+
+    def _fs(rel: str) -> Path | None:
+        """Resolve ``rel`` inside the workspace, or None if there is no workspace.
+
+        The ``is_relative_to`` check is the traversal guard: a symlink or a
+        ``..`` that escapes the workspace resolves outside ``base`` and is
+        rejected rather than served.
+        """
+        if base is None:
+            return None
+        cand = (base / rel).resolve()
+        return cand if (cand.is_file() and cand.is_relative_to(base)) else None
 
     # Helper to try MinIO for a relative path
     def _try_minio(rel: str) -> bytes | None:
@@ -424,8 +505,8 @@ async def _resolve_source_path(
             if minio_data is not None:
                 doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
                 return None, df.relative_path, df, doc, minio_data
-            cand = (base / df.relative_path.replace("\\", "/").lstrip("/")).resolve()
-            if cand.is_file() and cand.is_relative_to(base):
+            cand = _fs(df.relative_path.replace("\\", "/").lstrip("/"))
+            if cand is not None:
                 doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
                 return cand, df.relative_path, df, doc, None
 
@@ -447,8 +528,8 @@ async def _resolve_source_path(
                 minio_data = _try_minio(rel_clean)
                 if minio_data is not None:
                     return None, rel_clean, df, doc, minio_data
-                cand = (base / rel_clean).resolve()
-                if cand.is_file() and cand.is_relative_to(base):
+                cand = _fs(rel_clean)
+                if cand is not None:
                     return cand, rel_clean, df, doc, None
 
     # 3. Path-based resolution
@@ -460,26 +541,50 @@ async def _resolve_source_path(
     if any(part == ".." for part in Path(cleaned).parts):
         raise SourceAccessError("Source paths must not traverse outside the dataset.")
 
-    # Try MinIO for cleaned path before filesystem
-    minio_data = _try_minio(cleaned)
-    if minio_data is not None:
-        # Find associated metadata
-        df = (
+    # The active dataset must *own* this path before any bytes are served.
+    #
+    # Without this check a file left in the object store by a
+    # previously-active dataset stayed readable after the dataset was
+    # switched: the store lookup is by key alone and knows nothing about
+    # datasets.  Ownership is proven by a DatasetFile or CaseDocument row of
+    # the active dataset — the same rows /sources/files lists, so the listing
+    # and the reader can never disagree.
+    df = (
+        await session.execute(
+            select(DatasetFile).where(
+                DatasetFile.dataset_id == dataset.id,
+                DatasetFile.relative_path == cleaned,
+            )
+        )
+    ).scalars().first()
+    doc = await session.get(CaseDocument, df.doc_id) if (df and df.doc_id) else None
+    if df is None:
+        doc = (
             await session.execute(
-                select(DatasetFile).where(
-                    DatasetFile.dataset_id == dataset.id,
-                    DatasetFile.relative_path == cleaned,
+                select(CaseDocument).where(
+                    CaseDocument.dataset_id == dataset.id,
+                    CaseDocument.storage_key == cleaned,
                 )
             )
         ).scalars().first()
-        doc = None
-        if df and df.doc_id:
-            doc = await session.get(CaseDocument, df.doc_id)
-        return None, cleaned, df, doc, minio_data
 
-    # 3a. Direct check on disk in root
-    cand = (base / cleaned).resolve()
-    if cand.is_file() and cand.is_relative_to(base):
+    if df is not None or doc is not None:
+        minio_data = _try_minio(cleaned)
+        if minio_data is not None:
+            return None, cleaned, df, doc, minio_data
+        cand = _fs(cleaned)
+        if cand is not None:
+            return cand, cleaned, df, doc, None
+        # Registered but not stored: a data-integrity problem, reported as
+        # such rather than as "the file does not exist".
+        raise SourceNotFoundError(
+            f"{cleaned} is registered to the active dataset but its bytes are "
+            "not in object storage or the dataset workspace."
+        )
+
+    # 3a. Direct check on disk in the dataset workspace (if it has one)
+    cand = _fs(cleaned)
+    if cand is not None:
         df = (
             await session.execute(
                 select(DatasetFile).where(
@@ -519,8 +624,8 @@ async def _resolve_source_path(
             minio_data = _try_minio(rel_clean)
             if minio_data is not None:
                 return None, rel_clean, df, doc, minio_data
-            cand = (base / rel_clean).resolve()
-            if cand.is_file() and cand.is_relative_to(base):
+            cand = _fs(rel_clean)
+            if cand is not None:
                 return cand, rel_clean, df, doc, None
 
     # 3c. Check if cleaned matches a dataset_file_id
@@ -530,8 +635,8 @@ async def _resolve_source_path(
         if minio_data is not None:
             doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
             return None, df.relative_path, df, doc, minio_data
-        cand = (base / df.relative_path.replace("\\", "/").lstrip("/")).resolve()
-        if cand.is_file() and cand.is_relative_to(base):
+        cand = _fs(df.relative_path.replace("\\", "/").lstrip("/"))
+        if cand is not None:
             doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
             return cand, df.relative_path, df, doc, None
 
@@ -558,8 +663,8 @@ async def _resolve_source_path(
                 )
             ).scalars().first()
             return None, rel_clean, df, doc, minio_data
-        cand = (base / rel_clean).resolve()
-        if cand.is_file() and cand.is_relative_to(base):
+        cand = _fs(rel_clean)
+        if cand is not None:
             df = (
                 await session.execute(
                     select(DatasetFile).where(
@@ -570,18 +675,45 @@ async def _resolve_source_path(
             ).scalars().first()
             return cand, rel_clean, df, doc, None
 
-    # 3e. Leading segments stripped fallback
+    # 3e. Leading-segments-stripped fallback (a stored key that carries an
+    #     extra prefix).  Still dataset-scoped: a suffix match only counts if
+    #     the active dataset owns a row for it, and the metadata travels with
+    #     the bytes so the caller can show provenance rather than a bare file.
     parts = Path(cleaned).parts
     for i in range(1, len(parts)):
         sub = str(Path(*parts[i:])).replace("\\", "/")
+        sub_df = (
+            await session.execute(
+                select(DatasetFile).where(
+                    DatasetFile.dataset_id == dataset.id,
+                    DatasetFile.relative_path == sub,
+                )
+            )
+        ).scalars().first()
+        sub_doc = (
+            await session.get(CaseDocument, sub_df.doc_id)
+            if (sub_df and sub_df.doc_id)
+            else None
+        )
+        if sub_df is None and sub_doc is None:
+            sub_doc = (
+                await session.execute(
+                    select(CaseDocument).where(
+                        CaseDocument.dataset_id == dataset.id,
+                        CaseDocument.storage_key == sub,
+                    )
+                )
+            ).scalars().first()
+        if sub_df is None and sub_doc is None:
+            continue
         minio_data = _try_minio(sub)
         if minio_data is not None:
-            return None, sub, None, None, minio_data
-        cand = (base / sub).resolve()
-        if cand.is_file() and cand.is_relative_to(base):
-            return cand, sub, None, None, None
+            return None, sub, sub_df, sub_doc, minio_data
+        cand = _fs(sub)
+        if cand is not None:
+            return cand, sub, sub_df, sub_doc, None
 
-    raise SourceNotFoundError(f"Source file not found in the dataset: {cleaned}")
+    raise SourceNotFoundError(f"Source file not found in the active dataset: {cleaned}")
 
 
 @router.get("/preview")
@@ -602,13 +734,14 @@ async def preview_file(
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
     clean = path.split("#", 1)[0]
+    _reject_unsafe_path(clean)
     _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
         raise NotFoundError("No dataset is active.")
+    # No workspace directory is fine: the object store is the storage layer.
     root = await _dataset_root(session, dataset.id)
-    if root is None:
-        raise NotFoundError("Active dataset workspace is unavailable.")
+    _assert_some_storage()
     dataset_id = dataset.id
 
     try:
@@ -630,6 +763,9 @@ async def preview_file(
             "window": None,
         }
     except SourceAccessError as exc:
+        if exc.status != source_viewer.STATUS_NOT_FOUND:
+            # Traversal, absolute path, empty path: a bad request, not a state.
+            raise
         return {
             "status": exc.status,
             "reason": str(exc),
@@ -686,13 +822,14 @@ async def read_file(
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
     clean = path.split("#", 1)[0]
+    _reject_unsafe_path(clean)
     _evaluation_guard(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
         raise NotFoundError("No dataset is active.")
+    # No workspace directory is fine: the object store is the storage layer.
     root = await _dataset_root(session, dataset.id)
-    if root is None:
-        raise NotFoundError("Active dataset workspace is unavailable.")
+    _assert_some_storage()
     try:
         resolved_file, resolved_relative_path, dataset_file, case_doc, minio_bytes = await _resolve_source_path(
             session=session,
@@ -712,14 +849,11 @@ async def read_file(
             root=root,
         )
     except SourceNotFoundError as exc:
+        # 404, naming the file that is genuinely not there.
         raise NotFoundError(str(exc)) from exc
-    except SourceAccessError as exc:
-        return {
-            "status": exc.status,
-            "reason": str(exc),
-            "window": None,
-            "file": clean,
-        }
+    except SourceAccessError:
+        # Traversal, absolute path, empty path: a bad request, not a missing file.
+        raise
     recorder.record(
         "DOC_VIEW",
         target_resource=f"source:{resolved_relative_path}",
@@ -750,12 +884,13 @@ async def raw_file(
     MinIO is mandatory.
     """
     clean = path.split("#", 1)[0]
+    _reject_unsafe_path(clean)
     dataset = await _active_dataset(session)
     if dataset is None:
         raise NotFoundError("No dataset is active.")
+    # No workspace directory is fine: the object store is the storage layer.
     root = await _dataset_root(session, dataset.id)
-    if root is None:
-        raise NotFoundError("Active dataset workspace is unavailable.")
+    _assert_some_storage()
 
     try:
         resolved_file, resolved_relative_path, dataset_file, case_doc, minio_bytes = await _resolve_source_path(
@@ -766,8 +901,12 @@ async def raw_file(
             doc_id=doc_id,
             dataset_file_id=dataset_file_id,
         )
-    except (SourceNotFoundError, SourceAccessError) as exc:
+    except SourceNotFoundError as exc:
+        # 404, naming the file that is genuinely not there.
         raise NotFoundError(str(exc)) from exc
+    except SourceAccessError:
+        # Traversal, absolute path, empty path: a bad request, not a missing file.
+        raise
 
     authorised = False
     if exp is not None and sig is not None:

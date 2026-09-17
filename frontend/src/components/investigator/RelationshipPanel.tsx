@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { EvidenceStrength } from "./EvidenceStrength";
 import { ClassificationBadge } from "./ClassificationBadge";
-import { ProvenanceBadge } from "./ProvenanceBadge";
+import { ProvenanceBadge, provenanceChecksFor } from "./ProvenanceBadge";
 import { ContradictionAlert } from "./ContradictionAlert";
 import { RelationshipPath } from "./RelationshipPath";
 import { PersonRelationship } from "./PersonConnectionCard";
@@ -21,9 +21,31 @@ interface Props {
   onFocusPerson?: (key: string) => void;
 }
 
+const NO_TIMESTAMP = "timestamp unavailable";
+
 export function RelationshipPanel({ relationship, onViewEvidence, onViewTimeline, onOpenCase, onFocusPerson }: Props) {
   const [showWhy, setShowWhy] = useState(false);
   const [showEvidenceBreakdown, setShowEvidenceBreakdown] = useState(false);
+
+  // Derived, never asserted: a placeholder string is not a recorded time.
+  const supporting = relationship.supporting_evidence ?? [];
+  const timestampsRecorded = supporting.filter((item) => {
+    const value = (item.timestamp ?? "").trim();
+    return value !== "" && value.toLowerCase() !== NO_TIMESTAMP;
+  }).length;
+  const temporalDetail =
+    timestampsRecorded > 0
+      ? `${timestampsRecorded} of ${supporting.length} supporting records carry a recorded time`
+      : supporting.length > 0
+        ? "No supporting record carries a recorded time"
+        : "No supporting records";
+
+  const provenanceEntries = relationship.provenance ?? [];
+  const provenanceRefs = provenanceEntries.filter((entry) => (entry.ref ?? "").trim() !== "").length;
+  const provenanceDetail =
+    provenanceRefs > 0
+      ? `${provenanceRefs} provenance entr${provenanceRefs === 1 ? "y names" : "ies name"} a source document`
+      : "No provenance entry names a source document";
 
   return (
     <div className="relationship-panel">
@@ -63,9 +85,37 @@ export function RelationshipPanel({ relationship, onViewEvidence, onViewTimeline
         <div className="evidence-breakdown">
           <div>Direct evidence: {relationship.supporting_evidence?.length || 0}</div>
           <div>Independent sources: {relationship.evidence_refs?.length || 0}</div>
-          <div>Temporal consistency: ✓</div>
-          <div>Contradictions: {relationship.limitations?.some((l) => l.toLowerCase().includes("conflict")) ? "1" : "0"}</div>
-          <div>Provenance: ✓</div>
+          {/* "Temporal consistency" and "Provenance" used to be literal ticks,
+              printed whatever the relationship actually carried.  They are now
+              derived from the records: a relationship is temporally grounded
+              only if some supporting record has a real timestamp, and its
+              provenance is present only if some entry names a real document. */}
+          <div title={temporalDetail}>
+            Temporal consistency:{" "}
+            {timestampsRecorded > 0 ? (
+              <span className="provenance-check verified">✓</span>
+            ) : (
+              <span className="provenance-check unverified">✗</span>
+            )}{" "}
+            <span className="muted">{temporalDetail}</span>
+          </div>
+          <div>
+            Contradictions:{" "}
+            {relationship.limitations?.some((l) =>
+              l.toLowerCase().includes("conflict"),
+            )
+              ? "1"
+              : "0"}
+          </div>
+          <div title={provenanceDetail}>
+            Provenance:{" "}
+            {provenanceRefs > 0 ? (
+              <span className="provenance-check verified">✓</span>
+            ) : (
+              <span className="provenance-check unverified">✗</span>
+            )}{" "}
+            <span className="muted">{provenanceDetail}</span>
+          </div>
         </div>
       )}
 
@@ -117,7 +167,7 @@ export function RelationshipPanel({ relationship, onViewEvidence, onViewTimeline
             </div>
           </div>
 
-          <ProvenanceBadge />
+          <ProvenanceBadge {...provenanceChecksFor(relationship)} />
 
           {relationship.limitations?.some((l) => l.toLowerCase().includes("conflict") || l.toLowerCase().includes("contradict")) && (
             <ContradictionAlert details={relationship.limitations || []} onViewConflicting={() => onViewEvidence?.()} />

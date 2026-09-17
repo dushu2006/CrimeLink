@@ -3,9 +3,13 @@ Investigator Activity — Read-only for Viewer + Investigator
 Real persisted data from InvestigationFinding and InvestigationSession
 No hardcoded DEMO_ACTIVITY — genuine DB records
 """
+from typing import Any
+
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.container import get_container
 
 from app.db.session import get_db_session
 from app.db.models import InvestigationFinding, InvestigationSession, Case, User
@@ -14,6 +18,108 @@ from app.errors import NotFoundError
 from app.services import cases as case_service
 
 router = APIRouter(tags=["investigator-activity"])
+
+
+async def _provenance_checks(
+    session: AsyncSession, finding: InvestigationFinding
+) -> dict[str, Any]:
+    """Compute the provenance checks for one finding from stored records.
+
+    The activity feed used to print two permanent ticks — "Evidence verified"
+    and "Source traceable" — next to every finding, regardless of whether the
+    cited evidence existed at all.  A tick that is not backed by a check is
+    worse than no tick: it tells an investigator the chain was verified when
+    nobody verified anything.
+
+    These are computed, not asserted:
+      * ``evidence_verified`` — every document the finding cites resolves to a
+        live ``CaseDocument`` row, and its stored bytes still match the hash
+        recorded at ingestion (chain of custody).
+      * ``source_traceable`` — at least one of those documents has a
+        ``SourceReference`` naming the position in the original dataset file
+        it came from, so the chain reaches past the document to its origin.
+    """
+    from app.db.models import CaseDocument, SourceReference
+    from app.domain.provenance import content_hash
+
+    cited: set[str] = set()
+    for item in finding.evidence or []:
+        if isinstance(item, dict) and item.get("doc_id"):
+            cited.add(str(item["doc_id"]))
+        elif isinstance(item, str):
+            cited.add(item)
+
+    if not cited:
+        return {
+            "evidence_verified": False,
+            "source_traceable": False,
+            "evidence_cited": 0,
+            "evidence_resolved": 0,
+            "detail": "This finding cites no evidence document.",
+        }
+
+    rows = list(
+        (
+            await session.execute(
+                select(CaseDocument).where(
+                    CaseDocument.id.in_(cited), CaseDocument.is_deleted.is_(False)
+                )
+            )
+        ).scalars()
+    )
+    resolved = len(rows)
+
+    # Chain of custody: the stored bytes must still be the recorded bytes.
+    hashes_match = 0
+    try:
+        container = get_container()
+        bucket = container.settings.minio_bucket_documents
+        for doc in rows:
+            raw = container.object_store.get(bucket, doc.storage_key)
+            if content_hash(raw) == doc.content_hash:
+                hashes_match += 1
+    except Exception:  # noqa: BLE001 — unreadable storage is a failed check
+        hashes_match = 0
+
+    referenced = 0
+    if rows:
+        referenced = (
+            await session.execute(
+                select(func.count(func.distinct(SourceReference.doc_id))).where(
+                    SourceReference.doc_id.in_([d.id for d in rows])
+                )
+            )
+        ).scalar_one()
+
+    evidence_verified = resolved == len(cited) and hashes_match == resolved
+    source_traceable = referenced > 0
+
+    if not evidence_verified:
+        if resolved < len(cited):
+            detail = (
+                f"{len(cited) - resolved} of {len(cited)} cited evidence documents "
+                "do not resolve to a live record."
+            )
+        else:
+            detail = (
+                f"{resolved - hashes_match} of {resolved} cited documents no longer "
+                "match their recorded hash."
+            )
+    elif not source_traceable:
+        detail = "The cited documents resolve, but none carries a source reference."
+    else:
+        detail = (
+            f"All {resolved} cited documents resolve and match their recorded hash; "
+            f"{referenced} carry a source reference."
+        )
+
+    return {
+        "evidence_verified": evidence_verified,
+        "source_traceable": source_traceable,
+        "evidence_cited": len(cited),
+        "evidence_resolved": resolved,
+        "detail": detail,
+    }
 
 @router.get("/investigator-activity")
 async def list_investigator_activity(
@@ -119,6 +225,7 @@ async def list_investigator_activity(
             "status": finding.status,
             "method": finding.method,
             "entityKeys": finding.entity_keys,
+            "provenanceChecks": await _provenance_checks(session, finding),
         }
         activities.append(activity)
 
@@ -220,4 +327,5 @@ async def get_investigator_activity(
         "entityKeys": finding.entity_keys,
         "evidenceDetails": finding.evidence,
         "details": finding.details,
+        "provenanceChecks": await _provenance_checks(session, finding),
     }

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   masterGraph,
+  relationshipNetwork,
   type GraphNodeRow,
   type GraphEdgeRow,
   type InvestigatorResponse,
@@ -32,7 +33,7 @@ import { DeterministicFallbackCard } from "../components/investigator/Determinis
 import { PersonList } from "../components/investigator/PersonList";
 import { EvidenceStrength } from "../components/investigator/EvidenceStrength";
 import { ClassificationBadge } from "../components/investigator/ClassificationBadge";
-import { ProvenanceBadge } from "../components/investigator/ProvenanceBadge";
+import { ProvenanceBadge, provenanceChecksFor } from "../components/investigator/ProvenanceBadge";
 import { ContradictionAlert } from "../components/investigator/ContradictionAlert";
 
 function isPersonLabel(label: string): boolean {
@@ -59,8 +60,16 @@ export default function InvestigatorWorkspace() {
   const [masterEdges, setMasterEdges] = useState<GraphEdgeRow[]>([]);
   const [personNodes, setPersonNodes] = useState<GraphNodeRow[]>([]);
   const [personRelationships, setPersonRelationships] = useState<GraphEdgeRow[]>([]);
+  const [relationshipCounts, setRelationshipCounts] = useState<{
+    persons: number;
+    relationships: number;
+    relationships_total: number;
+    supporting_items: number;
+    confirmed_criminals: number;
+  } | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [entityLoading, setEntityLoading] = useState(false);
   const [showSupporting, setShowSupporting] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNodeRow | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdgeRow | null>(null);
@@ -74,28 +83,74 @@ export default function InvestigatorWorkspace() {
   const [showEvidenceDrawer, setShowEvidenceDrawer] = useState(false);
   const [investigationJob, setInvestigationJob] = useState<InvestigationJob | null>(null);
 
-  const loadMasterGraph = useCallback(async () => {
+  /**
+   * The primary graph is PERSON → PERSON, and it is *derived on the server*.
+   *
+   * This used to fetch the whole master entity graph (~575 nodes) and filter
+   * it down to people in the browser, which is exactly the wrong place to do
+   * it: the browser had already paid for every phone, account, vehicle and
+   * location before a single one was discarded.  `/graph/cases/{id}/relationships`
+   * walks those supporting entities server-side and returns only people plus
+   * one aggregated edge per relationship, carrying its evidence with it.
+   */
+  const loadRelationshipGraph = useCallback(async () => {
     if (!caseParam) return;
     setGraphLoading(true);
     setGraphError(null);
     try {
-      const graph = await masterGraph();
-      const nodes: GraphNodeRow[] = graph.nodes || [];
-      const edges: GraphEdgeRow[] = graph.edges || [];
-      setMasterNodes(nodes);
-      setMasterEdges(edges);
-      setPersonNodes(nodes.filter((n) => isPersonLabel(n.label)));
-      setPersonRelationships(edges.filter((e) => {
-        const fromNode = nodes.find((n) => n.provenance_key === e.source);
-        const toNode = nodes.find((n) => n.provenance_key === e.target);
-        return fromNode && toNode && isPersonLabel(fromNode.label) && isPersonLabel(toNode.label);
+      const network = await relationshipNetwork({ caseId: caseParam, limit: 200 });
+      const nodes: GraphNodeRow[] = network.nodes || [];
+      const edges: GraphEdgeRow[] = (network.edges || []).map((e) => ({
+        key: e.id,
+        source: e.source,
+        target: e.target,
+        rel_type: e.label,
+        confidence: e.confidence,
+        source_doc_ids: e.source_doc_ids,
+        source_doc_id: e.source_doc_ids[0] ?? null,
+        staging: false,
+        evidence: e.supporting_items[0]?.evidence ?? null,
+        properties: {
+          relationship_type: e.relationship_type,
+          relationship_types: e.relationship_types,
+          evidence_count: e.evidence_count,
+          supporting_items: e.supporting_items,
+          strength: e.strength,
+          cross_case: e.cross_case,
+          case_ids: e.case_ids,
+        },
       }));
+      setPersonNodes(nodes);
+      setPersonRelationships(edges);
+      setRelationshipCounts(network.counts);
     } catch (err: any) {
       setGraphError(err.message || "Failed to load graph");
     } finally {
       setGraphLoading(false);
     }
   }, [caseParam]);
+
+  /**
+   * The supporting entity layer is loaded on demand, never on page load.
+   * Requirement: the person graph must not drag the full entity graph with it.
+   */
+  const loadSupportingEntities = useCallback(async () => {
+    if (masterNodes.length > 0) {
+      setShowSupporting(true);
+      return;
+    }
+    setEntityLoading(true);
+    try {
+      const graph = await masterGraph();
+      setMasterNodes(graph.nodes || []);
+      setMasterEdges(graph.edges || []);
+      setShowSupporting(true);
+    } catch (err: any) {
+      setGraphError(err.message || "Failed to load supporting entities");
+    } finally {
+      setEntityLoading(false);
+    }
+  }, [masterNodes.length]);
 
   const loadEnhancedTimeline = useCallback(async () => {
     if (!caseParam) return;
@@ -112,10 +167,10 @@ export default function InvestigatorWorkspace() {
 
   useEffect(() => {
     if (caseParam) {
-      void loadMasterGraph();
+      void loadRelationshipGraph();
       void loadEnhancedTimeline();
     }
-  }, [caseParam, loadMasterGraph, loadEnhancedTimeline]);
+  }, [caseParam, loadRelationshipGraph, loadEnhancedTimeline]);
 
   const graphData = useMemo(() => {
     if (showSupporting) {
@@ -187,6 +242,167 @@ export default function InvestigatorWorkspace() {
     }));
   }, [personNodes, personRelationships]);
 
+  /**
+   * Everything the "Selected" sidebar claims about a node, derived from the
+   * relationships that node actually has in this case.
+   *
+   * The badges here used to be literals (FACT / STRONG / count 2) with a trust
+   * indicator that ticked all four boxes, printed for whatever node was
+   * selected.  Nothing about a node is asserted now: strength is the strongest
+   * of its own edges, the count is its distinct supporting documents, and the
+   * trust checks come from those same records.
+   */
+  const selectedNodeSummary = useMemo(() => {
+    const empty = {
+      edgeCount: 0,
+      docCount: 0,
+      strength: "INSUFFICIENT" as "STRONG" | "MODERATE" | "WEAK" | "INSUFFICIENT",
+      checks: provenanceChecksFor({}),
+    };
+    if (!selectedNode) return empty;
+
+    const key = selectedNode.provenance_key;
+    const edges = personRelationships.filter(
+      (e) => e.source === key || e.target === key,
+    );
+    if (edges.length === 0) return empty;
+
+    const docs = new Set<string>();
+    const strengths: string[] = [];
+    const supporting: Array<{ timestamp?: string; source_doc_id?: string }> = [];
+    const provenance: Array<{ ref?: string }> = [];
+    for (const edge of edges) {
+      for (const docId of edge.source_doc_ids ?? []) docs.add(docId);
+      const strength = (edge.properties as Record<string, unknown> | undefined)?.strength;
+      if (typeof strength === "string") strengths.push(strength);
+      const items =
+        ((edge.properties as Record<string, unknown> | undefined)?.supporting_items as
+          | Array<{
+              label?: string;
+              evidence?: { source_doc_id?: string };
+              source_doc_ids?: string[];
+              properties?: Record<string, unknown>;
+            }>
+          | undefined) ?? [];
+      for (const item of items) {
+        const docId = item.evidence?.source_doc_id ?? item.source_doc_ids?.[0];
+        supporting.push({
+          timestamp: String(item.properties?.first_ts ?? item.properties?.ts ?? ""),
+          source_doc_id: docId ?? "",
+        });
+        if (docId) provenance.push({ ref: docId });
+      }
+    }
+
+    const rank = ["INSUFFICIENT", "WEAK", "MODERATE", "STRONG"];
+    const strength = strengths.reduce(
+      (best, current) => (rank.indexOf(current) > rank.indexOf(best) ? current : best),
+      "INSUFFICIENT",
+    ) as "STRONG" | "MODERATE" | "WEAK" | "INSUFFICIENT";
+
+    return {
+      edgeCount: edges.length,
+      docCount: docs.size,
+      strength,
+      // A relationship panel states its own limits; the sidebar has no
+      // limitations list, so "no unsupported claim" stays unassessed.
+      checks: provenanceChecksFor({
+        supporting_evidence: supporting,
+        evidence_refs: Array.from(docs),
+        provenance,
+      }),
+    };
+  }, [selectedNode, personRelationships]);
+
+  /**
+   * The selected relationship's own evidence, for the Relationship sidebar.
+   *
+   * That panel used to print FACT / STRONG / count 1 for whatever edge was
+   * selected, and handed ContradictionAlert an empty list so it could never
+   * fire.  Strength, document count and contradictions now come from the edge.
+   */
+  const selectedEdgeSummary = useMemo(() => {
+    const empty = {
+      docCount: 0,
+      strength: "INSUFFICIENT" as "STRONG" | "MODERATE" | "WEAK" | "INSUFFICIENT",
+      contradictions: [] as string[],
+    };
+    if (!selectedEdge) return empty;
+
+    const props = (selectedEdge.properties ?? {}) as Record<string, unknown>;
+    const docs = new Set<string>(selectedEdge.source_doc_ids ?? []);
+    const items =
+      (props.supporting_items as
+        | Array<{
+            label?: string;
+            evidence?: { source_doc_id?: string };
+            source_doc_ids?: string[];
+          }>
+        | undefined) ?? [];
+    for (const item of items) {
+      const docId = item.evidence?.source_doc_id ?? item.source_doc_ids?.[0];
+      if (docId) docs.add(docId);
+    }
+
+    const rank = ["INSUFFICIENT", "WEAK", "MODERATE", "STRONG"];
+    const raw = typeof props.strength === "string" ? props.strength : "INSUFFICIENT";
+    const strength = (rank.includes(raw) ? raw : "INSUFFICIENT") as
+      | "STRONG"
+      | "MODERATE"
+      | "WEAK"
+      | "INSUFFICIENT";
+
+    return { docCount: docs.size, strength, contradictions: [] as string[] };
+  }, [selectedEdge]);
+
+  /**
+   * What the "Trust & Provenance" sidebar reports on.
+   *
+   * Four ticks used to sit there permanently, attached to nothing at all.  The
+   * panel now describes the current selection — the relationship if one is
+   * open, otherwise the selected person — and asks for a selection when there
+   * is neither.
+   */
+  const trustTarget = useMemo(() => {
+    if (selectedEdge) {
+      const props = (selectedEdge.properties ?? {}) as Record<string, unknown>;
+      const items =
+        (props.supporting_items as
+          | Array<{
+              label?: string;
+              evidence?: { source_doc_id?: string };
+              source_doc_ids?: string[];
+              properties?: Record<string, unknown>;
+            }>
+          | undefined) ?? [];
+      return {
+        checks: provenanceChecksFor({
+          supporting_evidence: items.map((item) => ({
+            timestamp: String(item.properties?.first_ts ?? item.properties?.ts ?? ""),
+            source_doc_id: item.evidence?.source_doc_id ?? item.source_doc_ids?.[0] ?? "",
+          })),
+          evidence_refs: selectedEdge.source_doc_ids ?? [],
+          provenance: items
+            .map((item) => ({
+              ref: item.evidence?.source_doc_id ?? item.source_doc_ids?.[0] ?? "",
+            }))
+            .filter((entry) => entry.ref !== ""),
+          // A relationship record states what the evidence does not establish.
+          limitations:
+            typeof props.limitations === "string" && props.limitations
+              ? [props.limitations]
+              : Array.isArray(props.limitations)
+                ? (props.limitations as string[])
+                : [],
+        }),
+      };
+    }
+    if (selectedNode && selectedNodeSummary.edgeCount > 0) {
+      return { checks: selectedNodeSummary.checks };
+    }
+    return null;
+  }, [selectedEdge, selectedNode, selectedNodeSummary]);
+
   return (
     <div className="investigator-workspace">
       <header className="page-header">
@@ -198,7 +414,9 @@ export default function InvestigatorWorkspace() {
             <span>·</span>
             <span>{personRelationships.length} relationships</span>
             <span>·</span>
-            <span>{masterEdges.length} evidence records</span>
+            <span>{relationshipCounts?.supporting_items ?? 0} supporting records</span>
+            <span>·</span>
+            <span>{relationshipCounts?.confirmed_criminals ?? 0} confirmed criminals</span>
           </div>
           <div className="investigator-questions">Who is involved? · What connects them? · What evidence supports?</div>
         </div>
@@ -272,17 +490,31 @@ export default function InvestigatorWorkspace() {
         <div className="investigator-main">
           <div className="graph-section">
             <div className="section-header">
-              <h2>{graphData.isFocused ? "People Network — PERSON → PERSON" : "Full Network"}</h2>
+              <h2>{graphData.isFocused ? "People Network — PERSON → PERSON" : "Supporting Entity Network"}</h2>
               <div className="section-actions">
-                <span className="cl-badge cl-badge-info">{graphData.isFocused ? "FOCUSED" : "MASTER"} · {graphData.nodes.length} persons · {graphData.edges.length} edges</span>
-                <button className="cl-btn cl-btn-sm" onClick={() => setShowSupporting(!showSupporting)}>
-                  {showSupporting ? "PERSON only" : "Show Evidence"}
+                <span className="cl-badge cl-badge-info">
+                  {graphData.isFocused
+                    ? `PEOPLE · ${graphData.nodes.length} persons · ${graphData.edges.length} relationships`
+                    : `ENTITIES · ${graphData.nodes.length} nodes · ${graphData.edges.length} edges`}
+                </span>
+                <button
+                  className="cl-btn cl-btn-sm"
+                  disabled={entityLoading}
+                  onClick={() => (showSupporting ? setShowSupporting(false) : void loadSupportingEntities())}
+                >
+                  {entityLoading ? "Loading entities…" : showSupporting ? "People only" : "Show supporting entities"}
                 </button>
-                <button className="cl-btn cl-btn-sm" onClick={() => void loadMasterGraph()}>Refresh</button>
+                <button className="cl-btn cl-btn-sm" onClick={() => void loadRelationshipGraph()}>Refresh</button>
               </div>
             </div>
 
-            <div className="graph-explanation">Primary graph emphasizes PEOPLE. Supporting entities (phone, vehicle, location, file, CCTV, doc, org, address) are internal evidence, not final nodes. Example: A owns PHONE-X contacted PHONE-Y belongs to B → A↔B with evidence.</div>
+            <div className="graph-explanation">
+              Primary graph is PERSON → PERSON. Supporting entities (phone, account, vehicle, address,
+              organization, call record, transaction) are walked server-side and collapse into one
+              relationship edge that carries its evidence — for example A and B both use PHONE-X and
+              PHONE-X called PHONE-Y used by B becomes a single “Communication · 4 records” edge.
+              The entity layer is loaded only when you ask for it.
+            </div>
 
             <ErrorBoundary>
               <div style={{ border: "1px solid var(--border-primary)", borderRadius: "8px", overflow: "hidden" }}>
@@ -291,7 +523,7 @@ export default function InvestigatorWorkspace() {
                   edges={graphData.edges}
                   loading={graphLoading}
                   error={graphError}
-                  onRetry={() => void loadMasterGraph()}
+                  onRetry={() => void loadRelationshipGraph()}
                   onSelectNode={(node) => {
                     setSelectedNode(node);
                     if (node) setSelectedEdge(null);
@@ -337,7 +569,7 @@ export default function InvestigatorWorkspace() {
                 {response && response.relationships.length === 0 && (
                   <NoConnectionCard
                     peopleSearched={personNodes.length}
-                    evidenceExamined={masterEdges.length}
+                    evidenceExamined={relationshipCounts?.supporting_items ?? 0}
                     reliableRelationshipsFound={0}
                     onExpandSearch={() => setQuestion("")}
                     onImportEvidence={() => navigate("/cases")}
@@ -436,15 +668,31 @@ export default function InvestigatorWorkspace() {
             </ErrorBoundary>
           </div>
 
+
           {selectedNode && (
             <div className="sidebar-section">
               <h3>Selected</h3>
               <div style={{ padding: "8px", background: "var(--surface-secondary)", borderRadius: "6px", fontSize: "12px" }}>
                 <strong>{getDisplayLabel(selectedNode)}</strong> ({selectedNode.label})
                 <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                  <ClassificationBadge classification="FACT" />
-                  <EvidenceStrength strength="STRONG" count={2} />
-                  <ProvenanceBadge />
+                  {/* These used to be literals -- FACT, STRONG, count 2, and a
+                      trust badge that ticked all four boxes -- printed for
+                      whatever node happened to be selected.  They are now
+                      derived from the relationships that node actually has. */}
+                  {selectedNodeSummary.edgeCount === 0 ? (
+                    <span className="muted">
+                      No relationship records for this entity.
+                    </span>
+                  ) : (
+                    <>
+                      <ClassificationBadge classification="FACT" />
+                      <EvidenceStrength
+                        strength={selectedNodeSummary.strength}
+                        count={selectedNodeSummary.docCount}
+                      />
+                      <ProvenanceBadge {...selectedNodeSummary.checks} />
+                    </>
+                  )}
                 </div>
                 <div style={{ marginTop: "8px" }}>
                   <button className="cl-btn cl-btn-sm" onClick={() => setActiveTab("evidence")}>View Evidence</button>
@@ -461,23 +709,33 @@ export default function InvestigatorWorkspace() {
                 <div><strong>{selectedEdge.source} ↔ {selectedEdge.target}</strong></div>
                 <div>Type: {selectedEdge.rel_type}</div>
                 <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                  {/* FACT / STRONG / count 1 were literals here too, and the
+                      contradiction alert was handed an empty list, so it could
+                      never fire.  Both now read the selected edge's own
+                      records. */}
                   <ClassificationBadge classification="FACT" />
-                  <EvidenceStrength strength="STRONG" count={1} />
+                  <EvidenceStrength
+                    strength={selectedEdgeSummary.strength}
+                    count={selectedEdgeSummary.docCount}
+                  />
                 </div>
-                <ContradictionAlert details={[]} />
+                {selectedEdgeSummary.contradictions.length > 0 && (
+                  <ContradictionAlert details={selectedEdgeSummary.contradictions} />
+                )}
               </div>
             </div>
           )}
 
           <div className="sidebar-section">
             <h3>Trust & Provenance</h3>
-            <div style={{ fontSize: "11px", color: "var(--text-secondary)", display: "flex", flexDirection: "column", gap: "6px" }}>
-              <div>✓ Evidence verified</div>
-              <div>✓ Source traceable</div>
-              <div>✓ Provenance available</div>
-              <div>✓ No unsupported claims</div>
-              <div style={{ marginTop: "8px", fontFamily: "var(--font-mono)", fontSize: "10px", background: "var(--surface-secondary)", padding: "6px", borderRadius: "4px" }}>Based only on evidence shown. Unsupported claims excluded by grounding validation.</div>
-            </div>
+            {/* Four green ticks used to sit here permanently, attached to
+                nothing.  The panel now reports on the current selection and
+                says so when there is none. */}
+            {trustTarget ? (
+              <ProvenanceBadge {...trustTarget.checks} />
+            ) : (
+              <ProvenanceBadge unavailableReason="Select a person or a relationship to assess its evidence and provenance." />
+            )}
           </div>
 
           <div className="sidebar-section">

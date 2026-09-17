@@ -10,16 +10,16 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { PersonConnectionCard } from "../components/investigator/PersonConnectionCard";
 import { RelationshipPanel } from "../components/investigator/RelationshipPanel";
+import { ProvenanceBadge, provenanceChecksFor } from "../components/investigator/ProvenanceBadge";
 import { RelationshipPath } from "../components/investigator/RelationshipPath";
 import { EvidenceDrawer } from "../components/investigator/EvidenceDrawer";
 import { NoConnectionCard } from "../components/investigator/NoConnectionCard";
-import { DeterministicFallbackCard } from "../components/investigator/DeterministicFallbackCard";
 import { ContradictionAlert } from "../components/investigator/ContradictionAlert";
-import { ProvenanceBadge } from "../components/investigator/ProvenanceBadge";
 import { ClassificationBadge } from "../components/investigator/ClassificationBadge";
-import { masterGraph, masterPersons } from "../api/client";
+import { relationshipNetwork } from "../api/client";
 import { useAuth } from "../store/auth";
 import { isInvestigator, getRoleBadge } from "../lib/rbac";
+import { classifyRelationship } from "../lib/classification";
 
 export default function RelationshipsPage() {
   const [searchParams] = useSearchParams();
@@ -33,60 +33,128 @@ export default function RelationshipsPage() {
   const focusParam = searchParams.get("focus") || undefined;
 
   const [relationships, setRelationships] = useState<any[]>([]);
+  const [peopleSearched, setPeopleSearched] = useState(0);
+  const [evidenceExamined, setEvidenceExamined] = useState(0);
   const [selected, setSelected] = useState<any>(null);
   const [selectedPath, setSelectedPath] = useState<any[]>([]);
   const [showEvidence, setShowEvidence] = useState(false);
   const [evidenceData, setEvidenceData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [focusMode, setFocusMode] = useState(false);
   const [showContradiction, setShowContradiction] = useState(false);
 
   useEffect(() => {
     async function load() {
+      setError(null);
       setLoading(true);
       try {
-        const personsRes = await masterPersons();
-        const persons = personsRes.items || [];
-        const personKeys = new Set(persons.map((p: any) => p.provenance_key));
-        const graph = await masterGraph();
-        const edges = graph.edges || [];
-        const personPerson = edges.filter((e: any) => personKeys.has(e.source) && personKeys.has(e.target));
-        const mapped = personPerson.slice(0, 20).map((e: any) => ({
-          source_person: e.source.slice(0, 12),
-          target_person: e.target.slice(0, 12),
-          source_real_key: e.source,
-          target_real_key: e.target,
-          relationship_type: e.rel_type === "ASSOCIATE_OF" ? "Communication" : e.rel_type,
-          classification: "INFERENCE" as const,
-          confidence: e.confidence || 0.75,
-          confidence_label: "Medium" as const,
-          evidence_strength: "MODERATE" as const,
-          evidence_refs: e.source_doc_ids?.length ? e.source_doc_ids.slice(0, 3) : ["E-042"],
-          supporting_evidence: [{ rel_type: e.rel_type, timestamp: "Timestamp unavailable" }],
-          provenance: [{ kind: "document", ref: e.source_doc_id || "doc-001", label: "Source record" }],
-          why: `${e.source.slice(0, 12)} and ${e.target.slice(0, 12)} are connected via ${e.rel_type.toLowerCase()}`,
-          limitations: ["Purpose of association beyond documented records is unknown", "Criminal intent not established by this evidence alone"],
-          timeline: [],
-          hop_count: 1,
-          reasoning_path_typed: [
-            { key: e.source, label: "Person", name: e.source.slice(0, 12), rel_type: e.rel_type },
-            { key: e.target, label: "Person", name: e.target.slice(0, 12), rel_type: "" },
-          ],
-        }));
+        // Person → Person comes from the relationship endpoint, which derives
+        // the edges server-side and aggregates every supporting record behind
+        // one edge.  It used to fetch the whole entity graph and filter for
+        // person endpoints in the browser.
+        const network = await relationshipNetwork({
+          caseId: caseParam,
+          limit: 40,
+          minEvidence: 1,
+        });
+        const nameOf = new Map(network.nodes.map((n) => [n.provenance_key, n.name]));
+        const starOf = new Map(network.nodes.map((n) => [n.provenance_key, Boolean(n.is_criminal)]));
+        const mapped = network.edges.map((e) => {
+          const sourceName = nameOf.get(e.source) ?? e.source;
+          const targetName = nameOf.get(e.target) ?? e.target;
+          const sourceStar = starOf.get(e.source) ?? false;
+          const targetStar = starOf.get(e.target) ?? false;
+          return {
+            source_person: sourceStar ? `★ ${sourceName}` : sourceName,
+            target_person: targetStar ? `★ ${targetName}` : targetName,
+            source_real_key: e.source,
+            target_real_key: e.target,
+            relationship_type: e.label,
+            // Derived from the edge, not stamped: a weak relationship is not a fact.
+            classification: classifyRelationship({
+              strength: e.strength,
+              confidence: e.confidence,
+              supportingCount: e.supporting_items.length,
+            }),
+
+            confidence: e.confidence,
+            confidence_label: (
+              e.strength === "STRONG" ? "High" : e.strength === "MODERATE" ? "Medium" : "Low"
+            ) as "High" | "Medium" | "Low",
+            evidence_strength: e.strength as "STRONG" | "MODERATE" | "WEAK",
+            evidence_refs: e.source_doc_ids.slice(0, 3),
+            supporting_evidence: e.supporting_items.map((item) => ({
+              rel_type: item.label,
+              timestamp: String(item.properties?.first_ts ?? item.properties?.ts ?? "Timestamp unavailable"),
+            })),
+            provenance: e.supporting_items.slice(0, 5).map((item) => ({
+              kind: "document",
+              ref: item.evidence?.source_doc_id ?? item.source_doc_ids[0] ?? item.ref,
+              label: item.label,
+            })),
+            why:
+              `${sourceName} and ${targetName} are connected by ${e.label.toLowerCase()}` +
+              (e.relationship_types.length > 1
+                ? ` (also: ${e.relationship_types
+                    .filter((t) => t !== e.relationship_type)
+                    .map((t) => t.replace(/_/g, " ").toLowerCase())
+                    .join(", ")})`
+                : "") +
+              `, supported by ${e.evidence_count} record${e.evidence_count === 1 ? "" : "s"}` +
+              (e.cross_case ? " across more than one case" : "") +
+              ".",
+            limitations: [
+              "Purpose of the association beyond the documented records is unknown",
+              "Criminal intent is not established by this evidence alone",
+            ],
+            timeline: [],
+            hop_count: 1,
+            reasoning_path_typed: [
+              { key: e.source, label: "Person", name: sourceName, rel_type: e.label },
+              { key: e.target, label: "Person", name: targetName, rel_type: "" },
+            ],
+          };
+        });
         setRelationships(mapped);
+        setPeopleSearched(network.counts.persons_total);
+        setEvidenceExamined(network.counts.supporting_items);
         if (focusParam) {
-          const found = mapped.find((r) => r.source_real_key === focusParam || r.target_real_key === focusParam);
+          const found = mapped.find(
+            (r) => r.source_real_key === focusParam || r.target_real_key === focusParam,
+          );
           if (found) {
             setSelected(found);
             setFocusMode(true);
             setSelectedPath(found.reasoning_path_typed || []);
           }
         }
-      } catch {}
+      } catch (err) {
+        // A failed request is a failure.  An empty network reads as "no
+        // relationships exist", which is a different and false claim.
+        setError(err instanceof Error ? err.message : String(err));
+      }
       setLoading(false);
     }
     void load();
-  }, [focusParam]);
+  }, [focusParam, caseParam]);
+
+  if (error) {
+    return (
+      <div className="relationships-page">
+        <div className="page-header">
+          <h1>Relationships</h1>
+        </div>
+        <div className="cl-error">
+          <div className="cl-empty-title">Could not load the relationship network</div>
+          <div className="cl-empty-desc">{error}</div>
+          <button className="cl-btn" onClick={() => window.location.reload()}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -159,27 +227,23 @@ export default function RelationshipsPage() {
                 </div>
               ))
             ) : (
-              <NoConnectionCard peopleSearched={12} evidenceExamined={31} reliableRelationshipsFound={0} />
-            )}
-
-            {investigator && (
-              <div className="deterministic-fallback-section" style={{ marginTop: "20px", padding: "12px", border: "1px dashed var(--border-primary)", borderRadius: "8px" }}>
-                <h4 style={{ fontSize: "12px", marginBottom: "8px" }}>AI Availability — Deterministic fallback</h4>
-                <DeterministicFallbackCard
-                  sourcePerson="PERSON-001"
-                  targetPerson="PERSON-024"
-                  relationshipType="Communication"
-                  evidenceCount={4}
-                  onViewEvidence={() => { setEvidenceData({ id: "E-042", title: "E-042" }); setShowEvidence(true); }}
-                  onViewTimeline={() => navigate(`/timeline?case=${caseParam || ""}`)}
-                />
-              </div>
+              <NoConnectionCard
+                peopleSearched={peopleSearched}
+                evidenceExamined={evidenceExamined}
+                reliableRelationshipsFound={0}
+                onExpandSearch={() => navigate(`/people?case=${caseParam || ""}`)}
+                onImportEvidence={() => navigate("/cases")}
+              />
             )}
           </div>
 
           <div className="relationships-sidebar">
             <div className="trust-provenance">
-              <ProvenanceBadge />
+              {selected ? (
+                <ProvenanceBadge {...provenanceChecksFor(selected)} />
+              ) : (
+                <ProvenanceBadge unavailableReason="Select a relationship to assess its evidence and provenance." />
+              )}
             </div>
 
             <div className="classification-legend" style={{ marginTop: "16px", padding: "12px", background: "var(--surface-secondary)", borderRadius: "8px", border: "1px solid var(--border-secondary)" }}>
@@ -194,7 +258,21 @@ export default function RelationshipsPage() {
 
             {showContradiction && (
               <div style={{ marginTop: "12px" }}>
-                <ContradictionAlert details={["E-042 Location X 14:00", "E-071 Location Y 14:05"]} onViewConflicting={() => { setEvidenceData({ id: "E-042", title: "Conflicting records" }); setShowEvidence(true); }} />
+                <ContradictionAlert
+                  details={
+                    selected?.supporting_evidence?.length
+                      ? selected.supporting_evidence.map(
+                          (s: any) => `${s.rel_type} — ${s.timestamp || "Timestamp unavailable"}`,
+                        )
+                      : ["No supporting records are recorded for the selected relationship"]}
+                  onViewConflicting={() => {
+                    const ref = selected?.evidence_refs?.[0];
+                    if (ref) {
+                      setEvidenceData({ id: ref, title: ref });
+                      setShowEvidence(true);
+                    }
+                  }}
+                />
               </div>
             )}
 
@@ -207,9 +285,11 @@ export default function RelationshipsPage() {
             <div className="next-steps" style={{ marginTop: "16px", padding: "12px", background: "var(--surface-secondary)", borderRadius: "8px" }}>
               <h4 style={{ fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>What can you do next?</h4>
               <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
-                <li><button className="next-step-btn" onClick={() => { setEvidenceData({ id: "E-042", title: "E-042" }); setShowEvidence(true); }}>→ Review E-042 — Evidence supporting</button></li>
+                {selected?.evidence_refs?.[0] && (
+                  <li><button className="next-step-btn" onClick={() => { setEvidenceData({ id: selected.evidence_refs[0], title: selected.evidence_refs[0] }); setShowEvidence(true); }}>→ Review {selected.evidence_refs[0]} — Evidence supporting</button></li>
+                )}
                 <li><button className="next-step-btn" onClick={() => navigate(`/timeline?case=${caseParam || ""}`)}>→ Examine timeline — When?</button></li>
-                {investigator && <li><button className="next-step-btn" onClick={() => setShowContradiction(!showContradiction)}>→ Review conflicting records — Limitations</button></li>}
+                {investigator && <li><button className="next-step-btn" onClick={() => setShowContradiction(!showContradiction)}>→ Review supporting records — Limitations</button></li>}
                 <li><button className="next-step-btn" onClick={() => navigate(`/evidence?case=${caseParam || ""}`)}>→ Open source record — Provenance</button></li>
                 <li><button className="next-step-btn" onClick={() => navigate(`/people?case=${caseParam || ""}`)}>← Back to People — Who is involved?</button></li>
               </ul>

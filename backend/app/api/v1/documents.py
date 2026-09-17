@@ -200,6 +200,46 @@ async def evidence(
     return payload
 
 
+@router.get("/evidence/{doc_id}/provenance")
+async def evidence_provenance(
+    doc_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    recorder: AuditRecorder = Depends(get_audit_recorder),
+) -> dict:
+    """The full traceable chain for one evidence document.
+
+    ``Case → Evidence → Source record → Original file → Finding``, plus the
+    people the document is recorded against.  Every provenance "check" in the
+    response is computed from stored data — a link that does not exist is
+    reported as unresolved rather than rendered as a green tick.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import CaseDocument as _CD
+
+    document = (
+        await session.execute(select(_CD).where(_CD.id == doc_id))
+    ).scalar_one_or_none()
+    if document is None:
+        raise NotFoundError("Document not found.")
+    await case_service.require_case(session, scope, document.case_id)
+    require_classification(principal, document.classification)
+
+    payload = await document_service.provenance_payload(
+        session, get_container(), document
+    )
+    recorder.record(
+        "DOC_VIEW",
+        target_resource=f"provenance:{doc_id}",
+        case_id=document.case_id,
+        details={"kind": "provenance"},
+    )
+    await recorder.flush()
+    return payload
+
+
 @router.get("/evidence/{doc_id}/verify")
 async def verify_evidence(
     doc_id: str,

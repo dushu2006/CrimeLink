@@ -142,6 +142,23 @@ class GraphStore(Protocol):
         """
         ...
 
+    def retire_document(self, doc_id: str) -> int:
+        """Deactivate every graph record whose only support was ``doc_id``.
+
+        Called when a document is discarded or deleted.  A node or edge that
+        cited other documents as well keeps standing on those; one that cited
+        nothing else is retired, because leaving it behind produces exactly the
+        orphan the integrity audit looks for -- an entity in the graph citing a
+        document that no longer resolves.
+
+        Records are deactivated rather than destroyed so the chain of custody
+        stays auditable: the node still exists and still names the document
+        that produced it, it simply stops being served.
+
+        Returns the number of nodes retired.
+        """
+        ...
+
     def purge_other_datasets(self, keep_dataset_id: str) -> int:
         """Remove every dataset-owned node except ``keep_dataset_id``'s.
 

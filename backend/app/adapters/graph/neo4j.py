@@ -735,6 +735,48 @@ class Neo4jGraphStore:
             log.exception("graph.neo4j.purge_failed", dataset_id=dataset_id)
             return 0
 
+    def retire_document(self, doc_id: str) -> int:
+        """Deactivate every node whose only supporting document was ``doc_id``.
+
+        Mirrors the embedded store: a node citing other documents too keeps
+        standing on those, and edges are dropped when they lose support or an
+        endpoint.  Nodes are deactivated rather than deleted so the chain of
+        custody stays auditable.
+        """
+        if not doc_id:
+            return 0
+
+        def _apply(tx):
+            removed = tx.run(
+                "MATCH ()-[r]-() WHERE $doc IN r.source_doc_ids "
+                "AND ALL(d IN r.source_doc_ids WHERE d = $doc) "
+                "DELETE r RETURN count(r) AS n",
+                doc=doc_id,
+            ).single()
+            edges = int((removed or {}).get("n", 0) or 0)
+            record = tx.run(
+                "MATCH (n) WHERE $doc IN n.source_doc_ids "
+                "AND ALL(d IN n.source_doc_ids WHERE d = $doc) "
+                "AND n.is_active <> false "
+                "SET n.is_active = false, n.retired_by_document = $doc "
+                "WITH n DETACH DELETE n RETURN count(n) AS n",
+                doc=doc_id,
+            ).single()
+            nodes = int((record or {}).get("n", 0) or 0)
+            log.info(
+                "graph.neo4j.document_retired",
+                doc_id=doc_id,
+                nodes=nodes,
+                edges=edges,
+            )
+            return nodes
+
+        try:
+            return int(self._write(_apply) or 0)
+        except Exception:
+            log.exception("graph.neo4j.retire_failed", doc_id=doc_id)
+            return 0
+
     def purge_other_datasets(self, keep_dataset_id: str) -> int:
         """Drop every dataset-tagged node that is not ``keep_dataset_id``'s.
 

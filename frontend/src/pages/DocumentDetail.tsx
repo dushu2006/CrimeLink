@@ -47,18 +47,29 @@ export default function DocumentDetail() {
   const { docId } = useParams<{ docId: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [refs, setRefs] = useState<RefResponse | null>(null);
+  const [refsError, setRefsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!docId) return;
     setDetail(null);
     setError(null);
+    setRefsError(null);
     api<Detail>(`/explore/documents/${docId}`)
       .then(setDetail)
       .catch((err: Error) => setError(err.message));
     api<RefResponse>(`/sources/documents/${docId}/references?limit=100`)
-      .then(setRefs)
-      .catch(() => setRefs({ items: [], total: 0 }));
+      .then((res) => {
+        setRefs(res);
+        setRefsError(null);
+      })
+      // "No source references were recorded" and "the reference lookup failed"
+      // are opposite claims about this document's provenance.  Collapsing them
+      // tells an investigator the chain is absent when it is simply unknown.
+      .catch((err: Error) => {
+        setRefs(null);
+        setRefsError(err.message);
+      });
   }, [docId]);
 
   useEffect(load, [load]);
@@ -131,7 +142,10 @@ export default function DocumentDetail() {
           Each reference addresses the exact position in the original dataset file
           that produced part of this document.
         </p>
-        {!refs && <Spinner />}
+        {refsError && (
+          <ErrorState message={refsError} onRetry={load} />
+        )}
+        {!refs && !refsError && <Spinner />}
         {refs && refs.items.length === 0 && (
           <Empty message="No source references were recorded for this document." />
         )}

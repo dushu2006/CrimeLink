@@ -402,7 +402,7 @@ def _case_documents(session: Session, case_id: str) -> list[CaseDocument]:
     return (
         session.execute(
             select(CaseDocument)
-            .where(CaseDocument.case_id == case_id)
+            .where(CaseDocument.case_id == case_id, CaseDocument.is_deleted.is_(False))
             .order_by(CaseDocument.created_at.asc())
         )
         .scalars()

@@ -16,13 +16,17 @@ export default function CaseDashboardPage() {
   const navigate = useNavigate();
   const [timelineEvents, setTimelineEvents] = useState<EnhancedTimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!caseId) return;
     setTimelineLoading(true);
+    setTimelineError(null);
     enhancedTimeline(caseId, { limit: 200 })
       .then((res) => setTimelineEvents(res.events))
-      .catch(() => setTimelineEvents([]))
+      // Never render a failed timeline as an empty one: "no events" and "the
+      // request failed" are different statements about the case.
+      .catch((err: Error) => setTimelineError(err.message))
       .finally(() => setTimelineLoading(false));
   }, [caseId]);
 
@@ -55,6 +59,11 @@ export default function CaseDashboardPage() {
           <div className="cl-empty">
             <div className="loading-spinner" />
             <div className="cl-empty-title">Loading timeline…</div>
+          </div>
+        ) : timelineError ? (
+          <div className="cl-error">
+            <div className="cl-empty-title">Could not load the timeline</div>
+            <div className="cl-empty-desc">{timelineError}</div>
           </div>
         ) : (
           <EnhancedTimeline

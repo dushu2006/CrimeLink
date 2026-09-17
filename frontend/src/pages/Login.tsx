@@ -33,6 +33,7 @@ const DEMO_ACCOUNTS = [
 
 export default function Login() {
   const [mode, setMode] = useState<"loading" | "login" | "setup">("loading");
+  const [setupProbeError, setSetupProbeError] = useState<string | null>(null);
   const [badge, setBadge] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -44,8 +45,17 @@ export default function Login() {
 
   useEffect(() => {
     setupStatus()
-      .then((status) => setMode(status.setup_required ? "setup" : "login"))
-      .catch(() => setMode("login"));
+      .then((status) => {
+        setSetupProbeError(null);
+        setMode(status.setup_required ? "setup" : "login");
+      })
+      // Defaulting to the login form is still the useful thing to do, but it
+      // is a guess: if first-run setup was actually required, say so instead
+      // of letting the operator discover it from a rejected login.
+      .catch((err: Error) => {
+        setSetupProbeError(err.message);
+        setMode("login");
+      });
   }, []);
 
   async function submitLogin(event: React.FormEvent) {
@@ -94,6 +104,15 @@ export default function Login() {
         {error && (
           <div className="alert" role="alert">
             {error}
+          </div>
+        )}
+
+        {setupProbeError && !error && (
+          <div className="alert" role="alert">
+            Could not check whether first-run setup is still required
+            ({setupProbeError}). Showing the sign-in form — if this instance has
+            never been set up, sign-in will fail and setup must be completed
+            first.
           </div>
         )}
 

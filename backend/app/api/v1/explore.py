@@ -57,7 +57,11 @@ async def documents(
     if not allowed:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
-    query = select(CaseDocument).where(CaseDocument.case_id.in_(allowed))
+    # A discarded document is a tombstone: the row stays for the audit trail,
+    # but it is no longer evidence and must not be listed as such.
+    query = select(CaseDocument).where(
+        CaseDocument.case_id.in_(allowed), CaseDocument.is_deleted.is_(False)
+    )
     if case_id:
         query = query.where(CaseDocument.case_id == case_id)
     if status:
@@ -317,7 +321,10 @@ async def entity_detail(
         rows = list(
             (
                 await session.execute(
-                    select(CaseDocument).where(CaseDocument.id.in_(doc_ids))
+                    select(CaseDocument).where(
+                        CaseDocument.id.in_(doc_ids),
+                        CaseDocument.is_deleted.is_(False),
+                    )
                 )
             ).scalars()
         )

@@ -652,6 +652,64 @@ class EmbeddedGraphStore:
                 except OSError:
                     pass
 
+    def retire_document(self, doc_id: str) -> int:
+        """Deactivate every graph record whose only support was ``doc_id``.
+
+        When a document is discarded the entities the pipeline derived from it
+        lose their evidence.  Leaving them in the graph produces an orphan: an
+        entity citing a document that no longer resolves, which is exactly what
+        the integrity audit looks for.  Records that cite other documents too
+        keep standing on those.
+
+        Retirement is a deactivation, not a deletion -- the node still exists
+        and still names the document that produced it, so the chain of custody
+        stays auditable, and ``snapshot()`` simply stops serving it.
+        """
+        if not doc_id:
+            return 0
+
+        from app.db.base import utcnow
+
+        def _docs(data: dict) -> list[str]:
+            docs = list(data.get("source_doc_ids") or [])
+            if data.get("source_doc_id"):
+                docs.append(str(data["source_doc_id"]))
+            return [str(d) for d in docs]
+
+        with self._lock:
+            retired_nodes = []
+            for pk, data in self._graph.nodes(data=True):
+                docs = _docs(data)
+                if docs and all(d == doc_id for d in docs) and data.get("is_active", True):
+                    data["is_active"] = False
+                    data["retired_by_document"] = doc_id
+                    data["retired_at"] = utcnow().isoformat()
+                    retired_nodes.append(pk)
+
+            # An edge is retired when every document it cites is gone.  Edges
+            # incident to a retired node go with it, since an edge cannot stand
+            # without both endpoints.
+            retired_edges = []
+            retired_set = set(retired_nodes)
+            for u, v, k, data in list(self._graph.edges(keys=True, data=True)):
+                docs = _docs(data)
+                unsupported = bool(docs) and all(d == doc_id for d in docs)
+                if unsupported or u in retired_set or v in retired_set:
+                    self._graph.remove_edge(u, v, key=k)
+                    retired_edges.append(k)
+
+            if retired_nodes or retired_edges:
+                self._version += 1
+                self._flush()
+
+        log.info(
+            "graph.document_retired",
+            doc_id=doc_id,
+            nodes=len(retired_nodes),
+            edges=len(retired_edges),
+        )
+        return len(retired_nodes)
+
     def purge_dataset(self, dataset_id: str) -> int:
         """Drop every node/edge tagged with ``dataset_id``.
 

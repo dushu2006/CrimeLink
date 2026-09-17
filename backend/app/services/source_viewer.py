@@ -248,6 +248,16 @@ def _get_object_store_info():
                 "MinIO is mandatory in production but backend is not minio — refusing Local fallback",
                 status=STATUS_NOT_FOUND,
             )
+        # Prefer the container's store: it is built from the application's live
+        # settings, so the viewer reads the same storage root the pipeline
+        # wrote to instead of re-deriving one from get_settings().
+        try:
+            from app.container import get_container
+            container_store = get_container().object_store
+            if container_store is not None:
+                return container_store, settings.minio_bucket_documents, False, is_prod
+        except Exception:
+            pass
         try:
             from app.adapters.objectstore.local import LocalObjectStore
             store = LocalObjectStore(settings)

@@ -523,13 +523,287 @@ async def release_from_quarantine(session: AsyncSession, document: CaseDocument)
     return document
 
 
-async def discard_quarantined(session: AsyncSession, document: CaseDocument) -> CaseDocument:
-    """ADMIN action: soft-delete a quarantined document (never a row delete)."""
+async def discard_quarantined(
+    session: AsyncSession,
+    document: CaseDocument,
+    container: Container | None = None,
+) -> dict[str, Any]:
+    """ADMIN action: soft-delete a quarantined document (never a row delete).
+
+    The document is soft-deleted **and** the graph entities it produced are
+    retired.  Doing only the first leaves an orphan behind: the pipeline
+    injected nodes and edges citing this document, and after the row is gone
+    those records cite a document that no longer resolves.  The integrity audit
+    flags exactly that, and an investigator following the edge lands on
+    "Provenance unavailable" for a record that is still displayed.
+
+    Retirement deactivates rather than deletes, so the chain of custody stays
+    auditable.  Returns what was retired so the API can report it instead of
+    claiming a clean discard it did not perform.
+    """
     document.is_deleted = True
     document.quarantined = False
     await session.flush()
-    return document
+
+    retired = 0
+    if container is not None:
+        try:
+            retired = int(container.graph_store.retire_document(document.id) or 0)
+        except Exception:
+            # The document is already soft-deleted; failing the whole request
+            # now would report a failure for an operation that succeeded.  The
+            # orphan is real and must be visible, so surface it in the result
+            # rather than swallowing it.
+            log.exception(
+                "document.graph_retire_failed",
+                doc_id=document.id,
+            )
+            return {"document": document, "retired_nodes": 0, "retire_failed": True}
+
+    return {"document": document, "retired_nodes": retired, "retire_failed": False}
 
 
 def settings_snapshot() -> Settings:
     return get_settings()
+
+
+async def provenance_payload(
+    session: AsyncSession,
+    container: Container,
+    document: CaseDocument,
+) -> dict[str, Any]:
+    """The whole traceable chain for one evidence document.
+
+    ``Finding → Claim → Evidence → Source record → Original file → Case``.
+
+    Every link is resolved from stored data, and every provenance "check" is
+    *computed here* rather than asserted by the UI: a check that is not backed
+    by a record says so explicitly instead of rendering a green tick.  That is
+    the difference between a provenance panel and a decorative one.
+    """
+    from urllib.parse import quote
+
+    from sqlalchemy import select
+
+    from app.db.models import Case, DatasetFile, InvestigationFinding, SourceReference
+    from app.domain.enums import canonical_label
+    from app.domain.provenance import content_hash
+
+    meta = document.source_metadata or {}
+    relative_path = (meta.get("relative_path") or document.storage_key or "")
+    relative_path = relative_path.replace("\\", "/").lstrip("/")
+
+    # --- CASE ---------------------------------------------------------------
+    case = await session.get(Case, document.case_id)
+    case_row = (
+        {
+            "id": case.id,
+            "case_number": case.case_number,
+            "title": case.title,
+            "status": case.status.value,
+            "jurisdiction_id": case.jurisdiction_id,
+        }
+        if case is not None
+        else None
+    )
+
+    # --- SOURCE RECORDS -----------------------------------------------------
+    references = list(
+        (
+            await session.execute(
+                select(SourceReference)
+                .where(SourceReference.doc_id == document.id)
+                .order_by(SourceReference.row_number, SourceReference.text_start)
+                .limit(50)
+            )
+        ).scalars()
+    )
+    reference_rows = [
+        {
+            "id": ref.id,
+            "origin_file": ref.origin_file,
+            "record_id": ref.record_id,
+            "row_number": ref.row_number,
+            "line_start": ref.line_start,
+            "line_end": ref.line_end,
+            "excerpt": ref.excerpt,
+        }
+        for ref in references
+    ]
+
+    dataset_file = (
+        await session.execute(
+            select(DatasetFile).where(DatasetFile.doc_id == document.id).limit(1)
+        )
+    ).scalars().first()
+
+    # --- ORIGINAL FILE ------------------------------------------------------
+    # Actually read the bytes.  "Record available" means the bytes were read,
+    # not that a row points somewhere.
+    file_row: dict[str, Any] = {
+        "storage_key": document.storage_key,
+        "relative_path": relative_path or None,
+        "available": False,
+        "size_bytes": None,
+        "media_type": document.mime_type,
+        "hash_matches": None,
+        "detail": "No storage key recorded for this document.",
+    }
+    if document.storage_key:
+        try:
+            raw = container.object_store.get(
+                container.settings.minio_bucket_documents, document.storage_key
+            )
+            computed = content_hash(raw)
+            file_row.update(
+                {
+                    "available": True,
+                    "size_bytes": len(raw),
+                    "hash_matches": computed == document.content_hash,
+                    "computed_hash": computed,
+                    "detail": (
+                        "Bytes read from object storage."
+                        if computed == document.content_hash
+                        else "Bytes read, but the SHA-256 no longer matches the recorded hash."
+                    ),
+                    "preview_url": (
+                        f"/api/v1/sources/preview?path={quote(relative_path, safe='')}"
+                        if relative_path
+                        else None
+                    ),
+                    "raw_url": (
+                        f"/api/v1/sources/raw?path={quote(relative_path, safe='')}"
+                        if relative_path
+                        else None
+                    ),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never guess
+            file_row["detail"] = f"The stored object could not be read: {exc}"
+
+    # --- FINDINGS THAT CITE THIS EVIDENCE -----------------------------------
+    findings = list(
+        (
+            await session.execute(
+                select(InvestigationFinding).where(
+                    InvestigationFinding.case_id == document.case_id
+                )
+            )
+        ).scalars()
+    )
+    finding_rows = []
+    for finding in findings:
+        cited = [
+            str(item.get("doc_id"))
+            for item in (finding.evidence or [])
+            if isinstance(item, dict) and item.get("doc_id")
+        ]
+        if document.id not in cited and document.id not in (finding.evidence or []):
+            continue
+        finding_rows.append(
+            {
+                "id": finding.id,
+                "title": finding.title,
+                "finding_type": finding.finding_type,
+                "status": finding.status,
+                "confidence": finding.confidence,
+                "narrative": finding.narrative,
+            }
+        )
+
+    # --- PEOPLE THIS DOCUMENT IS RECORDED AGAINST ---------------------------
+    people_rows: list[dict[str, Any]] = []
+    try:
+        snapshot = container.graph_store.snapshot(document.case_id, include_staging=False)
+        for node in snapshot.nodes.values():
+            if canonical_label(node.label) != "PERSON":
+                continue
+            props = node.properties or {}
+            docs = {str(d) for d in (props.get("source_doc_ids") or [])}
+            if props.get("source_doc_id"):
+                docs.add(str(props["source_doc_id"]))
+            if document.id not in docs:
+                continue
+            status = props.get("criminal_status")
+            people_rows.append(
+                {
+                    "provenance_key": node.provenance_key,
+                    "name": props.get("display_name") or props.get("full_name") or props.get("name")
+                    or node.provenance_key,
+                    "role": props.get("role"),
+                    "criminal_status": status,
+                    "is_criminal": str(status or "").strip().lower()
+                    in {"confirmed", "convicted", "accused", "chargesheeted", "criminal"},
+                }
+            )
+    except Exception:  # noqa: BLE001 - the chain still holds without the graph
+        people_rows = []
+
+    # --- COMPUTED PROVENANCE CHECKS -----------------------------------------
+    checks = {
+        "source_verified": {
+            "ok": document.source_confidence.value == "VERIFIED"
+            and document.ingestion_status.value == "COMPLETE",
+            "detail": (
+                f"source_confidence={document.source_confidence.value}, "
+                f"ingestion_status={document.ingestion_status.value}"
+            ),
+        },
+        "record_available": {
+            "ok": bool(file_row["available"]),
+            "detail": file_row["detail"],
+        },
+        "traceable_to_original": {
+            "ok": bool(relative_path) and (bool(references) or dataset_file is not None),
+            "detail": (
+                f"{len(references)} source reference(s)"
+                + (", dataset file registered" if dataset_file is not None else "")
+                if (references or dataset_file is not None)
+                else "No source reference or dataset file row points at this document."
+            ),
+        },
+        "hash_matches": {
+            "ok": file_row.get("hash_matches"),
+            "detail": (
+                "recorded hash re-computed from the stored bytes and it matches"
+                if file_row.get("hash_matches")
+                else "hash could not be confirmed"
+            ),
+        },
+    }
+
+    return {
+        "document": {
+            "id": document.id,
+            "filename": document.filename,
+            "document_type": document.document_type.value,
+            "media_type": document.mime_type,
+            "size_bytes": document.size_bytes,
+            "content_hash": document.content_hash,
+            "source_confidence": document.source_confidence.value,
+            "ingestion_status": document.ingestion_status.value,
+            "classification": document.classification.value,
+            "quarantined": document.quarantined,
+            "created_at": document.created_at.isoformat() if document.created_at else None,
+            "evidence_id": meta.get("evidence_id"),
+            "title": meta.get("title"),
+        },
+        "case": case_row,
+        "file": file_row,
+        "source_references": reference_rows,
+        "dataset_file": (
+            {"id": dataset_file.id, "relative_path": dataset_file.relative_path}
+            if dataset_file is not None
+            else None
+        ),
+        "findings": finding_rows,
+        "people": people_rows,
+        "checks": checks,
+        "chain": [
+            {"step": "CASE", "resolved": case_row is not None, "ref": case_row["case_number"] if case_row else None},
+            {"step": "EVIDENCE", "resolved": True, "ref": document.id},
+            {"step": "SOURCE_RECORD", "resolved": bool(reference_rows), "ref": reference_rows[0]["origin_file"] if reference_rows else None},
+            {"step": "ORIGINAL_FILE", "resolved": bool(file_row["available"]), "ref": relative_path or None},
+            {"step": "FINDING", "resolved": bool(finding_rows), "ref": finding_rows[0]["id"] if finding_rows else None},
+        ],
+    }

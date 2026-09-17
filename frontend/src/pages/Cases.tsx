@@ -11,6 +11,14 @@ interface CaseRow {
   jurisdiction_id: string;
   status: string;
   document_count: number;
+  /** Source references recorded against the case. */
+  source_count?: number;
+  /** Investigation findings recorded against the case. */
+  finding_count?: number;
+  /** People attached to the case in the graph. */
+  person_count?: number;
+  /** Person-to-person relationships inside the case. */
+  relationship_count?: number;
   pending_review_count: number;
   created_at: string | null;
 }
@@ -95,7 +103,11 @@ export default function Cases() {
               <th>{t("cases.number")}</th>
               <th>{t("cases.name")}</th>
               <th>{t("cases.jurisdiction")}</th>
+              <th>People</th>
+              <th>Relationships</th>
               <th>{t("cases.documents")}</th>
+              <th>Sources</th>
+              <th>Findings</th>
               <th>{t("cases.pending")}</th>
               <th>{t("cases.status")}</th>
               <th>Dashboard</th>
@@ -110,7 +122,11 @@ export default function Cases() {
                 </td>
                 <td>{row.title}</td>
                 <td>{row.jurisdiction_id}</td>
+                <td>{row.person_count ?? 0}</td>
+                <td>{row.relationship_count ?? 0}</td>
                 <td>{row.document_count}</td>
+                <td>{row.source_count ?? 0}</td>
+                <td>{row.finding_count ?? 0}</td>
                 <td>
                   {row.pending_review_count > 0 ? (
                     <span className="pill pill-warn">{row.pending_review_count}</span>

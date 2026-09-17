@@ -81,6 +81,7 @@ DATASET_NAME = "CrimeLink Demo Dataset v2"
 CASE_PREFIX = "case-d2-"
 USER_PREFIX = "demo-user-"
 DOC_PREFIX = "doc-d2-"
+SOURCE_DOC_PREFIX = "doc-s2-"
 EVID_PREFIX = "ev-d2-"
 SRC_PREFIX = "src-d2-"
 FINDING_PREFIX = "find-d2-"
@@ -1309,21 +1310,33 @@ def gen_source_bytes(src: dict[str, Any], dataset: dict[str, Any]) -> bytes:
 # Database seeding
 # ---------------------------------------------------------------------------
 
-def seed_all() -> bool:
-    print(f"[seed] Building {DEMO_DATASET_ID}...")
-    settings = get_settings()
-    settings.ensure_directories()
+def doc_id_for(eid: str) -> str:
+    """CaseDocument id for an evidence/source id (``E-0042`` → ``doc-d2-0042``).
 
-    # Build canonical data
-    dataset = build_dataset()
-    # Add helper dicts
-    dataset["case_persons_dict"] = {}
-    for c in dataset["cases"]:
-        # Rebuild here (already built above)
-        pass
-    # Build case_persons_dict from what build_dataset produced
-    # Recompute deterministically (simpler than threading through)
-    # Actually case_persons was local; re-derive
+    Module level so the graph builder, the relational seeder and the
+    verification tests all resolve evidence ids the same way.
+
+    Evidence and source records keep **distinct namespaces**
+    (``doc-d2-`` / ``doc-s2-``).  They used to share one, so ``E-0000`` and
+    ``S-0000`` both produced ``doc-d2-0000``: the source document was never
+    inserted (its id already existed), and every graph node and edge that
+    cited a source resolved to an unrelated evidence file instead.  A
+    provenance pointer that resolves to the wrong document is worse than one
+    that does not resolve.
+    """
+    key = eid.lower()
+    if key.startswith("s-"):
+        return f"{SOURCE_DOC_PREFIX}{key.replace('s-', '')}"
+    return f"{DOC_PREFIX}{key.replace('e-', '')}"
+
+
+def derive_case_persons(dataset: dict[str, Any]) -> dict[str, list[str]]:
+    """Deterministic case → person membership for the v2 demo dataset.
+
+    Recomputed from ``build_dataset()`` output rather than threaded through it,
+    so the relational rows, the generated documents and the graph all agree on
+    who belongs to which case.
+    """
     case_persons_dict: dict[str, list[str]] = {c["id"]: [] for c in dataset["cases"]}
     for ci, c in enumerate(dataset["cases"]):
         cid = c["id"]
@@ -1353,9 +1366,20 @@ def seed_all() -> bool:
     # Hero case must include its cast
     hero_case_id = dataset["cases"][0]["id"]
     hero_indices = list(range(0, 12))
-    hero_pids = [dataset["persons"][i]["id"] for i in hero_indices if i < len(dataset["persons"])]
-    case_persons_dict[hero_case_id] = hero_pids
-    dataset["case_persons_dict"] = case_persons_dict
+    case_persons_dict[hero_case_id] = [
+        dataset["persons"][i]["id"] for i in hero_indices if i < len(dataset["persons"])
+    ]
+    return case_persons_dict
+
+
+def seed_all() -> bool:
+    print(f"[seed] Building {DEMO_DATASET_ID}...")
+    settings = get_settings()
+    settings.ensure_directories()
+
+    # Build canonical data
+    dataset = build_dataset()
+    dataset["case_persons_dict"] = derive_case_persons(dataset)
 
     # Open DB session
     engine = get_sync_engine(settings)
@@ -1438,25 +1462,44 @@ def seed_all() -> bool:
         object_store = container.object_store
         bucket = settings.minio_bucket_documents
 
-        # Helper for doc id
-        def doc_id_for(eid: str) -> str:
-            return f"{DOC_PREFIX}{eid.lower().replace('e-', '').replace('s-', '')}"
-
-        # Seed all files into object store first, then DB records
+        # Seed all files into object store first, then DB records.
+        #
+        # Each file's bytes are generated EXACTLY ONCE and reused for the
+        # stored object, the recorded content_hash and the size.  Regenerating
+        # them later — which this seeder used to do — silently breaks chain of
+        # custody: ReportLab stamps a creation timestamp into every PDF, so the
+        # second generation produces different bytes and the recorded SHA-256
+        # no longer matches the stored object.  GET /evidence/{doc}/verify
+        # exists precisely to catch that, and it did.
+        evidence_bytes: dict[str, bytes] = {}
         evidence_file_map: dict[str, str] = {}
         for ev in dataset["evidence"]:
-            file_bytes = gen_evidence_bytes(ev, dataset)
             key = ev["storage_key"]
-            # Put object (idempotent)
-            if not object_store.stat(bucket, key):
+            existing = None
+            try:
+                if object_store.stat(bucket, key):
+                    existing = object_store.get(bucket, key)
+            except Exception:
+                existing = None
+            file_bytes = existing if existing is not None else gen_evidence_bytes(ev, dataset)
+            if existing is None:
                 object_store.put(bucket, key, file_bytes, content_type=ev["mime_type"])
+            evidence_bytes[ev["evidence_id"]] = file_bytes
             evidence_file_map[ev["evidence_id"]] = key
 
+        source_bytes: dict[str, bytes] = {}
         for src in dataset["sources"]:
-            file_bytes = gen_source_bytes(src, dataset)
             key = src["storage_key"]
-            if not object_store.stat(bucket, key):
+            existing = None
+            try:
+                if object_store.stat(bucket, key):
+                    existing = object_store.get(bucket, key)
+            except Exception:
+                existing = None
+            file_bytes = existing if existing is not None else gen_source_bytes(src, dataset)
+            if existing is None:
                 object_store.put(bucket, key, file_bytes, content_type=src["mime_type"])
+            source_bytes[src["source_id"]] = file_bytes
 
         print("  Object store populated.")
 
@@ -1486,7 +1529,7 @@ def seed_all() -> bool:
 
         # Create evidence documents
         for ev in dataset["evidence"]:
-            file_bytes = gen_evidence_bytes(ev, dataset)
+            file_bytes = evidence_bytes[ev["evidence_id"]]
             content_hash = sha256(file_bytes)
             did = doc_id_for(ev["evidence_id"])
             doc = CaseDocument(
@@ -1530,7 +1573,7 @@ def seed_all() -> bool:
 
         # Create source documents
         for src in dataset["sources"]:
-            file_bytes = gen_source_bytes(src, dataset)
+            file_bytes = source_bytes[src["source_id"]]
             content_hash = sha256(file_bytes)
             did = doc_id_for(src["source_id"])
             if session.query(CaseDocument).filter(CaseDocument.id == did).one_or_none():
@@ -1772,6 +1815,132 @@ def seed_all() -> bool:
         engine.dispose()
 
 
+#: Authoritative criminal-status vocabulary.
+#:
+#: CrimeLink's authoritative field is ``criminal_status`` — it is the column the
+#: ingest pipeline maps (``app/datasets/schema_map.py`` → ``PERSON.criminal_status``),
+#: the property ``GraphService._node_row`` reads to set ``is_criminal``, and the
+#: property the console's ``isConfirmedCriminal`` checks before drawing the ★.
+#: Only values in ``CONFIRMED_CRIMINAL_STATUSES`` earn the star.
+CONFIRMED_CRIMINAL_STATUSES = {"CONFIRMED", "CONVICTED", "ACCUSED", "CHARGESHEETED", "CRIMINAL"}
+
+#: Person roles this dataset asserts as *actual criminal participation*.
+#:
+#: Deliberately absent: SUSPECT, PERSON_OF_INTEREST, WITNESS, VICTIM,
+#: ASSOCIATE and INFORMANT.  Suspicion, involvement, or appearing in a case,
+#: in evidence or in a witness list is **not** a confirmed criminal status and
+#: must never earn a ★.
+CRIMINAL_STATUS_BY_ROLE: dict[str, str] = {
+    "ACCOMPLICE": "CONFIRMED",
+}
+
+
+def confirmed_finding_person_keys(dataset: dict[str, Any]) -> set[str]:
+    """Person keys the dataset itself marks as CONFIRMED.
+
+    An ``InvestigationFinding`` whose ``status`` is ``CONFIRMED`` is this
+    dataset's explicit, reviewed assertion about the people it names — the
+    CR-2001 conspiracy finding, for example, confirms Rajesh Kumar and his two
+    named accomplices as the criminal network's coordinators.  Non-person
+    entity keys on the same finding (phones, vehicles, addresses) are ignored
+    by the caller, which only consults this set for PERSON nodes.
+    """
+    keys: set[str] = set()
+    for finding in dataset.get("findings", []):
+        if str(finding.get("status", "")).upper() != "CONFIRMED":
+            continue
+        for key in finding.get("entity_keys", []):
+            keys.add(str(key))
+    return keys
+
+
+def criminal_status_for_person(person: dict[str, Any], confirmed_keys: set[str]) -> str | None:
+    """The dataset's own criminal status for a person, or ``None``.
+
+    Two explicit sources only: the person's asserted criminal role, and being
+    named by a CONFIRMED investigation finding.  Everything else stays ``None``
+    so the graph renders an honest ★-free circle.
+    """
+    role = str(person.get("role", "")).upper()
+    status = "CONFIRMED" if person.get("id") in confirmed_keys else CRIMINAL_STATUS_BY_ROLE.get(role)
+    # Guard the vocabulary: a typo here would silently drop the star rather
+    # than fail, and a star is a legal statement.
+    if status is not None and status not in CONFIRMED_CRIMINAL_STATUSES:
+        raise ValueError(f"{person.get('id')}: {status!r} is not a confirmed criminal status")
+    return status
+
+
+#: Which document types plausibly evidence which entity/relationship.  Used to
+#: pick a *real* source document per graph record instead of pointing the whole
+#: graph at one file.
+_SOURCE_TYPE_PREFERENCE: dict[str, tuple[str, ...]] = {
+    "PERSON": ("FIR", "WITNESS_STATEMENT", "ARREST_RECORD", "INTELLIGENCE_REPORT"),
+    "PHONE": ("CDR", "SURVEILLANCE", "FORENSIC"),
+    "BANK_ACCOUNT": ("FINANCIAL", "FINANCIAL_TRANSACTION"),
+    "VEHICLE": ("ANPR", "CCTV", "SEIZURE"),
+    "LOCATION": ("SCENE_REPORT", "GEO_EVENT", "PATROL_REPORT", "CCTV"),
+    "ORGANIZATION": ("INTELLIGENCE_REPORT", "LEGAL_RECORD", "FIR"),
+    "EVENT": ("SCENE_REPORT", "CASE_DIARY", "PATROL_REPORT"),
+    "USES_PHONE": ("CDR", "SURVEILLANCE"),
+    "CALLED": ("CDR", "SURVEILLANCE"),
+    "OWNS_ACCOUNT": ("FINANCIAL", "FINANCIAL_TRANSACTION"),
+    "TRANSFER_TO": ("FINANCIAL_TRANSACTION", "FINANCIAL"),
+    "OWNS_VEHICLE": ("ANPR", "CCTV", "SEIZURE"),
+    "LOCATED_AT": ("SCENE_REPORT", "GEO_EVENT", "PATROL_REPORT"),
+    "MEMBER_OF": ("INTELLIGENCE_REPORT", "LEGAL_RECORD"),
+    "ASSOCIATE_OF": ("WITNESS_STATEMENT", "INTELLIGENCE_REPORT", "FIR"),
+    "RELATIVE_OF": ("FIR", "WITNESS_STATEMENT"),
+    "PARTICIPATED_IN": ("FIR", "CASE_DIARY"),
+}
+
+
+def build_evidence_index(dataset: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """case_id -> that case's evidence documents, in a stable order."""
+    by_case: dict[str, list[dict[str, Any]]] = {}
+    for ev in dataset.get("evidence", []):
+        by_case.setdefault(ev["case_id"], []).append(ev)
+    for rows in by_case.values():
+        rows.sort(key=lambda e: e["evidence_id"])
+    return by_case
+
+
+def _stable_pick(rows: list[Any], salt: str) -> Any:
+    """Deterministic pick that does not depend on PYTHONHASHSEED."""
+    import zlib
+
+    return rows[zlib.crc32(salt.encode("utf-8")) % len(rows)]
+
+
+def source_doc_for(
+    index: dict[str, list[dict[str, Any]]],
+    case_ids: list[str],
+    kind: str,
+    salt: str,
+) -> str:
+    """A real evidence document id for a graph record.
+
+    Picks from the record's own case(s), preferring a document type that could
+    plausibly evidence that kind of record.  Every graph node and edge used to
+    point at one hardcoded ``doc-d2-0000``, which made the whole provenance
+    chain decorative: opening "the source" of a phone in CR-2007 produced an
+    FIR from CR-2001.
+    """
+    candidates: list[dict[str, Any]] = []
+    for cid in case_ids:
+        candidates.extend(index.get(cid, []))
+    if not candidates:
+        for rows in index.values():
+            candidates.extend(rows)
+        if not candidates:
+            return doc_id_for("E-0000")
+    for wanted in _SOURCE_TYPE_PREFERENCE.get(kind, ()):
+        matching = [ev for ev in candidates if ev["doc_type"].value == wanted]
+        if matching:
+            return doc_id_for(_stable_pick(matching, f"{kind}|{salt}")["evidence_id"])
+    return doc_id_for(_stable_pick(candidates, f"{kind}|{salt}")["evidence_id"])
+
+
+
 def build_graph(dataset: dict[str, Any], container, doc_id_for):
     """Build the graph from canonical data — nodes and edges."""
     from app.domain.models import GraphNode, GraphEdge
@@ -1780,6 +1949,13 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
     graph_store = container.graph_store
     # Reset graph for this dataset
     graph_store.purge_dataset(DEMO_DATASET_ID)
+
+    # case_id -> that case's real evidence documents, so every graph record can
+    # cite a source that actually exists and actually belongs to its case.
+    evidence_index = build_evidence_index(dataset)
+
+    def src(case_ids: list[str], kind: str, salt: str) -> str:
+        return source_doc_for(evidence_index, case_ids, kind, salt)
 
     nodes: list[GraphNode] = []
 
@@ -1804,11 +1980,16 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
         ))
 
     # Person nodes
+    confirmed_keys = confirmed_finding_person_keys(dataset)
+    criminal_count = 0
     for p in dataset["persons"]:
         # Determine case_ids for this person
         case_ids = [cid for cid, plist in dataset["case_persons_dict"].items() if p["id"] in plist]
-        # Find a source doc id from an evidence record that references this person
-        source_doc = doc_id_for("E-0000")  # default
+        # A real evidence document from one of this person's cases.
+        source_doc = src(case_ids, "PERSON", p["id"])
+        criminal_status = criminal_status_for_person(p, confirmed_keys)
+        if criminal_status:
+            criminal_count += 1
         nodes.append(GraphNode(
             provenance_key=p["id"],
             label="Person",
@@ -1820,6 +2001,11 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "gender": p["gender"],
                 "occupation": p["occupation"],
                 "role": p["role"],
+                # Authoritative criminal status.  Set only where this dataset
+                # explicitly establishes it; ``None`` otherwise, so the ★ in
+                # the console is never inferred from network position.  The
+                # graph layer derives ``is_criminal`` from this one field.
+                "criminal_status": criminal_status,
                 "case_id": case_ids[0] if case_ids else None,
                 "case_ids": case_ids,
                 "source_doc_id": source_doc,
@@ -1843,6 +2029,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 for cid, plist in dataset["case_persons_dict"].items():
                     if p["id"] in plist:
                         related_case_ids.add(cid)
+        _src_doc = src(sorted(related_case_ids), "PHONE", ph["id"])
         nodes.append(GraphNode(
             provenance_key=ph["id"],
             label="Phone",
@@ -1853,8 +2040,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "type": ph["type"],
                 "case_id": next(iter(related_case_ids)) if related_case_ids else None,
                 "case_ids": list(related_case_ids),
-                "source_doc_id": doc_id_for("E-0000"),
-                "source_doc_ids": [doc_id_for("E-0000")],
+                "source_doc_id": _src_doc,
+                "source_doc_ids": [_src_doc],
                 "confidence": 1.0,
                 "is_active": True,
                 "is_document_artifact": False,
@@ -1873,6 +2060,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 for cid, plist in dataset["case_persons_dict"].items():
                     if p["id"] in plist:
                         related_case_ids.add(cid)
+        _src_doc = src(sorted(related_case_ids), "VEHICLE", v["id"])
         nodes.append(GraphNode(
             provenance_key=v["id"],
             label="Vehicle",
@@ -1884,8 +2072,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "color": v["color"],
                 "case_id": next(iter(related_case_ids)) if related_case_ids else None,
                 "case_ids": list(related_case_ids),
-                "source_doc_id": doc_id_for("E-0000"),
-                "source_doc_ids": [doc_id_for("E-0000")],
+                "source_doc_id": _src_doc,
+                "source_doc_ids": [_src_doc],
                 "confidence": 1.0,
                 "is_active": True,
                 "is_document_artifact": False,
@@ -1905,6 +2093,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 for cid, plist in dataset["case_persons_dict"].items():
                     if p["id"] in plist:
                         related_case_ids.add(cid)
+        _src_doc = src(sorted(related_case_ids), "LOCATION", a["id"])
         nodes.append(GraphNode(
             provenance_key=a["id"],
             label="Location",
@@ -1915,8 +2104,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "category": a["category"],
                 "case_id": next(iter(related_case_ids)) if related_case_ids else None,
                 "case_ids": list(related_case_ids),
-                "source_doc_id": doc_id_for("E-0000"),
-                "source_doc_ids": [doc_id_for("E-0000")],
+                "source_doc_id": _src_doc,
+                "source_doc_ids": [_src_doc],
                 "confidence": 0.9,
                 "is_active": True,
                 "is_document_artifact": False,
@@ -1935,6 +2124,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 for cid, plist in dataset["case_persons_dict"].items():
                     if p["id"] in plist:
                         related_case_ids.add(cid)
+        _src_doc = src(sorted(related_case_ids), "ORGANIZATION", o["id"])
         nodes.append(GraphNode(
             provenance_key=o["id"],
             label="Organization",
@@ -1944,8 +2134,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "category": o["category"],
                 "case_id": next(iter(related_case_ids)) if related_case_ids else None,
                 "case_ids": list(related_case_ids),
-                "source_doc_id": doc_id_for("E-0000"),
-                "source_doc_ids": [doc_id_for("E-0000")],
+                "source_doc_id": _src_doc,
+                "source_doc_ids": [_src_doc],
                 "confidence": 0.85,
                 "is_active": True,
                 "is_document_artifact": False,
@@ -1964,6 +2154,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 for cid, plist in dataset["case_persons_dict"].items():
                     if p["id"] in plist:
                         related_case_ids.add(cid)
+        _src_doc = src(sorted(related_case_ids), "BANK_ACCOUNT", acct["id"])
         nodes.append(GraphNode(
             provenance_key=acct["id"],
             label="BankAccount",
@@ -1974,8 +2165,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "ifsc": acct["ifsc"],
                 "case_id": next(iter(related_case_ids)) if related_case_ids else None,
                 "case_ids": list(related_case_ids),
-                "source_doc_id": doc_id_for("E-0000"),
-                "source_doc_ids": [doc_id_for("E-0000")],
+                "source_doc_id": _src_doc,
+                "source_doc_ids": [_src_doc],
                 "confidence": 0.98,
                 "is_active": True,
                 "is_document_artifact": False,
@@ -1988,6 +2179,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
 
     # Event nodes
     for ev in dataset["events"]:
+        _src_doc = src([ev["case_id"]], "EVENT", ev["id"])
         nodes.append(GraphNode(
             provenance_key=ev["id"],
             label="Event",
@@ -2000,8 +2192,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 "description": ev["description"],
                 "case_id": ev["case_id"],
                 "case_ids": [ev["case_id"]],
-                "source_doc_id": doc_id_for("E-0000"),
-                "source_doc_ids": [doc_id_for("E-0000")],
+                "source_doc_id": _src_doc,
+                "source_doc_ids": [_src_doc],
                 "confidence": 0.9,
                 "is_active": True,
                 "is_document_artifact": False,
@@ -2017,6 +2209,7 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
     allowed_rel_types = set(REL_TYPES)
     for cid, plist in dataset["case_persons_dict"].items():
         for pid in plist:
+            part_doc = src([cid], "PARTICIPATED_IN", f"{pid}|{cid}")
             edges.append(GraphEdge(
                 source_key=pid,
                 target_key=f"case:{cid}",
@@ -2024,8 +2217,8 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
                 key=f"{pid}-case-{cid}",
                 properties={
                     "confidence": 1.0,
-                    "source_doc_id": doc_id_for("E-0000"),
-                    "source_doc_ids": [doc_id_for("E-0000")],
+                    "source_doc_id": part_doc,
+                    "source_doc_ids": [part_doc],
                     "case_id": cid,
                     "case_ids": [cid],
                     "dataset_id": DEMO_DATASET_ID,
@@ -2036,10 +2229,18 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
         rt = rel["rel_type"]
         if rt not in allowed_rel_types:
             continue
+        # Every relationship cites a real document from its own case.  An edge
+        # with no source at all is refused by the graph store, and an edge that
+        # cites the wrong case's file is worse than no provenance.
+        rel_doc = rel.get("source_doc_id") or src(
+            [rel["case_id"]] if rel.get("case_id") else [],
+            rt,
+            f"{rel['source']}|{rt}|{rel['target']}|{rel.get('case_id', 'cross')}",
+        )
         props = {
             "confidence": rel.get("confidence", 0.85),
-            "source_doc_id": rel.get("source_doc_id") or doc_id_for("E-0000"),
-            "source_doc_ids": [rel.get("source_doc_id") or doc_id_for("E-0000")],
+            "source_doc_id": rel_doc,
+            "source_doc_ids": [rel_doc],
             "case_id": rel.get("case_id"),
             "case_ids": [rel.get("case_id")] if rel.get("case_id") else [],
             "dataset_id": DEMO_DATASET_ID,
@@ -2061,6 +2262,9 @@ def build_graph(dataset: dict[str, Any], container, doc_id_for):
     graph_store.upsert_edges(edges)
     stats = graph_store.stats()
     print(f"    Graph stats: {stats}")
+    print(
+        f"    Confirmed criminal persons (authoritative criminal_status): {criminal_count}"
+    )
 
 
 if __name__ == "__main__":

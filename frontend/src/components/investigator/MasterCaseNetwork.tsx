@@ -3,18 +3,33 @@
  *
  * Primary cross-case visualization across the active dataset on /investigate.
  *
- * Structure:
- * 1. CASE NETWORK (Macro overview):
+ * Three genuinely different graphs, one per tab.  Each renders different data
+ * from a different endpoint — the tab is never a title change over the same
+ * picture:
+ *
+ * 1. PEOPLE NETWORK (default, the investigator's primary graph):
+ *    - Nodes are PERSON and nothing else; edges are person-to-person
+ *      relationships the dataset actually supports.
+ *    - Phones, accounts, vehicles, addresses, organisations, call records and
+ *      transfers are walked server-side and collapse into one aggregated edge
+ *      that reports how many records back it.  Selecting the edge reveals them.
+ *    - Rendered by <PersonRelationshipNetwork /> from GET /graph/master/relationships.
+ *
+ * 2. CASE NETWORK (macro overview):
  *    - Main nodes are CASES (always circles).
  *    - Edges connect cases with evidence-backed shared entities or relationships.
  *    - Edge thickness communicates connection strength.
- *    - Clicking an edge explains WHY (narrative, analytical basis, supporting evidence
- *      opening in SourceViewer, contradictory evidence, data gaps, next direction).
+ *    - Clicking an edge explains WHY (narrative, analytical basis, supporting
+ *      evidence opening in SourceViewer, contradictory evidence, data gaps,
+ *      next direction).
  *    - Clicking a case displays connected cases, shared entities, and [OPEN ENTITY NETWORK].
+ *    - Data from GET /graph/master/case-network.
  *
- * 2. ENTITY NETWORK (Micro drill-down):
- *    - Multi-case entity network drill-down.
+ * 3. ENTITY NETWORK (micro drill-down):
+ *    - The deeper multi-case evidence/entity graph: phones, accounts, vehicles,
+ *      locations, organisations, people and the relationships between them.
  *    - Shape rule: ONLY confirmed criminals get ★ STAR; everything else is ○ CIRCLE.
+ *    - Data from GET /graph/master.
  *
  * Universal rules:
  * - Criminal status is source-derived; network position never alters legal status.
@@ -38,11 +53,12 @@ import {
 import { Badge, Empty, ErrorState, Spinner } from "../Status";
 import { DocumentFileLink, EvidencePointerLink, ReferenceLink } from "../EvidenceLink";
 import { TechnicalDetails } from "../TechnicalDetails";
+import PersonRelationshipNetwork from "./PersonRelationshipNetwork";
 import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../../lib/displayLabels";
 
 cytoscape.use(fcose);
 
-type NetworkLevel = "case" | "entity";
+type NetworkLevel = "people" | "case" | "entity";
 
 const CRIMINAL_FILL = "#DC2626";
 const CRIMINAL_BORDER = "#F59E0B";
@@ -71,7 +87,8 @@ interface MasterCaseNetworkProps {
 }
 
 export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetworkProps) {
-  const [level, setLevel] = useState<NetworkLevel>("case");
+  // People first: the default investigator view is the person-to-person graph.
+  const [level, setLevel] = useState<NetworkLevel>("people");
   const [layoutName, setLayoutName] = useState<"fcose" | "circle" | "concentric">("fcose");
 
   // Master Case Network state
@@ -145,6 +162,12 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
     const keep = new Set(visibleEntityNodes.map((n) => n.provenance_key));
     return entityEdges.filter((e) => keep.has(e.source) && keep.has(e.target));
   }, [entityEdges, visibleEntityNodes]);
+
+  /** How many stars the legend is actually promising — the legend must not lie. */
+  const entityCriminalCount = useMemo(
+    () => visibleEntityNodes.filter((n) => isConfirmedCriminal(n)).length,
+    [visibleEntityNodes],
+  );
 
   // ---- Build Cytoscape Elements for Case Network -----------------------------
   const caseElements = useMemo<ElementDefinition[]>(() => {
@@ -221,6 +244,13 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
   // ---- Initialize & Update Cytoscape Canvas ----------------------------------
   useEffect(() => {
     if (!containerRef.current) return;
+    if (level === "people") {
+      // The person-to-person graph owns its own canvas; make sure no stale
+      // entity/case instance is left mounted underneath it.
+      cyRef.current?.destroy();
+      cyRef.current = null;
+      return;
+    }
 
     const currentElements = level === "case" ? caseElements : entityElements;
     if (currentElements.length === 0) {
@@ -371,8 +401,22 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
           </p>
         </div>
         <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-          {/* Two-level view selector */}
+          {/* Three genuinely different graphs — each tab renders its own data. */}
           <div className="btn-group" role="tablist" aria-label="Master Network View Level">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={level === "people"}
+              className={`btn btn-small ${level === "people" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => {
+                setLevel("people");
+                setSelectedCase(null);
+                setSelectedEdge(null);
+                setSelectedEntityNode(null);
+              }}
+            >
+              PEOPLE NETWORK
+            </button>
             <button
               type="button"
               role="tab"
@@ -399,19 +443,34 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               ENTITY NETWORK
             </button>
           </div>
-          <button
-            type="button"
-            className="btn btn-tertiary btn-small"
-            onClick={() => {
-              if (level === "case") void loadCaseNetwork();
-              else void loadEntityNetwork();
-            }}
-          >
-            Refresh
-          </button>
+          {level !== "people" && (
+            <button
+              type="button"
+              className="btn btn-tertiary btn-small"
+              onClick={() => {
+                if (level === "case") void loadCaseNetwork();
+                else void loadEntityNetwork();
+              }}
+            >
+              Refresh
+            </button>
+          )}
         </div>
       </div>
 
+      {/* ----------------- LEVEL 1: PEOPLE NETWORK (PERSON → PERSON) ----------------- */}
+      {level === "people" && (
+        <PersonRelationshipNetwork
+          caseId={null}
+          onOpenEntityNetwork={() => {
+            setFilterCaseId(null);
+            setLevel("entity");
+          }}
+        />
+      )}
+
+      {level !== "people" && (
+      <>
       {/* Description & Legend Bar */}
       <div
         style={{
@@ -426,18 +485,21 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
         <p className="muted" style={{ margin: 0 }}>
           {level === "case"
             ? `How ALL ${caseNetwork?.counts.cases ?? 0} cases in the active dataset connect through evidence-backed shared entities. Only real shared entities form connections.`
-            : `Underlying multi-case entity graph. Explains why cases connect through shared people, phones, accounts and vehicles.`}
+            : `Underlying multi-case entity graph — the deeper evidence layer: phones, accounts, vehicles, locations, organisations and the records that tie them together. Switch to PEOPLE NETWORK for person-to-person relationships.`}
         </p>
 
         {/* Legend */}
         <div style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}>
           <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
             <span style={{ fontSize: "14px", color: "#0F172A" }}>○</span>
-            <span>Case / Entity (Circle)</span>
+            <span>{level === "case" ? "Case (Circle)" : "Entity (Circle)"}</span>
           </span>
           <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
             <span style={{ fontSize: "14px", color: CRIMINAL_FILL }}>★</span>
-            <span>Confirmed Criminal ONLY (Star)</span>
+            <span>
+              Confirmed Criminal ONLY (Star)
+              {level === "entity" && entityCriminalCount >= 0 ? ` — ${entityCriminalCount} in view` : ""}
+            </span>
           </span>
           {level === "case" && (
             <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -757,6 +819,8 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </section>
   );
