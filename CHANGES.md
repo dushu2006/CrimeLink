@@ -1,3 +1,262 @@
+# CrimeLink — third-round audit (22-section brief)
+
+**Code commit:** `77ba473` · **Doc commit:** this file
+**Branch:** `arena/01a0afee-crimelink` · **Base:** `30154e3d6fd7feb6c83cec834f8aab6c4f94e780`
+
+The second-round report follows below, and the first-round report below that.
+Rounds one and two are unchanged and still stand. This section covers the one
+genuine gap the third brief exposed.
+
+---
+
+## A. What the third brief exposed
+
+§3 asks for an audit of **every** analytical detector. Round two audited the two
+detectors that happened to *fire on the demo corpus* — `detect_cross_case_entities`
+and `detect_community_signals` — fixed them, and reported "0 non-person subjects".
+
+That statement was true for the seeded corpus and **false in general**. Re-reading
+§3 and then reading all eleven detectors' `title=` / `entities=` / `entity_keys=`
+construction showed **seven more** that could put a supporting entity in the
+subject position:
+
+| Detector | Subject it built |
+|---|---|
+| `detect_bridge_signals` | any node ranked by betweenness — a hub phone qualifies |
+| `detect_communication_anomalies` | `CALLED` endpoints, i.e. **phone ↔ phone** |
+| `detect_financial_flows` | the **bank account** itself |
+| `detect_cross_case_links` | any edge endpoints spanning disjoint cases |
+| `detect_temporal_bursts` | any edge endpoints |
+| `detect_repeated_combinations` | any co-occurring pair |
+| `detect_vehicle_mismatches` | title was person-centric; `entities`/`entity_keys` still carried the vehicle |
+
+Two were already correct: `detect_colocations` builds its subject from
+`presence[person]` off `LOCATED_AT` edges, so its keys are persons by
+construction; `detect_er_signals` never fired on this corpus (see §E).
+
+**Why round two missed it:** verifying against one dataset proves only that the
+detectors active in *that* dataset are clean. A corpus with no dated transfers
+simply never reaches the financial-flow detector, so its bug stays invisible.
+
+## B. Root cause
+
+The detectors are written against **edges**, because that is what the graph
+provides. Their natural subject is whatever the edge endpoints happen to be.
+Person-centric scope is a *presentation and analysis* requirement layered on top,
+and nothing enforced it: each detector was individually trusted to have made a
+person the subject. Seven had not.
+
+## C. The fix
+
+Rather than rewrite nine detectors — which would have meant re-deriving each one's
+evidence, strength, case list, contradictions and innocent alternatives — the fix
+is a **subject-resolution layer** in `detect_all_patterns`
+(`backend/app/investigator/patterns.py`, inserted immediately above it):
+
+- `_person_subjects` — the people already in a finding's `entity_keys`.
+- `_people_via_support` — for a non-person subject, the people attached to it
+  through a first-class relationship or a bridged record
+  (Person → Phone → call → Phone ← Person).
+- `_reframe_for_person_subject` — rewrites `title`, `entities` and `entity_keys`
+  onto those people, **keeping the detector's own evidence, strength, cases,
+  contradictions and innocent alternatives intact**. The mechanism (the phone,
+  the account) is retained in the evidence text, and the reframing is disclosed
+  as a provenance pointer rather than applied silently.
+- `_dedupe_person_patterns` — collapsing subjects exposes latent duplication:
+  detectors fire per graph edge, so 13 parallel call records between one phone
+  pair become 13 identical person-pair findings. Person-scoped results are merged
+  by `(kind, entity_keys)` — union of cases, union of evidence, stronger strength
+  wins — and annotated **once, from the final counts**.
+- `REFRAME_MAX_PEOPLE = 6` — a hub connecting 40 people is not a person-pair
+  finding; it is capped and labelled.
+
+Gated on `person_centric = ctx.subject.upper() != "ENTITY"`. `DetectorContext.subject`
+defaults to `"PERSON"`, so all four call sites (`network_analysis.py:536`,
+`orchestrator.py:994/1588/1665`) are person-centric unless they explicitly ask
+for the evidence layer.
+
+A finding that attaches to **no** person in scope is not dropped silently and not
+surfaced with a phone in front: it is set aside with a written reason
+(`"Evidence-layer finding: it describes supporting entities that attach to no
+person in this scope…"`), which the API returns under `exclusion_reason`.
+
+**ENTITY scope is untouched.** The evidence layer must keep naming phones and
+accounts — that is what makes it the evidence layer.
+
+### A defect found and fixed while verifying
+
+The first version of `_dedupe_person_patterns` rebuilt the title on every merge,
+so the suffix accumulated: `Priya Kumar ↔ Dinesh Malhotra (6 supporting records)
+(9 supporting records) … (39 supporting records)`. The base title is now kept and
+the suffix emitted once, at the end, from the final count.
+
+## D. Verification
+
+### D.1 Real seeded master graph (25 cases, 527 in-scope nodes, 2 550 edges)
+
+`detect_all_patterns(..., max_patterns=100000)` — the cap raised so every
+detector's output is visible rather than truncated to 25:
+
+| Scope | Live | Set aside | **Findings with no person subject** |
+|---|---|---|---|
+| `PERSON` | **748** | 10 | **0** |
+| `ENTITY` | 706 | 10 | 526 — unchanged, correct for the evidence layer |
+
+Live kinds in PERSON scope: `CROSS_CASE_PERSON_LINK` 522, `CROSS_CASE_LINK` 96,
+`CROSS_CASE_ENTITY` 73, `REPEATED_COMBINATION` 46, `COMMUNITY_SIGNAL` 8,
+`COLOCATION` 2, `NETWORK_BRIDGE` 1.
+Set-aside reasons: 10 × `COLOCATION` — "Single co-location: one shared presence
+is coincidence".
+
+Sample reframed titles (real data):
+`REPEATED_COMBINATION` → `Ajay Kapoor — 2 records collapsed from the same person`;
+`CROSS_CASE_LINK` → `Ajay Kapoor ↔ Varun Thakur (+4 more) — 2 records collapsed…`;
+`COLOCATION` → `Harish Chatterjee ↔ Sachin Iyer`.
+
+### D.2 Synthetic graph engineered to fire the seven leaking detectors
+
+`backend/tests/test_person_centric_analytics.py::leaking_detector_graph` — 4
+persons, 2 phones, 1 account, 1 vehicle, 13 `CALLED` records, 6 dated
+`TRANSFER_TO`, an `ASSOCIATE_OF`/`OWNS_VEHICLE` mismatch.
+
+| Scope | Live | No-person-subject findings |
+|---|---|---|
+| `PERSON` before | 23 | **17** |
+| `PERSON` after | **11** | **0** |
+| `ENTITY` after | 23 | 17 — unchanged |
+
+| Kind | Before | After |
+|---|---|---|
+| `COMMUNICATION_ANOMALY` | `+919000000000 ↔ +919000000137: 37 calls` | `Priya Kumar ↔ Dinesh Malhotra` |
+| `FINANCIAL_FLOW` | `ACC-0000: 6 transfers in 7 days` | `Amit Sharma` |
+| `VEHICLE_USE_OWNERSHIP_MISMATCH` | carried `RJ-14-CX-1234` in `entity_keys` | `Priya Kumar ↔ Amit Sharma` |
+
+### D.3 The regression tests are genuine
+
+Six tests were added. Patching the gate at `patterns.py:1641` to
+`person_centric = False` and re-running makes **three of them fail**, reproducing
+the leak verbatim:
+
+```
+AssertionError: COMMUNICATION_ANOMALY named no person as its subject:
+                '+919000000000 ↔ +919000000137: 37 calls'
+AssertionError: duplicated person-subject findings: [... ('CROSS_CASE_LINK', ('NA','NB')) ×13 ...]
+AssertionError: the reframing must be disclosed in provenance, not applied silently
+```
+
+Restoring the fix returns 21/21.
+
+> **A methodological error worth recording.** My first attempt at this check
+> patched the first textual occurrence of
+> `person_centric = ctx.subject.upper() != "ENTITY"` — which is line **614**,
+> inside `detect_cross_case_entities`, not the real gate at **1641**. It appeared
+> to confirm the tests, because four *round-two* tests failed. The six new tests
+> passed either way, which is the signature of a test that verifies nothing.
+> Re-running against line 1641 produced the failures above. There are three
+> occurrences of that line (614, 1077, 1641); only 1641 gates the layer.
+
+### D.4 Live API, seeded dataset `demo-dataset-002`
+
+`GET /api/v1/investigate/patterns` (master) → 200, 110 patterns / 100 live,
+**0 naming a supporting entity as a subject**, all 10 set-aside entries carrying
+a written reason. `GET /api/v1/graph/master/relationships?limit=3000` → 200,
+`view=PERSON_NETWORK`, node labels `{PERSON}` only, 1 661 edges with **0
+dangling** and **1 661 distinct person pairs** (no duplicates). **13/13 live
+checks pass.**
+
+Criminal stars, checked against the authoritative persisted source
+(`graph.json`, 120 PERSON nodes): `criminal_status` histogram
+`{CONFIRMED: 3, None: 117}`; the three are Priya Kumar, Vikram Verma, Amit
+Sharma. The API returns `counts.confirmed_criminals = 3` and exactly 3
+`is_criminal` nodes, all with `criminal_status == "CONFIRMED"`, none unstarred,
+and no SUSPECT/WITNESS/VICTIM/ASSOCIATE/INFORMANT role starred on role alone.
+(Priya Kumar's `role` is `SUSPECT` — she is starred because of persisted
+`CONFIRMED` status, not because of her role.)
+
+An earlier version of this live check read `confirmed_criminals` from the top
+level of the response, got `None`, and passed vacuously via `cc is None or …`.
+The field lives under `counts`; the check now asserts it is present first.
+
+## E. Test and build results
+
+| Check | Command | Result |
+|---|---|---|
+| Backend suite | `pytest tests/` | **933 passed, 1 failed, 1 skipped** in 218.95 s |
+| Person-centric analytics | `pytest tests/test_person_centric_analytics.py` | **21/21 passed** (15 from round 2 + 6 new) |
+| Frontend suite | `npm test` | **193/193 passed** |
+| TypeScript build | `tsc -b` | clean |
+| Production build | `vite build` | **✓ built in 3.98 s** |
+
+Backend was 927 passed before this round; +6 is exactly the six new tests.
+The single failure is the pre-existing
+`test_runtime_context.py::test_unreachable_postgres_message_is_actionable`,
+deliberately untouched in all three rounds.
+
+**One round-two test had to be corrected, not deleted.**
+`test_community_signal_names_people_not_the_shared_entity` asserted the literal
+word `"people"` in the title. The reframing layer now names the actual people
+(`Amit Sharma ↔ Vikram Verma`), which satisfies the test's *intent* more strongly
+but no longer contains that word. The assertion now checks that a real person's
+name from `entity_keys` appears and that no supporting entity does. The test's
+purpose is preserved and strengthened; it was not weakened to hide a failure.
+
+## F. Files changed
+
+| File | Change |
+|---|---|
+| `backend/app/investigator/patterns.py` | +199 lines: the subject-resolution layer and the dedup pass |
+| `backend/tests/test_person_centric_analytics.py` | +190 lines: six regression tests, `_edge` now forwards extra properties, one assertion corrected |
+
+No frontend change was needed: the frontend renders whatever subjects the API
+returns, and the API now returns people.
+
+## G. Remaining genuine limitations
+
+1. **Four detectors cannot fire on the demo corpus, for data reasons rather than
+   code defects** — and so are proven only by the synthetic test, not by live
+   data:
+   - `detect_communication_anomalies` — the busiest phone pair carries **2** calls;
+     the threshold is `MIN_CALLS_ANOMALY = 10`.
+   - `detect_financial_flows` and `detect_temporal_bursts` — **0 of 2 786** edges
+     carry a timestamp-ish key, and both need dated records. The seeder does not
+     write edge timestamps.
+   - `detect_vehicle_mismatches` — no person is associated with a vehicle owned by
+     a different person in the seeded data.
+2. `detect_er_signals` produced 0 findings, so its raw subject type is **not
+   runtime-verified**; it is covered by the reframing layer like every other
+   detector.
+3. The 25-pattern default cap (`max_patterns`) means the live endpoint shows only
+   the highest-ranked kinds. On this corpus that is cross-case detection; raising
+   the cap reveals the other five. This is ranking, not suppression, but it does
+   mean the UI under-represents detector diversity on a dense corpus.
+4. **Embedded profile only.** No Postgres, Neo4j, MinIO, Redis or Docker in this
+   sandbox, so the production adapters remain unexercised.
+5. The pre-existing backend failure above is still failing.
+6. Every demo relationship still classifies as FACT — the rule is genuinely
+   derived and its inputs are real, but the seeded corpus is uniformly
+   high-confidence, so the INFERENCE/HYPOTHESIS/UNKNOWN branches are not
+   exercised by demo data.
+7. 40 of 360 documents still lack a `SourceReference` (they pass
+   `traceable_to_original` on a registered `DatasetFile` alone, and the detail
+   string says so).
+8. **The 575-vs-527 node gap is now traced, and it is a real seeder defect.**
+   Diffing `graph.json` against `multi_case_snapshot` gives exactly 48 excluded
+   nodes: **25 `CASE`** nodes (excluded by design — the master view is
+   entity-level) plus **23 nodes whose `case_ids` is empty**: 11 `PERSON`,
+   9 `ORGANIZATION`, 3 `VEHICLE`. The snapshot is built by case membership, so a
+   node with no `case_ids` can never enter scope. Those 11 people are therefore
+   invisible to every case-scoped and master-scope analysis, to every detector,
+   and to the People Network — while still counting towards the seed's reported
+   575. Fixing this means correcting the seeder to attach case membership to
+   every person it writes, which is a data-generation change outside the scope of
+   this brief; it is recorded here rather than silently absorbed.
+9. Sandbox resets recurred again this round (`/tmp` scripts, `.venv-cl` and
+   `node_modules` all vanished). Recovered with
+   `git fetch origin arena/01a0afee-crimelink && git reset --mixed FETCH_HEAD`
+   plus a rebuild.
+
+---
+
 # CrimeLink — second-round audit (26-section brief)
 
 **Code commits:** `4d97eb3`, `f6b2caa`, `ce45e11`, `d591534`
