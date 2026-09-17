@@ -81,6 +81,7 @@ DATASET_NAME = "CrimeLink Demo Dataset v2"
 CASE_PREFIX = "case-d2-"
 USER_PREFIX = "demo-user-"
 DOC_PREFIX = "doc-d2-"
+SOURCE_DOC_PREFIX = "doc-s2-"
 EVID_PREFIX = "ev-d2-"
 SRC_PREFIX = "src-d2-"
 FINDING_PREFIX = "find-d2-"
@@ -1314,8 +1315,19 @@ def doc_id_for(eid: str) -> str:
 
     Module level so the graph builder, the relational seeder and the
     verification tests all resolve evidence ids the same way.
+
+    Evidence and source records keep **distinct namespaces**
+    (``doc-d2-`` / ``doc-s2-``).  They used to share one, so ``E-0000`` and
+    ``S-0000`` both produced ``doc-d2-0000``: the source document was never
+    inserted (its id already existed), and every graph node and edge that
+    cited a source resolved to an unrelated evidence file instead.  A
+    provenance pointer that resolves to the wrong document is worse than one
+    that does not resolve.
     """
-    return f"{DOC_PREFIX}{eid.lower().replace('e-', '').replace('s-', '')}"
+    key = eid.lower()
+    if key.startswith("s-"):
+        return f"{SOURCE_DOC_PREFIX}{key.replace('s-', '')}"
+    return f"{DOC_PREFIX}{key.replace('e-', '')}"
 
 
 def derive_case_persons(dataset: dict[str, Any]) -> dict[str, list[str]]:

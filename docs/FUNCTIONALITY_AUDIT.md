@@ -230,3 +230,62 @@ Tests added this pass:
    `reportAllChanges`, `web-vitals`, `PerformanceObserver` or `startTime`
    anywhere in `frontend/`. It is browser/DevTools instrumentation, and no
    workaround was added to CrimeLink for it.
+
+## 6. Data-quality and orphan audit (§17)
+
+`backend/scripts/audit_data_quality.py` is a read-only, additive audit over the
+active dataset. It checks seventeen categories across the whole
+CASE → EVIDENCE → SOURCE DOCUMENT → STORED FILE → PROVENANCE chain and exits
+non-zero if any is non-empty. Its classification logic is a pure function
+(`classify()`), unit-tested against deliberately broken inputs in
+`tests/test_data_integrity_audit.py`, so a clean run means the checks can
+actually notice a problem.
+
+Final result on the live instance:
+
+```
+cases=25 documents=360 dataset_files=360 references=320 findings=30 nodes=575 edges=2800
+total orphan / integrity problems: 0
+```
+
+### Two defects it found
+
+**1. Evidence and source documents shared one id namespace.**
+`doc_id_for` stripped both the `E-` and the `S-` prefix, so `E-0000` and
+`S-0000` both produced `doc-d2-0000`. Two consequences:
+
+- `persist()` skipped the source insert as a duplicate, so the 40 seeded
+  source PDFs sat in the object store and in `dataset_files` with **no
+  `CaseDocument` row of their own** — 40 of 360 stored files were not
+  first-class documents.
+- `dataset_files.doc_id` for those 40 rows pointed at an **evidence**
+  document (`doc-d2-0000`, the CR-2001 FIR) instead of the source file that
+  owned the row. That is a mis-linked provenance row: following it opens the
+  wrong document.
+
+Fix: evidence keeps `doc-d2-NNNN`, sources get `doc-s2-NNNN`
+(`SOURCE_DOC_PREFIX`). `scripts/repair_source_documents.py --apply` registers
+the 40 missing rows and re-points the 40 `dataset_files` rows at their own
+document. It is additive — nothing existing is modified or removed. Verified
+live: `doc-s2-0000` and `doc-s2-0039` both resolve through
+`/evidence/{id}/provenance` with all four checks green and the hash matching
+storage.
+
+**2. Deleting a document does not retire the graph entities it produced.**
+Three CSVs uploaded during the audit were removed from the database, which
+left one graph node and one edge citing a document that no longer resolved,
+plus three stray objects in storage. All were cleaned up. The underlying gap
+is still open: `services/documents.py::discard_quarantined` soft-deletes the
+row but has no graph-store API for retiring the derived entities, and
+`snapshot()` skips `is_active=False` nodes. See limitation 7.
+
+### Correction to an earlier claim
+
+An interim note said the id collision meant "67 nodes and 356 edges cite the
+wrong file." That was wrong. Those numbers came from flagging any cited id
+whose numeric suffix was below 40, which selects the first 40 *evidence*
+documents — `doc-d2-0000…0039` — and those resolve correctly. `source_doc_for`
+only ever returns `doc_id_for(evidence_id)`, so no graph record ever cited a
+source id. The collision was real, but its live effect was confined to the 40
+source `CaseDocument` rows and the 40 `dataset_files.doc_id` values described
+above.
