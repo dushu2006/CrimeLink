@@ -9,18 +9,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PersonList } from "../components/investigator/PersonList";
-import { masterPersons, masterGraph } from "../api/client";
-import type { GraphNodeRow, GraphEdgeRow } from "../api/client";
+import { masterPersons } from "../api/client";
 import { useAuth } from "../store/auth";
 import { isInvestigator, getRoleBadge } from "../lib/rbac";
-
-function isPersonLabel(label: string): boolean {
-  return label.toLowerCase() === "person" || label.toLowerCase() === "people";
-}
 
 export default function PeoplePage() {
   const [people, setPeople] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const session = useAuth((s) => s.session);
@@ -35,24 +31,28 @@ export default function PeoplePage() {
     async function load() {
       setLoading(true);
       try {
-        const [personsRes, graph] = await Promise.all([masterPersons(), masterGraph()]);
-        const nodes: GraphNodeRow[] = graph.nodes || [];
-        const edges: GraphEdgeRow[] = graph.edges || [];
-        const personNodes = nodes.filter((n) => isPersonLabel(n.label));
-        const items = (personsRes as any).items || personNodes;
+        // People come from the active dataset only.  This used to also pull the
+        // whole 575-node entity graph just to count edges per person; the
+        // person endpoint already carries the connection count.
+        const personsRes = await masterPersons();
+        const items = (personsRes as any).items || [];
         setPeople(items.map((p: any) => {
           const key = p.provenance_key || p.id;
-          const relCount = edges.filter((e) => e.source === key || e.target === key).length;
           return {
             id: key,
             pseudonym: key,
             displayName: p.name || key.slice(0, 12),
-            relationshipsCount: relCount,
+            relationshipsCount: p.connections || 0,
             evidenceCount: p.source_doc_ids?.length || 0,
-            casesCount: p.case_ids?.length || 1,
+            casesCount: p.case_ids?.length || 0,
+            role: p.role ?? null,
+            criminalStatus: p.criminal_status ?? null,
+            isCriminal: Boolean(p.criminal_status),
           };
         }));
-      } catch {}
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
       setLoading(false);
     }
     void load();
@@ -70,6 +70,21 @@ export default function PeoplePage() {
           {[1,2,3,4,5,6].map((i) => (
             <div key={i} className="skeleton-card"><div className="skeleton-line w-60" /><div className="skeleton-line w-40" /></div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="people-page">
+        <div className="page-header">
+          <h1>People</h1>
+          <p className="page-subtitle">Person-centric investigation — Who is involved?</p>
+        </div>
+        <div className="cl-empty">
+          <div className="cl-empty-title">People could not be loaded</div>
+          <div className="cl-empty-desc">{error}</div>
         </div>
       </div>
     );
