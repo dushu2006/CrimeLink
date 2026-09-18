@@ -93,7 +93,7 @@ const ENTITY_REL_TYPES = [
  * mesh, not an investigation aid.  The complete graph stays reachable through
  * the "Max nodes" control — it is an intentional mode, not the default.
  */
-const DEFAULT_ENTITY_NODE_BUDGET = 600;
+const DEFAULT_ENTITY_NODE_BUDGET = 80;
 
 type NetworkLevel = "people" | "case" | "entity";
 

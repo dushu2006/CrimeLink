@@ -1,38 +1,10 @@
 {
-  "name": "CrimeLink Production Demo Dataset v1",
-  "version": "1.0",
-  "created_at": "2026-09-15T14:27:18.167853",
-  "description": "Production-style persistent demo with 20 interconnected cases",
-  "counts": {
-    "cases": 20,
-    "people": 100,
-    "relationships": 216,
-    "evidence": 300,
-    "sources": 120,
-    "timeline_events": 258,
-    "investigations": 10
-  },
-  "hero_case": "CR-1024",
-  "cases": [
-    "CR-1024",
-    "CR-1025",
-    "CR-1026",
-    "CR-1027",
-    "CR-1028",
-    "CR-1029",
-    "CR-1030",
-    "CR-1031",
-    "CR-1032",
-    "CR-1033",
-    "CR-1034",
-    "CR-1035",
-    "CR-1036",
-    "CR-1037",
-    "CR-1038",
-    "CR-1039",
-    "CR-1040",
-    "CR-1041",
-    "CR-1042",
-    "CR-1043"
-  ]
+  "name": "CrimeLink Synthetic Investigation Dataset",
+  "version": "2.1",
+  "dataset_id": "demo-dataset-002",
+  "description": "Deterministic 20-case multi-source synthetic police investigation corpus. Source bytes are materialized by the v2 bootstrap seed.",
+  "case_count": 20,
+  "case_numbers": ["CR-2001", "CR-2002", "CR-2003", "CR-2004", "CR-2005", "CR-2006", "CR-2007", "CR-2008", "CR-2009", "CR-2010", "CR-2011", "CR-2012", "CR-2013", "CR-2014", "CR-2015", "CR-2016", "CR-2017", "CR-2018", "CR-2019", "CR-2020"],
+  "source_of_truth": "backend/scripts/seed_demo_v2.py",
+  "synthetic_notice": "All records, identifiers, people, places and institutions are fictional."
 }

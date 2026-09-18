@@ -57,7 +57,7 @@ export function RelationshipPanel({ relationship, onViewEvidence, onViewTimeline
 
       <div className="relationship-panel-visual">
         <div className="person-node person-a">
-          <span className="person-icon">👤</span>
+          <span className="material-symbols-outlined person-icon" aria-hidden="true">person</span>
           <span>{relationship.source_person}</span>
         </div>
         <div className="relationship-edge">
@@ -66,7 +66,7 @@ export function RelationshipPanel({ relationship, onViewEvidence, onViewTimeline
           <span className="edge-line">↓</span>
         </div>
         <div className="person-node person-b">
-          <span className="person-icon">👤</span>
+          <span className="material-symbols-outlined person-icon" aria-hidden="true">person</span>
           <span>{relationship.target_person}</span>
         </div>
       </div>

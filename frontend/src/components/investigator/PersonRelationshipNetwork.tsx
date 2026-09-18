@@ -182,9 +182,9 @@ export default function PersonRelationshipNetwork({
         {
           selector: "node",
           style: {
-            // Confirmed criminals are actual STAR nodes. All other people remain circles.
-            // The star is driven only by the authoritative criminal_status flag.
-            shape: (ele: any) => (ele.data("is_criminal") ? "star" : "ellipse"),
+            // The person graph keeps a consistent circular silhouette; confirmed
+            // criminal status is communicated by the gated star label, fill and ring.
+            shape: "ellipse",
             "background-color": (ele: any) =>
               ele.data("is_criminal") ? CRIMINAL_FILL : PERSON_FILL,
             "border-width": (ele: any) => (ele.data("is_criminal") ? 4 : 2),
@@ -197,7 +197,7 @@ export default function PersonRelationshipNetwork({
             // Keep the person name on the node; the silhouette itself conveys criminal status.
             label: (ele: any) => {
               const name = String(ele.data("name") ?? "");
-              const text = name;
+              const text = ele.data("is_criminal") ? `★\n${name}` : name;
               return ele.selected() || graphLabels.current ? text : "";
             },
             "text-wrap": "wrap",

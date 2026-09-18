@@ -91,7 +91,10 @@ export function CaseDashboardFull({ caseId, onContinueInvestigation, onFocusEnti
 
   if (!data) return null;
 
-  const { header, stats, intelligence } = data;
+  const { header } = data;
+  const stats = data.stats ?? { entities: 0, relationships: 0, evidence: 0, documents: 0, patterns: 0, unresolved: 0, entities_by_label: {}, relationships_by_type: {} };
+  const intelligence = data.intelligence ?? { high_priority: [], gaps: [], patterns: [], recent_activity: [], unresolved: [] };
+  const safeObjectEntries = (value: unknown) => Object.entries(value && typeof value === "object" ? value as Record<string, number> : {});
 
   return (
     <div className={`case-dashboard-full ${className || ""}`}>
@@ -153,12 +156,12 @@ export function CaseDashboardFull({ caseId, onContinueInvestigation, onFocusEnti
           <div className="case-dashboard-stat-card" onClick={() => navigate(`/graph?case=${caseId}`)}>
             <span className="case-dashboard-stat-label">Entities</span>
             <span className="case-dashboard-stat-value">{stats.entities.toLocaleString()}</span>
-            <span className="case-dashboard-stat-sub">{Object.entries(stats.entities_by_label).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(" · ")}</span>
+            <span className="case-dashboard-stat-sub">{safeObjectEntries(stats.entities_by_label).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(" · ")}</span>
           </div>
           <div className="case-dashboard-stat-card" onClick={() => navigate(`/graph?case=${caseId}`)}>
             <span className="case-dashboard-stat-label">Relationships</span>
             <span className="case-dashboard-stat-value">{stats.relationships.toLocaleString()}</span>
-            <span className="case-dashboard-stat-sub">{Object.entries(stats.relationships_by_type).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(" · ")}</span>
+            <span className="case-dashboard-stat-sub">{safeObjectEntries(stats.relationships_by_type).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(" · ")}</span>
           </div>
           <div className="case-dashboard-stat-card">
             <span className="case-dashboard-stat-label">Evidence</span>
