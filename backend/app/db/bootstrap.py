@@ -332,6 +332,18 @@ def run_db_migrations(settings: Settings | None = None) -> None:
 def _database_identity(settings: Settings) -> dict[str, Any]:
     """Return a safe DB identity proving which endpoint/schema is being queried."""
     engine = get_sync_engine(settings)
+    dialect_name = engine.dialect.name
+
+    if dialect_name == "sqlite":
+        # SQLite has no server identity — return the file path instead.
+        db_url = str(engine.url)
+        return {
+            "database": db_url,
+            "schema": "main",
+            "server_addr": "localhost",
+            "server_port": None,
+        }
+
     with engine.connect() as conn:
         row = conn.execute(
             text(

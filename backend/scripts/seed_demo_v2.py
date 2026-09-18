@@ -403,7 +403,8 @@ def gen_person(idx: int) -> dict[str, Any]:
         aliases.append(ALIAS_POOL[(idx + a * 3) % len(ALIAS_POOL)])
 
     # Phone numbers: each person has 1-2 phones
-    phone_idx_start = (idx * 2) % PHONE_COUNT    phones = [phone_id(phone_idx_start)]
+    phone_idx_start = (idx * 2) % PHONE_COUNT
+    phones = [phone_id(phone_idx_start)]
     if idx % 2 == 0:
         phones.append(phone_id((phone_idx_start + 1) % PHONE_COUNT))
 
@@ -1201,7 +1202,8 @@ def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
             "",
             "Related Persons:",
         ]
-        c_people = dataset["case_persons_dict"].get(case["id"], [])[:6]        for pid in c_people:
+        c_people = dataset["case_persons_dict"].get(case["id"], [])[:6]
+        for pid in c_people:
             p = next(p for p in dataset["persons"] if p["id"] == pid)
             lines.append(f"  - {p['full_name']} (role: {p['role']})")
         lines += [
@@ -2013,7 +2015,8 @@ def source_doc_for(
 
 def build_graph(dataset: dict[str, Any], container, doc_id_for):
     """Build the graph from canonical data — nodes and edges."""
-    from app.domain.models import GraphNode, GraphEdge    from app.domain.enums import REL_TYPES
+    from app.domain.models import GraphNode, GraphEdge
+    from app.domain.enums import REL_TYPES
 
     graph_store = container.graph_store
     # Reset graph for this dataset

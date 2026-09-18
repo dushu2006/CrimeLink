@@ -76,6 +76,23 @@ export default function TimelinePage() {
   const session = useAuth((s) => s.session);
   const roleBadge = getRoleBadge(session?.role as any);
   const caseParam = searchParams.get("case") || "";
+  const [autoCaseId, setAutoCaseId] = useState<string>("");
+  const effectiveCaseParam = caseParam || autoCaseId;
+
+  useEffect(() => {
+    if (caseParam) return;
+    api<{ items: Array<{ id: string }> }>("/cases?limit=1")
+      .then((data) => {
+        const first = data.items?.[0]?.id;
+        if (first) {
+          setAutoCaseId(first);
+          const merged = new URLSearchParams(searchParams);
+          merged.set("case", first);
+          setSearchParams(merged, { replace: true });
+        }
+      })
+      .catch(() => {});
+  }, [caseParam, searchParams, setSearchParams]);
 
   const load = useCallback(() => {
     // The timeline is per-case: there is no cross-case timeline in the data,
