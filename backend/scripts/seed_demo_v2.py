@@ -77,6 +77,12 @@ from app.security.passwords import hash_password
 DEMO_DATASET_ID = "demo-dataset-002"
 DATASET_NAME = "CrimeLink Demo Dataset v2"
 
+# Presentation-safe local source bundle. The seeder mirrors the exact bytes
+# used for every evidence/source record here, so SourceViewer has a durable
+# filesystem copy even when the object-store adapter is unavailable. Paths
+# inside this directory mirror DatasetFile.relative_path exactly.
+BUNDLED_SOURCE_ROOT = REPO_ROOT / "demo_dataset" / "runtime_sources"
+
 # Deterministic ID prefixes
 CASE_PREFIX = "case-d2-"
 USER_PREFIX = "demo-user-"
@@ -397,8 +403,7 @@ def gen_person(idx: int) -> dict[str, Any]:
         aliases.append(ALIAS_POOL[(idx + a * 3) % len(ALIAS_POOL)])
 
     # Phone numbers: each person has 1-2 phones
-    phone_idx_start = (idx * 2) % PHONE_COUNT
-    phones = [phone_id(phone_idx_start)]
+    phone_idx_start = (idx * 2) % PHONE_COUNT    phones = [phone_id(phone_idx_start)]
     if idx % 2 == 0:
         phones.append(phone_id((phone_idx_start + 1) % PHONE_COUNT))
 
@@ -797,8 +802,7 @@ def build_dataset() -> dict[str, Any]:
             ("SURVEILLANCE", "Surveillance observation"),
             ("EVIDENCE_COLLECTION", "Evidence collected"),
             ("INTERVIEW", "Witness interview"),
-            ("ARREST", "Subject arrested"),
-            ("SEARCH", "Premises searched"),
+            ("ARREST", "Subject arrested"),            ("SEARCH", "Premises searched"),
             ("TRAVEL", "Travel movement"),
         ]
         etype_idx = i % len(event_types)
@@ -1197,8 +1201,7 @@ def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
             "",
             "Related Persons:",
         ]
-        c_people = dataset["case_persons_dict"].get(case["id"], [])[:6]
-        for pid in c_people:
+        c_people = dataset["case_persons_dict"].get(case["id"], [])[:6]        for pid in c_people:
             p = next(p for p in dataset["persons"] if p["id"] == pid)
             lines.append(f"  - {p['full_name']} (role: {p['role']})")
         lines += [
@@ -1498,7 +1501,7 @@ def seed_all() -> bool:
             # deactivates every competing dataset in the same transaction.
             is_active=False,
             source_kind="builtin",
-            root_path=str(settings.data_dir / "datasets" / DEMO_DATASET_ID),
+            root_path=str(BUNDLED_SOURCE_ROOT),
             origin_note="CrimeLink demo dataset v2 — synthetic interconnected data",
             stage_detail={"stage": "READY", "steps": [{"stage": "READY", "detail": "Dataset ready"}]},
             stats={"cases": len(dataset["cases"]), "persons": len(dataset["persons"])},
@@ -1518,6 +1521,18 @@ def seed_all() -> bool:
 
         # Seed all files into object store first, then DB records.
         #
+        # The same bytes are mirrored into the project-local dataset bundle.
+        # This is not a second generated corpus: it is the exact byte-for-byte
+        # copy that is hashed and stored in the object store below.
+        BUNDLED_SOURCE_ROOT.mkdir(parents=True, exist_ok=True)
+
+        def mirror_source_file(relative_path: str, payload: bytes) -> None:
+            target = (BUNDLED_SOURCE_ROOT / relative_path).resolve()
+            if not target.is_relative_to(BUNDLED_SOURCE_ROOT.resolve()):
+                raise ValueError(f"Refusing to mirror source outside dataset root: {relative_path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+
         # Each file's bytes are generated EXACTLY ONCE and reused for the
         # stored object, the recorded content_hash and the size.  Regenerating
         # them later — which this seeder used to do — silently breaks chain of
@@ -1540,6 +1555,7 @@ def seed_all() -> bool:
                 object_store.put(bucket, key, file_bytes, content_type=ev["mime_type"])
             evidence_bytes[ev["evidence_id"]] = file_bytes
             evidence_file_map[ev["evidence_id"]] = key
+            mirror_source_file(key, file_bytes)
 
         source_bytes: dict[str, bytes] = {}
         for src in dataset["sources"]:
@@ -1554,8 +1570,9 @@ def seed_all() -> bool:
             if existing is None:
                 object_store.put(bucket, key, file_bytes, content_type=src["mime_type"])
             source_bytes[src["source_id"]] = file_bytes
+            mirror_source_file(key, file_bytes)
 
-        print("  Object store populated.")
+        print("  Object store and project-local source bundle populated.")
 
         # Create cases
         for c in dataset["cases"]:
@@ -1597,8 +1614,7 @@ def seed_all() -> bool:
                 size_bytes=len(file_bytes),
                 mime_type=ev["mime_type"],
                 ingestion_status=IngestionStatus.COMPLETE,
-                ingestion_stage=6,
-                source_confidence=SourceConfidence.VERIFIED,
+                ingestion_stage=6,                source_confidence=SourceConfidence.VERIFIED,
                 classification=InformationClassification.CONFIDENTIAL,
                 quarantined=False,
                 uploaded_by=DEMO_USERS[1]["id"],
@@ -1997,8 +2013,7 @@ def source_doc_for(
 
 def build_graph(dataset: dict[str, Any], container, doc_id_for):
     """Build the graph from canonical data — nodes and edges."""
-    from app.domain.models import GraphNode, GraphEdge
-    from app.domain.enums import REL_TYPES
+    from app.domain.models import GraphNode, GraphEdge    from app.domain.enums import REL_TYPES
 
     graph_store = container.graph_store
     # Reset graph for this dataset
