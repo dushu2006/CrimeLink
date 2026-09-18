@@ -331,7 +331,13 @@ function PdfView({
     setError(null);
     const rawEndpoint =
       preview?.raw_url || `/sources/raw?path=${encodeURIComponent(preview?.file?.path || path)}`;
-    fetchBlob(rawEndpoint)
+    // The API returns a fully-prefixed `/api/v1/...` URL, while `fetchBlob`
+    // expects a path relative to that prefix. Normalize once so we never
+    // request `/api/v1/api/v1/sources/raw` (the presentation-time 404).
+    const blobPath = rawEndpoint.startsWith("/api/v1/")
+      ? rawEndpoint.slice("/api/v1".length)
+      : rawEndpoint;
+    fetchBlob(blobPath)
       .then((blob) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
@@ -390,15 +396,17 @@ function ImageFileView({ path, rawUrl }: { path: string; rawUrl?: string | null 
     let objectUrl: string | null = null;
     setError(null);
     const rawEndpoint = rawUrl || `/sources/raw?path=${encodeURIComponent(path)}`;
-    fetchBlob(rawEndpoint)
+    const blobPath = rawEndpoint.startsWith("/api/v1/")
+      ? rawEndpoint.slice("/api/v1".length)
+      : rawEndpoint;
+    fetchBlob(blobPath)
       .then((blob) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
       })
       .catch((err: unknown) => {
-        // An image that fails to fetch must say so; spinning forever looks
-        // like a slow network and hides a broken signed link.
+        // An image that fails to fetch must say so; spinning forever looks        // like a slow network and hides a broken signed link.
         if (!active) return;
         setError(err instanceof Error ? err.message : String(err));
       });
