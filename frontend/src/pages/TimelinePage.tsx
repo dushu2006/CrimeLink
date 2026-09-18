@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { enhancedTimeline, type EnhancedTimelineEvent } from "../api/client";
+import { api, enhancedTimeline, type EnhancedTimelineEvent } from "../api/client";
 import { EvidenceDrawer } from "../components/investigator/EvidenceDrawer";
 import { useAuth } from "../store/auth";
 import { getRoleBadge } from "../lib/rbac";
@@ -80,7 +80,7 @@ export default function TimelinePage() {
   const load = useCallback(() => {
     // The timeline is per-case: there is no cross-case timeline in the data,
     // and inventing one would mean inventing events.
-    if (!caseParam) {
+    if (!effectiveCaseParam) {
       setRows([]);
       setLoading(false);
       setError(null);
@@ -88,7 +88,7 @@ export default function TimelinePage() {
     }
     setLoading(true);
     setError(null);
-    enhancedTimeline(caseParam, {
+    enhancedTimeline(effectiveCaseParam, {
       event_type: filterType || undefined,
       entity: filterParticipant || undefined,
       limit: 500,
@@ -97,7 +97,7 @@ export default function TimelinePage() {
       // A failed request is a failure — never an empty timeline.
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [caseParam, filterType, filterParticipant]);
+  }, [effectiveCaseParam, filterType, filterParticipant]);
 
   useEffect(load, [load]);
 
@@ -144,13 +144,13 @@ export default function TimelinePage() {
           >
             Evidence-grounded, real timestamps only ·{" "}
             <span className={`badge badge-${roleBadge.tone}`}>{roleBadge.label}</span> · Read-only
-            {caseParam ? ` · Case: ${caseParam}` : ""}
+            {effectiveCaseParam ? ` · Case: ${effectiveCaseParam}` : ""}
           </div>
         </div>
         <div className="timeline-filters">
           <input
             type="search"
-            value={caseParam}
+            value={effectiveCaseParam}
             placeholder="Case id (required)"
             onChange={(event) => {
               const merged = new URLSearchParams(searchParams);
@@ -194,7 +194,7 @@ export default function TimelinePage() {
         </div>
       )}
 
-      {!loading && !error && !caseParam && (
+      {!loading && !error && !effectiveCaseParam && (
         <div className="cl-empty">
           <div className="cl-empty-title">Choose a case</div>
           <div className="cl-empty-desc">
@@ -204,7 +204,7 @@ export default function TimelinePage() {
         </div>
       )}
 
-      {!loading && !error && caseParam && rows.length === 0 && (
+      {!loading && !error && effectiveCaseParam && rows.length === 0 && (
         <div className="cl-empty">
           <div className="cl-empty-title">
             {filterType || filterParticipant
