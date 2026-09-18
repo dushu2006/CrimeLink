@@ -14,6 +14,7 @@ import { useAuth } from "../store/auth";
 import { isInvestigator, getRoleBadge } from "../lib/rbac";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import StaleDataNotice from "../components/common/StaleDataNotice";
+import { WhatNext } from "../components/investigator/WhatNext";
 
 export default function PeoplePage() {
   const [people, setPeople] = useState<any[]>([]);
@@ -155,19 +156,12 @@ export default function PeoplePage() {
         onView={(id) => navigate(`/people?case=${caseParam || ""}&focus=${id}`)}
       />
 
-      <div className="investigation-actions" style={{ marginTop: "20px", padding: "12px", background: "var(--surface-secondary)", borderRadius: "8px", border: "1px solid var(--border-secondary)" }}>
-        <h3 style={{ fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>What can you do next?</h3>
-        <ul style={{ fontSize: "12px", display: "flex", flexDirection: "column", gap: "4px", listStyle: "none", padding: 0 }}>
-          <li><button className="next-step-btn" onClick={() => navigate(`/relationships?case=${caseParam || ""}`)}>→ Review Relationships — What connects them?</button></li>
-          <li><button className="next-step-btn" onClick={() => navigate(`/evidence?case=${caseParam || ""}`)}>→ Examine Evidence — What supports?</button></li>
-          <li><button className="next-step-btn" onClick={() => navigate(`/timeline?case=${caseParam || ""}`)}>→ View Timeline — When did it occur?</button></li>
-          {investigator ? (
-            <li><button className="next-step-btn" onClick={() => navigate(`/investigate?case=${caseParam || ""}`)}>→ Continue Investigation — Explain why</button></li>
-          ) : (
-            <li style={{ fontSize: "11px", color: "var(--muted)", fontFamily: "var(--font-mono)" }}>Read-only viewer — investigation actions require Investigator role</li>
-          )}
-        </ul>
-      </div>
+      <WhatNext actions={[
+        { icon: "🔗", title: "Review relationships", description: "Understand how people are connected.", to: `/relationships?case=${caseParam || ""}` },
+        { icon: "📄", title: "Review evidence", description: "Inspect supporting source records.", to: `/evidence?case=${caseParam || ""}` },
+        { icon: "🕒", title: "Examine timeline", description: "Understand the sequence of events.", to: `/timeline?case=${caseParam || ""}` },
+        { icon: "🧭", title: "Continue investigation", description: "Open the evidence-first workspace.", to: `/investigate?case=${caseParam || ""}` },
+      ]} />
 
       <div style={{ marginTop: "16px", fontSize: "10px", fontFamily: "var(--font-mono)", color: "var(--muted)" }}>
         Mode: PERSON → PERSON only · Supporting as evidence · No demo data · Based only on evidence shown · {roleBadge.label}

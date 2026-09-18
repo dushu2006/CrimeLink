@@ -11,6 +11,7 @@ import { EnhancedTimeline } from "../components/investigator/EnhancedTimeline";
 import { enhancedTimeline, type EnhancedTimelineEvent } from "../api/client";
 import { useEffect } from "react";
 import { api } from "../api/client";
+import { WhatNext } from "../components/investigator/WhatNext";
 
 export default function CaseDashboardPage() {
   const { caseId: routeCaseId } = useParams<{ caseId: string }>();
@@ -48,7 +49,7 @@ export default function CaseDashboardPage() {
     setTimelineLoading(true);
     setTimelineError(null);
     enhancedTimeline(caseId, { limit: 200 })
-      .then((res) => setTimelineEvents(res.events))
+      .then((res) => setTimelineEvents(Array.isArray(res?.events) ? res.events : []))
       // Never render a failed timeline as an empty one: "no events" and "the
       // request failed" are different statements about the case.
       .catch((err: Error) => setTimelineError(err.message))
@@ -110,6 +111,12 @@ export default function CaseDashboardPage() {
             onViewDoc={(docId) => navigate(`/documents/${docId}`)}
           />
         )}
+        <WhatNext actions={[
+          { icon: "👥", title: "Review people", description: "Identify people connected to this case.", to: `/people?case=${caseId}` },
+          { icon: "🔗", title: "Review relationships", description: "Trace evidence-backed connections.", to: `/relationships?case=${caseId}` },
+          { icon: "📄", title: "Review evidence", description: "Open the source records behind findings.", to: `/evidence?case=${caseId}` },
+          { icon: "🧭", title: "Open workspace", description: "Continue the evidence-first investigation.", to: `/investigate?case=${caseId}` },
+        ]} />
       </div>
     </div>
   );

@@ -24,7 +24,7 @@ interface Props {
   className?: string;
 }
 
-function groupByDay(events: EnhancedTimelineEvent[]): Map<string, EnhancedTimelineEvent[]> {
+function groupByDay(events: EnhancedTimelineEvent[] = []): Map<string, EnhancedTimelineEvent[]> {
   const map = new Map<string, EnhancedTimelineEvent[]>();
   for (const ev of events) {
     const ts = ev.timestamp || ev.at || "";
@@ -87,7 +87,8 @@ export function EnhancedTimeline({
   const [windowError, setWindowError] = useState<string | null>(null);
 
   const filteredEvents = useMemo(() => {
-    let out = [...events];
+    const safeEvents = Array.isArray(events) ? events : [];
+    let out = [...safeEvents];
     if (filterFrom) out = out.filter((e) => (e.timestamp || e.at || "") >= filterFrom);
     if (filterTo) out = out.filter((e) => (e.timestamp || e.at || "") <= filterTo);
     if (filterEntity) {
@@ -95,8 +96,8 @@ export function EnhancedTimeline({
       out = out.filter(
         (e) =>
           (e.entity && e.entity.toLowerCase().includes(needle)) ||
-          e.related_entities.some((r) => r.toLowerCase().includes(needle)) ||
-          e.participants.some((p: any) => String(p.name || "").toLowerCase().includes(needle))
+          (e.related_entities ?? []).some((r) => r.toLowerCase().includes(needle)) ||
+          (e.participants ?? []).some((p: any) => String(p.name || "").toLowerCase().includes(needle))
       );
     }
     if (filterType) {
@@ -186,7 +187,7 @@ export function EnhancedTimeline({
           </div>
           {windowAnalysis.ai_analysis?.evidence_refs && (
             <div className="enhanced-timeline-event-meta" style={{ marginTop: "8px" }}>
-              {windowAnalysis.ai_analysis.evidence_refs.slice(0, 5).map((ref: string) => (
+              {(Array.isArray(windowAnalysis.ai_analysis.evidence_refs) ? windowAnalysis.ai_analysis.evidence_refs : []).slice(0, 5).map((ref: string) => (
                 <button key={ref} className="cl-btn" style={{ fontSize: "10px", padding: "2px 6px" }} onClick={() => onOpenEvidence?.(ref)}>
                   {ref.slice(0, 12)}…
                 </button>
@@ -278,7 +279,7 @@ export function EnhancedTimeline({
                             👤 {ev.entity}
                           </button>
                         )}
-                        {ev.related_entities.slice(0, 3).map((r) => (
+                        {(ev.related_entities ?? []).slice(0, 3).map((r) => (
                           <button
                             key={r}
                             className="enhanced-timeline-event-meta-item"
@@ -291,7 +292,7 @@ export function EnhancedTimeline({
                           </button>
                         ))}
                         {ev.location && <span className="enhanced-timeline-event-meta-item">📍 {ev.location}</span>}
-                        {ev.evidence_doc_ids.slice(0, 2).map((docId) => (
+                        {(ev.evidence_doc_ids ?? []).slice(0, 2).map((docId) => (
                           <button
                             key={docId}
                             className="enhanced-timeline-event-meta-item"
