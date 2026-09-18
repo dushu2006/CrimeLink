@@ -112,10 +112,10 @@ export default function CaseDashboardPage() {
           />
         )}
         <WhatNext actions={[
-          { icon: "👥", title: "Review people", description: "Identify people connected to this case.", to: `/people?case=${caseId}` },
-          { icon: "🔗", title: "Review relationships", description: "Trace evidence-backed connections.", to: `/relationships?case=${caseId}` },
-          { icon: "📄", title: "Review evidence", description: "Open the source records behind findings.", to: `/evidence?case=${caseId}` },
-          { icon: "🧭", title: "Open workspace", description: "Continue the evidence-first investigation.", to: `/investigate?case=${caseId}` },
+          { icon: "group", title: "Review people", description: "Identify people connected to this case.", to: `/people?case=${caseId}` },
+          { icon: "hub", title: "Review relationships", description: "Trace evidence-backed connections.", to: `/relationships?case=${caseId}` },
+          { icon: "description", title: "Review evidence", description: "Open the source records behind findings.", to: `/evidence?case=${caseId}` },
+          { icon: "explore", title: "Open workspace", description: "Continue the evidence-first investigation.", to: `/investigate?case=${caseId}` },
         ]} />
       </div>
     </div>

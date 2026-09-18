@@ -157,10 +157,10 @@ export default function PeoplePage() {
       />
 
       <WhatNext actions={[
-        { icon: "🔗", title: "Review relationships", description: "Understand how people are connected.", to: `/relationships?case=${caseParam || ""}` },
-        { icon: "📄", title: "Review evidence", description: "Inspect supporting source records.", to: `/evidence?case=${caseParam || ""}` },
-        { icon: "🕒", title: "Examine timeline", description: "Understand the sequence of events.", to: `/timeline?case=${caseParam || ""}` },
-        { icon: "🧭", title: "Continue investigation", description: "Open the evidence-first workspace.", to: `/investigate?case=${caseParam || ""}` },
+        { icon: "hub", title: "Review relationships", description: "Understand how people are connected.", to: `/relationships?case=${caseParam || ""}` },
+        { icon: "description", title: "Review evidence", description: "Inspect supporting source records.", to: `/evidence?case=${caseParam || ""}` },
+        { icon: "schedule", title: "Examine timeline", description: "Understand the sequence of events.", to: `/timeline?case=${caseParam || ""}` },
+        { icon: "explore", title: "Continue investigation", description: "Open the evidence-first workspace.", to: `/investigate?case=${caseParam || ""}` },
       ]} />
 
       <div style={{ marginTop: "16px", fontSize: "10px", fontFamily: "var(--font-mono)", color: "var(--muted)" }}>
