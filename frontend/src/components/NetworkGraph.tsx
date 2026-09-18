@@ -34,6 +34,11 @@ const LABEL_COLOR: Record<string, string> = {
   FIR: "#0F172A",
   TRANSACTION: "#0F766E",
   SOCIAL_ACCOUNT: "#2563EB",
+  FINANCIAL_TRANSACTION: "#0F766E",
+  COMMUNICATION: "#16A34A",
+  SURVEILLANCE: "#9333EA",
+  INTELLIGENCE: "#DB2777",
+  EVIDENCE: "#64748B",
 };
 
 /** Confirmed criminal: star shape, red fill, gold border. */
@@ -297,8 +302,7 @@ export function NetworkGraph({
             "text-background-shape": "roundrectangle",
             "text-border-opacity": 0.8,
             "text-border-width": 1,
-            "text-border-color": "#CBD5E1",
-          },        },
+            "text-border-color": "#CBD5E1",          },        },
         {
           selector: "node:selected",
           style: { "border-width": 4, "border-color": "#1D4ED8" },
