@@ -4,19 +4,44 @@
  * Continue Investigation opens workspace restored
  */
 
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { CaseDashboardFull } from "../components/investigator/CaseDashboardFull";
 import { useState } from "react";
 import { EnhancedTimeline } from "../components/investigator/EnhancedTimeline";
 import { enhancedTimeline, type EnhancedTimelineEvent } from "../api/client";
 import { useEffect } from "react";
+import { api } from "../api/client";
 
 export default function CaseDashboardPage() {
-  const { caseId } = useParams<{ caseId: string }>();
+  const { caseId: routeCaseId } = useParams<{ caseId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const queryCaseId = searchParams.get("case");
+  const [resolvedCaseId, setResolvedCaseId] = useState<string | null>(routeCaseId || queryCaseId);
+  const [caseResolveError, setCaseResolveError] = useState<string | null>(null);
+  const caseId = resolvedCaseId; 
   const [timelineEvents, setTimelineEvents] = useState<EnhancedTimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (routeCaseId || queryCaseId) {
+      setResolvedCaseId(routeCaseId || queryCaseId);
+      return;
+    }
+    setCaseResolveError(null);
+    api<{ items: Array<{ id: string }> }>("/cases?limit=1")
+      .then((data) => {
+        const first = data.items?.[0]?.id;
+        if (!first) {
+          setCaseResolveError("No cases are available in the active dataset.");
+          return;
+        }
+        setResolvedCaseId(first);
+        navigate(`/cases/dashboard?case=${encodeURIComponent(first)}`, { replace: true });
+      })
+      .catch((err: Error) => setCaseResolveError(err.message));
+  }, [routeCaseId, queryCaseId, navigate]);
 
   useEffect(() => {
     if (!caseId) return;
@@ -30,7 +55,18 @@ export default function CaseDashboardPage() {
       .finally(() => setTimelineLoading(false));
   }, [caseId]);
 
-  if (!caseId) return <div className="cl-error">No case ID</div>;
+  if (caseResolveError) {
+    return (
+      <div className="cl-error">
+        <div className="cl-empty-title">Could not resolve the active case</div>
+        <div className="cl-empty-desc">{caseResolveError}</div>
+        <button className="cl-btn" onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    );
+  }
+  if (!caseId) {
+    return <div className="cl-empty"><div className="cl-empty-title">Loading active case…</div></div>;
+  }
 
   return (
     <div className="case-dashboard-page">
