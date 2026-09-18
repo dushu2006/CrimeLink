@@ -244,8 +244,39 @@ export default function InvestigatorWorkspace() {
       relationshipsCount: personRelationships.filter((e) => e.source === n.provenance_key || e.target === n.provenance_key).length,
       evidenceCount: n.source_doc_ids.length,
       casesCount: n.case_ids.length,
+      isCriminal: Boolean(n.criminal_status),
+      criminalStatus: n.criminal_status,
+      role: (n.properties?.role as string) ?? null,
     }));
   }, [personNodes, personRelationships]);
+
+  /** Connected entities for the selected node — used by the selected rail. */
+  const selectedConnections = useMemo(() => {
+    if (!selectedNode) return [];
+    const key = selectedNode.provenance_key;
+    const nameOf = new Map(personNodes.map((n) => [n.provenance_key, n.name || n.provenance_key]));
+    return personRelationships
+      .filter((e) => e.source === key || e.target === key)
+      .map((e) => {
+        const otherKey = e.source === key ? e.target : e.source;
+        return {
+          key: otherKey,
+          name: nameOf.get(otherKey) ?? otherKey,
+          rel_type: e.rel_type,
+          strength: (e.properties as Record<string, unknown>)?.strength as string | undefined,
+          docId: e.source_doc_id ?? e.source_doc_ids[0] ?? null,
+          docCount: e.source_doc_ids?.length ?? 0,
+        };
+      })
+      .slice(0, 12);
+  }, [selectedNode, personNodes, personRelationships]);
+
+  /** Open evidence helper */
+  const openDoc = useCallback((docId?: string | null) => {
+    if (!docId) return;
+    setEvidenceDrawerData({ id: docId, title: docId, source: "Case record", evidenceLevel: "FACT" });
+    setShowEvidenceDrawer(true);
+  }, []);
 
   /**
    * Everything the "Selected" sidebar claims about a node, derived from the
@@ -683,59 +714,214 @@ export default function InvestigatorWorkspace() {
 
 
           {selectedNode && (
-            <div className="sidebar-section">
-              <h3>Selected</h3>
-              <div style={{ padding: "8px", background: "var(--surface-secondary)", borderRadius: "6px", fontSize: "12px" }}>
-                <strong>{getDisplayLabel(selectedNode)}</strong> ({selectedNode.label})
-                <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                  {/* These used to be literals -- FACT, STRONG, count 2, and a
-                      trust badge that ticked all four boxes -- printed for
-                      whatever node happened to be selected.  They are now
-                      derived from the relationships that node actually has. */}
-                  {selectedNodeSummary.edgeCount === 0 ? (
-                    <span className="muted">
-                      No relationship records for this entity.
+            <div className="sidebar-section selected-entity-panel">
+              <h3 className="sidebar-section-h">
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>person</span>
+                Selected Entity
+              </h3>
+
+              {/* ENTITY IDENTITY */}
+              <div className="sel-identity">
+                <div className="sel-entity-name">{getDisplayLabel(selectedNode)}</div>
+                <div className="sel-entity-meta">
+                  <span className="sel-entity-type">
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>category</span>
+                    {String(selectedNode.label).replace(/([A-Z])/g, " $1").trim()}
+                  </span>
+                  {Boolean(selectedNode.criminal_status) && (
+                    <span className="sel-criminal-badge" title="Source-recorded criminal status">
+                      <span className="material-symbols-outlined" style={{ fontSize: 12 }}>gavel</span>
+                      {String(selectedNode.criminal_status).replace(/_/g, " ")}
                     </span>
-                  ) : (
-                    <>
-                      <ClassificationBadge classification="FACT" />
-                      <EvidenceStrength
-                        strength={selectedNodeSummary.strength}
-                        count={selectedNodeSummary.docCount}
-                      />
-                      <ProvenanceBadge {...selectedNodeSummary.checks} />
-                    </>
                   )}
                 </div>
-                <div style={{ marginTop: "8px" }}>
-                  <button className="cl-btn cl-btn-sm" onClick={() => setActiveTab("evidence")}>View Evidence</button>
-                  <button className="cl-btn cl-btn-sm" onClick={() => setActiveTab("timeline")} style={{ marginLeft: "4px" }}>Timeline</button>
+                <div className="sel-entity-id">{selectedNode.provenance_key}</div>
+              </div>
+
+              {/* CONNECTIONS */}
+              <div className="sel-block">
+                <div className="sel-block-label">
+                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>polyline</span>
+                  CONNECTIONS ({selectedConnections.length})
+                </div>
+                {selectedConnections.length === 0 ? (
+                  <div className="sel-empty">No relationships for this entity.</div>
+                ) : (
+                  <ul className="sel-connection-list">
+                    {selectedConnections.slice(0, 6).map((c) => (
+                      <li key={c.key} className="sel-connection-item">
+                        <button
+                          type="button"
+                          className="sel-connection-name"
+                          onClick={() => {
+                            const node = personNodes.find((n) => n.provenance_key === c.key);
+                            if (node) setSelectedNode(node);
+                          }}
+                          title={`Focus ${c.name}`}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>person</span>
+                          {c.name}
+                        </button>
+                        <span className="sel-connection-rel">{c.rel_type.replace(/_/g, " ").toLowerCase()}</span>
+                        {c.docId && (
+                          <button
+                            type="button"
+                            className="sel-connection-ev"
+                            onClick={() => openDoc(c.docId)}
+                            title={`Open ${c.docId}`}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>description</span>
+                            {c.docCount}
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {/* EVIDENCE */}
+              <div className="sel-block">
+                <div className="sel-block-label">
+                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>folder_open</span>
+                  EVIDENCE ({selectedNode.source_doc_ids.length})
+                </div>
+                {selectedNode.source_doc_ids.length === 0 ? (
+                  <div className="sel-empty">No source documents directly attached to this entity.</div>
+                ) : (
+                  <div className="sel-evidence-chips">
+                    {selectedNode.source_doc_ids.slice(0, 6).map((docId) => (
+                      <button
+                        key={docId}
+                        type="button"
+                        className="evidence-chip clickable"
+                        onClick={() => openDoc(docId)}
+                        title={`Open ${docId}`}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>description</span>
+                        {docId.length > 14 ? docId.slice(0, 12) + "…" : docId}
+                      </button>
+                    ))}
+                    {selectedNode.source_doc_ids.length > 6 && (
+                      <button type="button" className="evidence-chip" onClick={() => setActiveTab("evidence")}>
+                        +{selectedNode.source_doc_ids.length - 6} more
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* CONTEXT — why it matters, real data only */}
+              {selectedNodeSummary.edgeCount > 0 && (
+                <div className="sel-block">
+                  <div className="sel-block-label">
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>info</span>
+                    WHY IT MATTERS
+                  </div>
+                  <div className="sel-why">
+                    <div className="sel-why-badges">
+                      <EvidenceStrength strength={selectedNodeSummary.strength} count={selectedNodeSummary.docCount} />
+                    </div>
+                    <p className="sel-why-text">
+                      {selectedNodeSummary.edgeCount} direct relationship{selectedNodeSummary.edgeCount === 1 ? "" : "s"}
+                      {" "}across {selectedNodeSummary.docCount} source record{selectedNodeSummary.docCount === 1 ? "" : "s"}
+                      {selectedNode.case_ids.length > 0 && ` in ${selectedNode.case_ids.length} case${selectedNode.case_ids.length === 1 ? "" : "s"}`}.
+                      {" "}Select a connection or evidence item to inspect.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* ACTIONS */}
+              <div className="sel-block">
+                <div className="sel-block-label">
+                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>arrow_forward</span>
+                  ACTIONS
+                </div>
+                <div className="sel-actions">
+                  <button
+                    type="button"
+                    className="cl-btn cl-btn-sm"
+                    onClick={() => navigate(`/entities/${encodeURIComponent(selectedNode.provenance_key)}`)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>open_in_new</span>
+                    Open entity
+                  </button>
+                  <button
+                    type="button"
+                    className="cl-btn cl-btn-sm"
+                    disabled={selectedNode.source_doc_ids.length === 0}
+                    onClick={() => openDoc(selectedNode.source_doc_ids[0])}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>description</span>
+                    Evidence
+                  </button>
+                  <button type="button" className="cl-btn cl-btn-sm" onClick={() => setActiveTab("timeline")}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>timeline</span>
+                    Timeline
+                  </button>
+                  {caseParam && (
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-sm"
+                      onClick={() => navigate(`/people?case=${caseParam}&focus=${selectedNode.provenance_key}`)}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>person_search</span>
+                      Focus
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {selectedEdge && (
-            <div className="sidebar-section">
-              <h3>Relationship</h3>
-              <div style={{ padding: "8px", background: "var(--surface-secondary)", borderRadius: "6px", fontSize: "12px" }}>
-                <div><strong>{selectedEdge.source} ↔ {selectedEdge.target}</strong></div>
-                <div>Type: {selectedEdge.rel_type}</div>
-                <div style={{ marginTop: "8px", display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                  {/* FACT / STRONG / count 1 were literals here too, and the
-                      contradiction alert was handed an empty list, so it could
-                      never fire.  Both now read the selected edge's own
-                      records. */}
-                  <ClassificationBadge classification="FACT" />
-                  <EvidenceStrength
-                    strength={selectedEdgeSummary.strength}
-                    count={selectedEdgeSummary.docCount}
-                  />
+            <div className="sidebar-section selected-edge-panel">
+              <h3 className="sidebar-section-h">
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>polyline</span>
+                Selected Relationship
+              </h3>
+              <div className="sel-identity">
+                <div className="sel-edge-persons">
+                  <span className="sel-edge-person">{(personNodes.find(n=>n.provenance_key===selectedEdge.source)?.name)||selectedEdge.source}</span>
+                  <span className="material-symbols-outlined sel-edge-arrow" aria-hidden>swap_horiz</span>
+                  <span className="sel-edge-person">{(personNodes.find(n=>n.provenance_key===selectedEdge.target)?.name)||selectedEdge.target}</span>
                 </div>
-                {selectedEdgeSummary.contradictions.length > 0 && (
-                  <ContradictionAlert details={selectedEdgeSummary.contradictions} />
-                )}
+                <div className="sel-entity-type">
+                  <span className="material-symbols-outlined" style={{ fontSize: 12 }}>link</span>
+                  {selectedEdge.rel_type.replace(/_/g, " ")}
+                </div>
               </div>
+              <div className="sel-block">
+                <div className="sel-block-label">EVIDENCE</div>
+                <div className="sel-why-badges" style={{ marginBottom: 6 }}>
+                  <EvidenceStrength strength={selectedEdgeSummary.strength} count={selectedEdgeSummary.docCount} />
+                </div>
+                <div className="sel-evidence-chips">
+                  {(selectedEdge.source_doc_ids || []).slice(0, 6).map((d) => (
+                    <button key={d} type="button" className="evidence-chip clickable" onClick={() => openDoc(d)}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 12 }}>description</span>
+                      {d.length > 14 ? d.slice(0, 12) + "…" : d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="sel-block">
+                <div className="sel-block-label">ACTIONS</div>
+                <div className="sel-actions">
+                  <button type="button" className="cl-btn cl-btn-sm" onClick={() => openDoc(selectedEdge.source_doc_id)}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>description</span>
+                    Evidence
+                  </button>
+                  <button type="button" className="cl-btn cl-btn-sm" onClick={() => setActiveTab("timeline")}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 13 }}>timeline</span>
+                    Timeline
+                  </button>
+                </div>
+              </div>
+              {selectedEdgeSummary.contradictions.length > 0 && (
+                <ContradictionAlert details={selectedEdgeSummary.contradictions} />
+              )}
             </div>
           )}
 

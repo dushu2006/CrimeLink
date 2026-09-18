@@ -128,11 +128,11 @@ DEMO_USERS = [
 ]
 
 JURISDICTION = "METRO-CENTRAL"
+INVESTIGATOR_NAME = "Inspector Priya Sharma"
+INVESTIGATOR_BADGE = "DEMO-INVESTIGATOR"
 # Note: All demo cases are assigned to METRO-CENTRAL so that the demo admin
-# (jursidiction METRO-CENTRAL) can see everything. Cross-jurisdiction requests
-# remain fully functional — an investigator from METRO-NORTH would be scoped
-# correctly.
-JURISDICTIONS = ["METRO-CENTRAL", "METRO-CENTRAL", "METRO-CENTRAL", "METRO-CENTRAL", "METRO-CENTRAL"]
+# (jursidiction METRO-CENTRAL) can see everything.
+JURISDICTIONS = ["METRO-CENTRAL"] * 20
 
 # ---------------------------------------------------------------------------
 # Deterministic fake data
@@ -896,26 +896,34 @@ def build_dataset() -> dict[str, Any]:
     findings = []
     finding_idx = 0
 
-    # Hero finding: the main investigation chain for CR-2001
+    # Hero finding: the main investigation chain for CR-2001. Names are pulled
+    # from the deterministic person roster so the narrative never drifts from
+    # what the graph and evidence actually contain.
+    hero_primary = persons[0]
+    hero_accomplice_a = persons[1]
+    hero_accomplice_b = persons[2]
+    hero_vehicle = vehicles[0]
+    hero_address = addresses[0]
     hero_ev_ids = [evidence_list[i]["evidence_id"] for i in range(8)]
-    hero_keys = [persons[0]["id"], persons[1]["id"], persons[2]["id"],
-                 persons[0]["phone_ids"][0], persons[1]["phone_ids"][0],
-                 persons[0]["vehicle_ids"][0] if persons[0]["vehicle_ids"] else vehicles[0]["id"],
-                 addresses[0]["id"]]
+    hero_keys = [hero_primary["id"], hero_accomplice_a["id"], hero_accomplice_b["id"],
+                 hero_primary["phone_ids"][0], hero_accomplice_a["phone_ids"][0],
+                 hero_primary["vehicle_ids"][0] if hero_primary["vehicle_ids"] else hero_vehicle["id"],
+                 hero_address["id"]]
+    primary_last = hero_primary["full_name"].split()[-1]
     findings.append({
         "id": finding_id(0),
         "case_id": cases[0]["id"],
         "finding_type": "NETWORK_CONVERGENCE",
-        "title": "Primary Conspiracy Link: Rajesh Kumar Coordinates Criminal Network",
+        "title": f"Primary Conspiracy Link: {hero_primary['full_name']} Coordinates Criminal Network",
         "narrative": (
-            "Multiple independent evidence sources converge indicating that Rajesh Kumar (PERSON-001) "
-            "is the central coordinator of the criminal network responsible for the armed robbery "
-            "at Neelkanth Jewellers (CR-2001). Call data records establish direct communication "
-            "between Kumar and both known accomplices (Amit Sharma, Vikram Singh) in the 72 hours "
-            "preceding the incident. Vehicle MH02AB1234, registered to Kumar, was captured on ANPR "
-            "cameras at three locations along the escape route. Financial analysis reveals large "
-            "cash deposits into Kumar's accounts in the days following the robbery, followed by "
-            "structured transfers to accounts controlled by associates."
+            f"Multiple independent evidence sources converge indicating that {hero_primary['full_name']} "
+            f"is the central coordinator of the criminal network responsible for the armed robbery "
+            f"at Neelkanth Jewellers (CR-2001). Call data records establish direct communication "
+            f"between {primary_last} and two known accomplices ({hero_accomplice_a['full_name']}, {hero_accomplice_b['full_name']}) in the 72 hours "
+            f"preceding the incident. Vehicle {hero_vehicle['registration']}, registered to "
+            f"{primary_last}, was captured on ANPR cameras at three locations along the escape route. "
+            f"Financial analysis reveals large cash deposits into {primary_last}'s accounts in the days "
+            f"following the robbery, followed by structured transfers to accounts controlled by associates."
         ),
         "confidence": 0.92,
         "confidence_band": "HIGH",
@@ -926,8 +934,8 @@ def build_dataset() -> dict[str, Any]:
             "evidence_strength": "MULTI_SOURCE_CONVERGENCE",
             "classification": "OPERATIONAL",
             "connection_path": [
-                "CASE:CR-2001", f"PERSON:{persons[0]['id']}", f"PERSON:{persons[1]['id']}",
-                "CALL:CDR", "EVIDENCE:CCTV", "VEHICLE:MH02AB1234",
+                "CASE:CR-2001", f"PERSON:{hero_primary['id']}", f"PERSON:{hero_accomplice_a['id']}",
+                "CALL:CDR", "EVIDENCE:CCTV", f"VEHICLE:{hero_vehicle['registration']}",
                 "FINANCIAL:TRANSFER", "FINDING"
             ],
             "limitations": [
@@ -1166,16 +1174,91 @@ def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
             accused = ", ".join(p["full_name"] for p in people[:3])
             lines = [
                 "FINAL CHARGE SHEET — SYNTHETIC RECORD", f"Case/FIR reference: {case['case_number']}/2026",
-                f"Filing date: {(case['opened_at'] + timedelta(days=38)).date().isoformat()} | Police Station: MRA Marg Crime Unit, Mumbai",
-                f"Accused persons and roles: {accused} (primary subject and associated participants).",
-                f"Investigation conclusion: evidence supports the prosecution theory in the {case['classification'].lower()} investigation titled '{case['title']}'.",
-                f"Communications: CDR review linked {lead_phone} to the incident window and to contacts recorded in the case diary.",
-                f"Surveillance and vehicle evidence: registration {lead_vehicle} was recorded at a relevant location and its ownership/user trail was verified.",
-                "Financial and digital evidence: account movements, device records, and source metadata were compared with the timeline; inconsistencies were noted and resolved in the diary.",
-                f"Witness evidence: {witness['full_name']} provided a statement identifying the observed sequence. Scene and forensic reports corroborate material findings.",
-                "Seized material: documented property, device extracts, transaction statements and custody records, each cross-referenced to the evidence register.",
-                "Charges recommended under applicable provisions for the recorded offence; all accused and witnesses are present in the CrimeLink case graph.",
+                f"Filing date: {(case['opened_at'] + timedelta(days=45)).date().isoformat()} | Police Station: MRA Marg Crime Unit, Mumbai",
+                f"IO: {INVESTIGATOR_NAME} ({INVESTIGATOR_BADGE}) | Status: charges recommended for filing",
+                "",
+                f"Offence classification: {case['classification']}",
+                f"Accused persons and roles: {accused} (primary subject and associated participants) — each linked through corroborated evidence detailed below.",
+                "",
+                f"Investigation summary: {case['title']}. Over {45 - (case['opened_at'] - incident).days} days of enquiry the team preserved 11 evidence records, recorded statements, obtained CDR/financial/Surveillance reports and arranged forensic examination.",
+                "",
+                "Evidentiary basis:",
+                f"  1. FIR (E-{(int(ev['evidence_id'].split('-')[-1])-10):04d} range): original complaint and description of the offence.",
+                f"  2. Communications (CDR): telephone number {lead_phone} shows coordinated contact with co-accused in the window {incident.strftime('%d %b %H:%M')} to {(incident+timedelta(hours=6)).strftime('%d %b %H:%M')}.",
+                f"  3. Vehicle / ANPR: registration {lead_vehicle} captured by 3 cameras along the approach/escape route; ownership and driver records verified with RTO.",
+                f"  4. Financial: account movements in two associated accounts show structured deposits and onward transfers consistent with the proceeds/expenses of the offence.",
+                f"  5. Witness: {witness['full_name']} identified the primary subject and described clothing, vehicle and sequence of events; statement recorded u/s 161 CrPC.",
+                "  6. Scene & forensic: scene photographs, lifted prints/trace evidence and forensic lab report corroborate the sequence described in the FIR.",
+                "  7. Case diary: chronological record of all investigation steps, preservation notices, seizures and interviews.",
+                "",
+                "Seized material list: mobile handsets, SIM cards, documentation referenced in the evidence register, financial statements, vehicle logs — each sealed, signed and entered in the evidence custody chain.",
+                "",
+                "Conclusion: The evidence, taken together, establishes a prima facie case against the accused under the applicable provisions of law.",
                 "Filed for synthetic demonstration only. No real person or investigation is represented.",
+            ]
+        elif ev["doc_type"] == DocumentType.WITNESS_STATEMENT:
+            lines = [
+                "WITNESS STATEMENT RECORDED UNDER SECTION 161 CrPC — SYNTHETIC",
+                f"Statement ID: {ev['evidence_id']} | Case: {case['case_number']}/2026",
+                f"Recorded on: {(incident + timedelta(days=4)).date().isoformat()} by {INVESTIGATOR_NAME}",
+                "",
+                f"Witness: {witness['full_name']}    Gender: {witness['gender']}    Occupation: {witness['occupation']}",
+                "Relation to case: independent witness present at or near the incident location.",
+                "",
+                "Statement (translated from the recorded language):",
+                f"  \"On {incident.strftime('%d %B %Y at about %H:%M hours')}, I was present near the incident location when I observed {case['title'].lower()}.",
+                f"   I saw a person matching the description of {lead['full_name']}, accompanied by two others, arriving in a {dataset['vehicles'][0]['color']} {dataset['vehicles'][0]['make']} {dataset['vehicles'][0]['model']} bearing registration {lead_vehicle}.",
+                f"   The primary subject was using a mobile handset; I later learned the number was {lead_phone}. I heard raised voices and observed the sequence described in the FIR.",
+                "   After a short interval the individuals departed in the same vehicle, in the direction consistent with later ANPR readings.",
+                "   I have no prior acquaintance with or enmity towards any of the persons named. I am making this statement voluntarily.\"",
+                "",
+                "Witness signature verified. Statement read back and acknowledged.",
+                "Cross-reference: FIR, CDR preservation notice, ANPR log E-0008 series.",
+                "Synthetic record — not a real witness or statement.",
+            ]
+        elif ev["doc_type"] == DocumentType.SCENE_REPORT:
+            lines = [
+                "SCENE OF OFFENCE — OBSERVATION & PRESERVATION REPORT — SYNTHETIC",
+                f"Report ID: {ev['evidence_id']} | Case: {case['case_number']}/2026",
+                f"Visited on: {incident.date().isoformat()} by {INVESTIGATOR_NAME} and crime scene team",
+                "",
+                f"Location: within {case['jurisdiction_id']} jurisdiction, near the metropolitan corridor — exact geo-coordinates and photographs logged on the scene map.",
+                f"Offence type: {case['classification']}",
+                "",
+                "Observations:",
+                "  - Scene cordoned on arrival; access control established.",
+                "  - Photographs and videography completed from four cardinal directions; scale markers placed where trace evidence was located.",
+                "  - Physical evidence located, marked, photographed and lifted in accordance with standing procedure (fingerprint/trace, discarded items, tool marks where applicable).",
+                f"  - Vehicle approach/exit paths corroborated with later ANPR sightings for {lead_vehicle}.",
+                "  - No unauthorised disturbance of the scene between incident and team arrival.",
+                "",
+                "Items preserved and sealed for forensic analysis:",
+                "  * Trace / contact evidence (seal A)",
+                "  * Discarded articles (seal B)",
+                "  * Printed/electronic media where present (seal C)",
+                "",
+                "Chain of custody: all items logged in the evidence register, signed over to the malkhana, and forwarded to the Forensic Science Laboratory, Kalina, under sealed cover.",
+                "Synthetic record — not a real scene.",
+            ]
+        elif ev["doc_type"] == DocumentType.FORENSIC:
+            lines = [
+                "FORENSIC SCIENCE LABORATORY REPORT — SYNTHETIC",
+                f"Report ID: {ev['evidence_id']} | Case: {case['case_number']}/2026",
+                f"Examined by: Senior Scientific Officer, FSL Kalina | Received: {(incident + timedelta(days=7)).date().isoformat()}",
+                "",
+                f"Offence classification: {case['classification']}",
+                "Exhibits examined (seals intact on receipt):",
+                "  Exhibit A — trace/contact evidence from scene",
+                "  Exhibit B — discarded articles collected from scene",
+                "  Exhibit C — mobile handset / storage media (where applicable)",
+                "",
+                "Methods: visual examination, fingerprint development (where applicable), physical matching, digital extraction and toxicological/material analysis as appropriate to the exhibits.",
+                "",
+                f"Findings: trace evidence is consistent with the sequence described in the FIR for {case['title'].lower()}. No exculpatory inconsistencies were noted.",
+                "Comparisons with reference samples from named subjects and with the scene report were conducted; conclusions are reported under covering memo to the IO.",
+                "",
+                "Limitations: results are interpretive and should be weighed with CDR, ANPR, financial and witness evidence rather than read in isolation.",
+                "Synthetic report — not a real forensic examination.",
             ]
         else:
             lines = [
@@ -1228,10 +1311,40 @@ def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
             return json.dumps({"record_type": "surveillance_log", "case_reference": case["case_number"], "events": events,
                 "synthetic_notice": True}, indent=2).encode("utf-8")
         if ev["mime_type"] == "text/plain":
-            return (f"CRIMELINK INVESTIGATION NOTE — SYNTHETIC\nCase: {case['case_number']} | Received: {(incident + timedelta(days=2)).isoformat()}\n"
-                f"Lead: {lead['full_name']} | Phone: {lead_phone} | Vehicle: {lead_vehicle}\n"
-                f"Assessment: the lead concerning {case['title'].lower()} is partially corroborated by the CDR, financial and surveillance records.\n"
-                "Follow-up: verify the account holder, preserve the relevant camera export, and interview the named witness.\n").encode("utf-8")
+            doc_type_name = ev["doc_type"].value
+            if ev["doc_type"] == DocumentType.CASE_DIARY:
+                body = (
+                    f"CRIMELINK INVESTIGATION DIARY — SYNTHETIC\n"
+                    f"Case: {case['case_number']} | Opened: {case['opened_at'].isoformat()}\n"
+                    f"Incident: {incident.isoformat()} | IO: {INVESTIGATOR_NAME}\n"
+                    f"Record ID: {ev['evidence_id']} | Storage: {ev['storage_key']}\n\n"
+                    f"Day 01 — FIR registered under {case['classification']}. Scene visited, photographs taken.\n"
+                    f"Day 03 — Preservation letters issued to telecom operators for {lead_phone} and two other numbers.\n"
+                    f"Day 07 — CDR received. Analysis shows contact between {lead['full_name']} and two suspects in the 6-hour window.\n"
+                    f"Day 12 — ANPR camera data reviewed; vehicle {lead_vehicle} matched on three sightings.\n"
+                    f"Day 18 — Raid conducted at the suspect residence; partial recovery of material evidence.\n"
+                    f"Day 25 — Witness {witness['full_name']} statement recorded under Section 161 CrPC.\n"
+                    f"Day 34 — Financial trail established through account records.\n"
+                    f"Day 46 — Investigation concluded; charge sheet prepared and filed.\n"
+                )
+            elif ev["doc_type"] == DocumentType.INTELLIGENCE_REPORT:
+                body = (
+                    f"CRIMELINK INTELLIGENCE BRIEF — SYNTHETIC\n"
+                    f"Case: {case['case_number']} | Received: {(incident + timedelta(days=2)).isoformat()}\n"
+                    f"Lead: {lead['full_name']} | Phone: {lead_phone} | Vehicle: {lead_vehicle}\n"
+                    f"Record ID: {ev['evidence_id']}\n\n"
+                    f"Assessment: the lead concerning {case['title'].lower()} is partially corroborated by CDR, financial and surveillance records.\n"
+                    "Reliability: B2 (usually reliable, mostly confirmed).\n"
+                    "Follow-up: verify the account holder, preserve the relevant camera export, and interview the named witness.\n"
+                )
+            else:
+                body = (
+                    f"CRIMELINK INVESTIGATION NOTE — SYNTHETIC\n"
+                    f"Case: {case['case_number']} | Record: {ev['evidence_id']} | Type: {doc_type_name}\n"
+                    f"Subject: {lead['full_name']} | Phone: {lead_phone} | Vehicle: {lead_vehicle}\n"
+                    f"Assessment: notes on {case['title'].lower()}; corroborated against CDR, financial and surveillance records.\n"
+                )
+            return body.encode("utf-8")
         # CSV
         # Make content unique per evidence via nonce/seed rows
         offset = int(ev["evidence_id"].replace("E-", "")) if ev["evidence_id"].replace("E-", "").isdigit() else 0

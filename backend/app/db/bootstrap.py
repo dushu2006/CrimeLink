@@ -63,7 +63,7 @@ DEMO_USERS = [
     {"badge_number": "DEMO-VIEWER", "role": Role.VIEWER},
 ]
 
-EXPECTED_CASE_NUMBERS = [f"CR-{2001 + i}" for i in range(25)]
+EXPECTED_CASE_NUMBERS = [f"CR-{2001 + i}" for i in range(20)]
 
 _NAME_RESOLUTION_MARKERS = (
     "could not translate host name",

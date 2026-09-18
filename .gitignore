@@ -238,3 +238,11 @@ frontend/node_modules/
 !frontend/src/lib/
 !frontend/src/lib/**
 *.tsbuildinfo
+
+# CrimeLink — generated/runtime artifacts from bootstrap (seeded at app start)
+demo_dataset/evidence/
+demo_dataset/runtime_sources/
+backend/app/data/
+*.db
+*.sqlite
+*.sqlite3
