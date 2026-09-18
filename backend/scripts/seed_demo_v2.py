@@ -194,16 +194,16 @@ def finding_id(idx: int) -> str:
 # Data generation
 # ---------------------------------------------------------------------------
 
-CASE_COUNT = 25
-PERSON_COUNT = 120
-PHONE_COUNT = 90
-VEHICLE_COUNT = 40
+CASE_COUNT = 20
+PERSON_COUNT = 105
+PHONE_COUNT = 84
+VEHICLE_COUNT = 38
 ADDRESS_COUNT = 50
 ORG_COUNT = 15
-ACCOUNT_COUNT = 35
-EVENT_COUNT = 200
-EVIDENCE_COUNT = 320
-SOURCE_COUNT = 40
+ACCOUNT_COUNT = 42
+EVENT_COUNT = 240
+EVIDENCE_COUNT = 210
+SOURCE_COUNT = 20
 FINDING_COUNT = 30
 COMMUNICATION_COUNT = 400
 TRANSACTION_COUNT = 250
@@ -346,33 +346,27 @@ BANKS = [
 ]
 
 CASE_TITLES = [
-    ("Armed Robbery at Jewelry Store", "ROBBERY", "HIGH", "OPEN"),
-    ("Organized Vehicle Theft Ring", "AUTO_THEFT", "HIGH", "ACTIVE_INVESTIGATION"),
-    ("Drug Trafficking Network Bust", "NARCOTICS", "CRITICAL", "ACTIVE_INVESTIGATION"),
-    ("Financial Fraud / Embezzlement Scheme", "FRAUD", "HIGH", "OPEN"),
-    ("Extortion Racket Operation", "EXTORTION", "HIGH", "ACTIVE_INVESTIGATION"),
-    ("Kidnapping for Ransom", "KIDNAPPING", "CRITICAL", "OPEN"),
-    ("Arms Smuggling Network", "ARMS", "CRITICAL", "UNDER_REVIEW"),
-    ("Cyber Financial Fraud Scam", "CYBER_FRAUD", "MEDIUM", "OPEN"),
-    ("Illegal Land Grab and Forgery", "PROPERTY", "HIGH", "ACTIVE_INVESTIGATION"),
-    ("Counterfeit Currency Distribution", "COUNTERFEIT", "CRITICAL", "OPEN"),
-    ("Human Trafficking Investigation", "TRAFFICKING", "CRITICAL", "ACTIVE_INVESTIGATION"),
-    ("Contract Killing / Murder for Hire", "HOMICIDE", "CRITICAL", "UNDER_REVIEW"),
-    ("Illegal Gambling and Betting Racket", "GAMBLING", "MEDIUM", "OPEN"),
-    ("Smuggling of Contraband Goods", "SMUGGLING", "HIGH", "ACTIVE_INVESTIGATION"),
-    ("Insurance Fraud Conspiracy", "INSURANCE_FRAUD", "MEDIUM", "OPEN"),
-    ("Criminal Intimidation and Rivalry", "GANG_ACTIVITY", "HIGH", "ACTIVE_INVESTIGATION"),
-    ("ATM Theft and Skimming Ring", "THEFT", "MEDIUM", "OPEN"),
-    ("Illegal Liquor Distribution", "BOOTLEGGING", "MEDIUM", "OPEN"),
-    ("Wildlife Trafficking Ring", "WILDLIFE", "HIGH", "CLOSED"),
-    ("Bribery and Corruption Case", "CORRUPTION", "HIGH", "UNDER_REVIEW"),
-    ("Hit and Run Vehicular Homicide", "HIT_AND_RUN", "HIGH", "OPEN"),
-    ("Money Laundering Operation", "MONEY_LAUNDERING", "CRITICAL", "ACTIVE_INVESTIGATION"),
-    ("Fake Educational Certificates Racket", "FORGERY", "MEDIUM", "CLOSED"),
-    ("Chain Snatching Operation", "THEFT", "MEDIUM", "OPEN"),
-    ("Harassment and Criminal Conspiracy", "CONSPIRACY", "HIGH", "OPEN"),
+    ("Neelkanth Jewellers armed robbery and coordinated escape", "ROBBERY", "HIGH", "CLOSED"),
+    ("Western Corridor vehicle theft and chop-shop network", "AUTO_THEFT", "HIGH", "CLOSED"),
+    ("Harbour Road synthetic-drug distribution investigation", "NARCOTICS", "CRITICAL", "ACTIVE_INVESTIGATION"),
+    ("Aster Finance payroll diversion and identity fraud", "FINANCIAL_FRAUD", "HIGH", "CLOSED"),
+    ("Protection money demands against Crawford Market traders", "EXTORTION", "HIGH", "ACTIVE_INVESTIGATION"),
+    ("Missing courier traced to a staged ransom demand", "MISSING_PERSON", "CRITICAL", "CLOSED"),
+    ("Unlicensed arms movement through Taloja warehouses", "ARMS_SMUGGLING", "CRITICAL", "UNDER_REVIEW"),
+    ("QR-payment impersonation fraud targeting senior citizens", "CYBER_FRAUD", "MEDIUM", "CLOSED"),
+    ("Forged property deeds for a Powai redevelopment parcel", "DOCUMENT_FRAUD", "HIGH", "ACTIVE_INVESTIGATION"),
+    ("Multi-location counterfeit currency circulation", "COUNTERFEIT", "CRITICAL", "CLOSED"),
+    ("Recruitment and transit of workers under false promises", "TRAFFICKING", "CRITICAL", "ACTIVE_INVESTIGATION"),
+    ("Contract killing attempt arranged through a garage contact", "CONSPIRACY", "CRITICAL", "CLOSED"),
+    ("Illegal betting ledger and cash-collection network", "GAMBLING", "MEDIUM", "OPEN"),
+    ("JNPT electronics container diversion", "SMUGGLING", "HIGH", "CLOSED"),
+    ("Staged motor-insurance collision claims", "INSURANCE_FRAUD", "MEDIUM", "OPEN"),
+    ("Threat campaign against a municipal contractor", "CRIMINAL_INTIMIDATION", "HIGH", "ACTIVE_INVESTIGATION"),
+    ("ATM skimmer placement across three suburbs", "CYBER_THEFT", "HIGH", "UNDER_REVIEW"),
+    ("Unlicensed liquor supply through night transporters", "BOOTLEGGING", "MEDIUM", "OPEN"),
+    ("Protected wildlife shipment intercepted at the airport", "WILDLIFE_SMUGGLING", "HIGH", "CLOSED"),
+    ("Tender manipulation and bribery at a ward office", "CORRUPTION", "HIGH", "CLOSED"),
 ]
-
 
 def gen_person(idx: int) -> dict[str, Any]:
     """Generate a deterministic person."""
@@ -529,7 +523,9 @@ def build_dataset() -> dict[str, Any]:
             "id": f"{CASE_PREFIX}{i:03d}",
             "case_number": CASE_NUMBERS[i],
             "title": title,
-            "description": f"Investigation into {title.lower()} under jurisdiction {JURISDICTION}.",
+            "description": (f"{title}. Reported near the metropolitan corridor on {incident.strftime('%d %B %Y at %H:%M')}; "
+                f"the investigation follows people, communications, vehicles, financial records and scene evidence. "
+                f"Current disposition: {status.lower().replace('_', ' ')}; source material is cross-referenced in the case workspace."),
             "classification": classification,
             "priority": priority,
             "status": status,
@@ -615,6 +611,16 @@ def build_dataset() -> dict[str, Any]:
         lid = address_id(loc_idx)
         if lid not in case_addresses[c["id"]]:
             case_addresses[c["id"]].append(lid)
+
+    # Establish a small, intentional offender population. These designations are
+    # later surfaced only when corroborated by a CONFIRMED finding, never because
+    # a person merely has many graph connections.
+    for ci, c in enumerate(cases):
+        if c["status"] == "CLOSED" and case_persons[c["id"]]:
+            pid = case_persons[c["id"]][0]
+            person = next(p for p in persons if p["id"] == pid)
+            if person["role"] not in ("VICTIM", "WITNESS"):
+                person["role"] = "ACCOMPLICE"
 
     # Build relationships
     relationships: list[dict[str, Any]] = []
@@ -840,114 +846,51 @@ def build_dataset() -> dict[str, Any]:
     evidence_idx = 0
     source_idx = 0
 
-    # Create evidence for each case: mix of document types
-    doc_categories = [
+    # Each case receives a deliberately different but complete source bundle.
+    # FIR is always first; closed investigations additionally receive a charge sheet.
+    standard_categories = [
         (DocumentType.FIR, "First Information Report", "application/pdf", True),
         (DocumentType.CDR, "Call Detail Record", "text/csv", False),
-        (DocumentType.SURVEILLANCE_REPORT, "Surveillance Report", "application/pdf", True),
-        (DocumentType.FINANCIAL, "Financial Statement", "text/csv", False),
+        (DocumentType.SURVEILLANCE_REPORT, "Surveillance Event Log", "application/json", False),
+        (DocumentType.FINANCIAL, "Financial Transaction Statement", "text/csv", False),
         (DocumentType.WITNESS_STATEMENT, "Witness Statement", "application/pdf", True),
-        (DocumentType.SCENE_REPORT, "Scene of Crime Report", "application/pdf", True),
-        (DocumentType.INTELLIGENCE_REPORT, "Intelligence Report", "application/pdf", True),
-        (DocumentType.ANPR, "ANPR Vehicle Sighting Log", "text/csv", False),
-        (DocumentType.ARREST_RECORD, "Arrest Memo", "application/pdf", True),
+        (DocumentType.INTELLIGENCE_REPORT, "Investigator Intelligence Brief", "text/plain", False),
+        (DocumentType.SCENE_REPORT, "Scene and Evidence Report", "application/pdf", True),
+        (DocumentType.ANPR, "Automatic Number Plate Recognition Log", "text/csv", False),
         (DocumentType.FORENSIC, "Forensic Analysis Report", "application/pdf", True),
-        (DocumentType.PATROL_REPORT, "Patrol Officer Report", "application/pdf", True),
-        (DocumentType.CCTV, "CCTV Footage Log", "text/csv", False),
-        (DocumentType.BAIL_RECORD, "Bail Order Document", "application/pdf", True),
-        (DocumentType.LEGAL_RECORD, "Legal Proceedings Memo", "application/pdf", True),
-        (DocumentType.CASE_DIARY, "Case Diary Entry", "application/pdf", True),
+        (DocumentType.CASE_DIARY, "Investigation Diary Chronology", "text/plain", False),
     ]
-
-    ev_per_case = EVIDENCE_COUNT // CASE_COUNT
+    charge_category = (DocumentType.CHARGE_SHEET, "Final Charge Sheet", "application/pdf", True)
+    evidence_idx = 0
     for ci, c in enumerate(cases):
         cid = c["id"]
-        for ei in range(ev_per_case):
-            cat = doc_categories[(ci + ei) % len(doc_categories)]
-            doc_type, doc_label, mime, is_pdf = cat
-            eid = evidence_id(evidence_idx)
-            evidence_idx += 1
-            ext = "pdf" if is_pdf else "csv"
+        categories = list(standard_categories)
+        if c["status"] == "CLOSED":
+            categories.append(charge_category)
+        for ei, (doc_type, doc_label, mime, is_pdf) in enumerate(categories):
+            eid = evidence_id(evidence_idx); evidence_idx += 1
+            ext = "pdf" if is_pdf else ("json" if mime == "application/json" else ("txt" if mime == "text/plain" else "csv"))
             filename = f"{c['case_number']}_{doc_type.value}_{ei + 1:02d}.{ext}"
             storage_key = f"evidence/{c['case_number']}/{filename}"
             evidence_list.append({
-                "evidence_id": eid,
-                "case_id": cid,
-                "doc_type": doc_type,
-                "filename": filename,
-                "storage_key": storage_key,
-                "mime_type": mime,
-                "title": f"{doc_label} — {c['case_number']} ({ei + 1})",
-                "is_pdf": is_pdf,
+                "evidence_id": eid, "case_id": cid, "doc_type": doc_type,
+                "filename": filename, "storage_key": storage_key, "mime_type": mime,
+                "title": f"{doc_label} — {c['case_number']}", "is_pdf": is_pdf,
                 "doc_label": doc_label,
             })
 
-        # Also create source documents for each case (S-xxxx)
-        src_types = [
-            (DocumentType.INTELLIGENCE_REPORT, "Source Intelligence", "application/pdf"),
-            (DocumentType.SURVEILLANCE, "Confidential Source Report", "application/pdf"),
-        ]
-        if ci < SOURCE_COUNT // CASE_COUNT + 1 and source_idx < SOURCE_COUNT:
-            stype, slabel, smime = src_types[ci % len(src_types)]
-            sid = source_id(source_idx)
-            source_idx += 1
-            sfilename = f"SOURCE-{sid[-4:]}.pdf"
-            skey = f"sources/{c['case_number']}/{sfilename}"
-            sources_list.append({
-                "source_id": sid,
-                "case_id": cid,
-                "doc_type": stype,
-                "filename": sfilename,
-                "storage_key": skey,
-                "mime_type": smime,
-                "title": f"{slabel} for {c['case_number']}",
-                "is_pdf": True,
-            })
+        # One confidential lead is kept separately from evidentiary records.
+        sid = source_id(source_idx); source_idx += 1
+        skey = f"sources/{c['case_number']}/INTELLIGENCE_LEAD_{ci + 1:02d}.txt"
+        sources_list.append({"source_id": sid, "case_id": cid,
+            "doc_type": DocumentType.INTELLIGENCE_REPORT, "filename": skey.split('/')[-1],
+            "storage_key": skey, "mime_type": "text/plain",
+            "title": f"Confidential source lead — {c['case_number']}", "is_pdf": False})
 
-    # Top up evidence to EVIDENCE_COUNT exactly
-    while evidence_idx < EVIDENCE_COUNT:
-        ci = evidence_idx % CASE_COUNT
-        c = cases[ci]
-        cid = c["id"]
-        cat = doc_categories[evidence_idx % len(doc_categories)]
-        doc_type, doc_label, mime, is_pdf = cat
-        eid = evidence_id(evidence_idx)
-        evidence_idx += 1
-        ext = "pdf" if is_pdf else "csv"
-        filename = f"{c['case_number']}_{doc_type.value}_{evidence_idx:03d}.{ext}"
-        storage_key = f"evidence/{c['case_number']}/{filename}"
-        evidence_list.append({
-            "evidence_id": eid,
-            "case_id": cid,
-            "doc_type": doc_type,
-            "filename": filename,
-            "storage_key": storage_key,
-            "mime_type": mime,
-            "title": f"{doc_label} — {c['case_number']}",
-            "is_pdf": is_pdf,
-            "doc_label": doc_label,
-        })
-
-    # Top up sources to SOURCE_COUNT
-    while source_idx < SOURCE_COUNT:
-        ci = source_idx % CASE_COUNT
-        c = cases[ci]
-        cid = c["id"]
-        stype = DocumentType.INTELLIGENCE_REPORT
-        sid = source_id(source_idx)
-        source_idx += 1
-        sfilename = f"SOURCE-{sid[-4:]}.pdf"
-        skey = f"sources/{c['case_number']}/{sfilename}"
-        sources_list.append({
-            "source_id": sid,
-            "case_id": cid,
-            "doc_type": stype,
-            "filename": sfilename,
-            "storage_key": skey,
-            "mime_type": "application/pdf",
-            "title": f"Additional Source Intelligence for {c['case_number']}",
-            "is_pdf": True,
-        })
+    # The fixed bundle above intentionally contains 210 records (10 per open case,
+    # 11 per closed case), so every case has a FIR and every closed case a charge sheet.
+    if evidence_idx != EVIDENCE_COUNT:
+        raise ValueError(f"Evidence bundle count drifted: {evidence_idx} != {EVIDENCE_COUNT}")
 
     # Findings
     findings = []
@@ -1060,6 +1003,27 @@ def build_dataset() -> dict[str, Any]:
                 },
                 "status": "NEW" if finding_idx % 3 != 0 else "REVIEWED",
             })
+
+    # Every closed case has an evidence-backed, reviewed finding. The first
+    # person in the case cast is deliberately supported by several independent
+    # source records (FIR, CDR, surveillance, financial and witness material).
+    closed_count = 0
+    for ci, c in enumerate(cases):
+        if c["status"] != "CLOSED" or not case_persons[c["id"]]:
+            continue
+        closed_count += 1
+        subject = case_persons[c["id"]][0]
+        case_evidence = [e["evidence_id"] for e in evidence_list if e["case_id"] == c["id"]]
+        findings.append({
+            "id": finding_id(finding_idx), "case_id": c["id"],
+            "finding_type": "CONFIRMED_OFFENDER", "title": f"Confirmed offender — {c['case_number']}",
+            "narrative": f"The evidence chain for {c['case_number']} identifies the primary subject through converging FIR, communication, surveillance, financial, witness and forensic records. The charge sheet names the subject after review.",
+            "confidence": 0.91, "confidence_band": "HIGH", "entity_keys": [subject],
+            "evidence": case_evidence[:6],
+            "details": {"subject": subject, "case_number": c["case_number"], "completed_at": (c["opened_at"] + timedelta(days=38)).isoformat(), "basis": ["FIR", "CDR", "SURVEILLANCE", "FINANCIAL", "WITNESS", "CHARGE_SHEET"]},
+            "status": "CONFIRMED",
+        })
+        finding_idx += 1
 
     # DetectedPatterns
     patterns = []
@@ -1175,8 +1139,46 @@ def sha256(data: bytes) -> str:
 def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
     case = next(c for c in dataset["cases"] if c["id"] == ev["case_id"])
     nonce = f"{ev['evidence_id']}|{case['case_number']}|{ev['storage_key']}"
+    case_people = dataset["case_persons_dict"].get(case["id"], [])
+    people = [next(p for p in dataset["persons"] if p["id"] == pid) for pid in case_people]
+    lead = people[0] if people else {"full_name": "Unidentified subject", "phone_ids": [], "vehicle_ids": []}
+    witness = next((p for p in people if p.get("role") == "WITNESS"), people[-1] if people else lead)
+    lead_phone = next((ph["number"] for ph in dataset["phones"] if ph["id"] in lead.get("phone_ids", [])), "not assigned")
+    lead_vehicle = next((v["registration"] for v in dataset["vehicles"] if v["id"] in lead.get("vehicle_ids", [])), "not identified")
+    incident = case["incident_date"]
     if ev["is_pdf"]:  # type: ignore[unreachable]
-        lines = [
+        if ev["doc_type"] == DocumentType.FIR:
+            lines = [
+                "POLICE FIRST INFORMATION REPORT — SYNTHETIC RECORD",
+                f"Police Station: MRA Marg Crime Unit, Mumbai | FIR No: {case['case_number']}/2026",
+                f"Registered: {case['opened_at'].isoformat()} | Investigating officer: Inspector Priya Sharma",
+                f"Crime type: {case['classification']} | Priority: {case['priority']} | Jurisdiction: {case['jurisdiction_id']}",
+                "",
+                f"Complaint narrative: On {incident.strftime('%d %B %Y at %H:%M')} the complainant reported {case['title'].lower()}.",
+                f"The incident location was recorded within the metropolitan jurisdiction. The initial loss, harm, or threatened harm was documented and the scene was preserved for examination.",
+                f"Preliminary subject: {lead['full_name']}; associated telephone: {lead_phone}; vehicle lead: {lead_vehicle}.",
+                f"Witness named in the first account: {witness['full_name']}. The witness described movements and timing later tested against call and surveillance records.",
+                "Initial evidence: scene photographs, communications preservation request, location log, and property/financial records where relevant.",
+                "Investigation plan: obtain CDRs, examine camera and vehicle records, verify ownership and account holders, and record witness statements.",
+                "This FIR is a synthetic training record; all persons, identifiers, locations and institutions are fictional.",
+            ]
+        elif ev["doc_type"] == DocumentType.CHARGE_SHEET:
+            accused = ", ".join(p["full_name"] for p in people[:3])
+            lines = [
+                "FINAL CHARGE SHEET — SYNTHETIC RECORD", f"Case/FIR reference: {case['case_number']}/2026",
+                f"Filing date: {(case['opened_at'] + timedelta(days=38)).date().isoformat()} | Police Station: MRA Marg Crime Unit, Mumbai",
+                f"Accused persons and roles: {accused} (primary subject and associated participants).",
+                f"Investigation conclusion: evidence supports the prosecution theory in the {case['classification'].lower()} investigation titled '{case['title']}'.",
+                f"Communications: CDR review linked {lead_phone} to the incident window and to contacts recorded in the case diary.",
+                f"Surveillance and vehicle evidence: registration {lead_vehicle} was recorded at a relevant location and its ownership/user trail was verified.",
+                "Financial and digital evidence: account movements, device records, and source metadata were compared with the timeline; inconsistencies were noted and resolved in the diary.",
+                f"Witness evidence: {witness['full_name']} provided a statement identifying the observed sequence. Scene and forensic reports corroborate material findings.",
+                "Seized material: documented property, device extracts, transaction statements and custody records, each cross-referenced to the evidence register.",
+                "Charges recommended under applicable provisions for the recorded offence; all accused and witnesses are present in the CrimeLink case graph.",
+                "Filed for synthetic demonstration only. No real person or investigation is represented.",
+            ]
+        else:
+            lines = [
             f"Document Type: {ev['doc_type'].value}",
             f"Case Number: {case['case_number']}",
             f"Case Title: {case['title']}",
@@ -1213,6 +1215,23 @@ def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
         ]
         return make_pdf_bytes(ev["title"], lines)
     else:
+        if ev["mime_type"] == "application/json":
+            events = []
+            for i in range(5):
+                ts = incident + timedelta(minutes=18 + i * 23)
+                vehicle = dataset["vehicles"][(i + int(ev["evidence_id"].split("-")[-1])) % len(dataset["vehicles"])]
+                events.append({"event_id": f"SV-{ev['evidence_id']}-{i:02d}", "timestamp": ts.isoformat(),
+                    "camera_id": f"CAM-MUM-{(i + 3):03d}", "location": dataset["addresses"][(i + 2) % len(dataset["addresses"])] ["address"],
+                    "vehicle_registration": vehicle["registration"], "detected_person": lead["full_name"] if i in (1, 3) else "unconfirmed",
+                    "direction": "OUTBOUND" if i % 2 else "INBOUND", "confidence": round(0.78 + i * 0.03, 2),
+                    "linked_case": case["case_number"], "observation": f"Movement reviewed against {case['title'].lower()}"})
+            return json.dumps({"record_type": "surveillance_log", "case_reference": case["case_number"], "events": events,
+                "synthetic_notice": True}, indent=2).encode("utf-8")
+        if ev["mime_type"] == "text/plain":
+            return (f"CRIMELINK INVESTIGATION NOTE — SYNTHETIC\nCase: {case['case_number']} | Received: {(incident + timedelta(days=2)).isoformat()}\n"
+                f"Lead: {lead['full_name']} | Phone: {lead_phone} | Vehicle: {lead_vehicle}\n"
+                f"Assessment: the lead concerning {case['title'].lower()} is partially corroborated by the CDR, financial and surveillance records.\n"
+                "Follow-up: verify the account holder, preserve the relevant camera export, and interview the named witness.\n").encode("utf-8")
         # CSV
         # Make content unique per evidence via nonce/seed rows
         offset = int(ev["evidence_id"].replace("E-", "")) if ev["evidence_id"].replace("E-", "").isdigit() else 0
@@ -1284,6 +1303,12 @@ def gen_evidence_bytes(ev: dict[str, Any], dataset: dict[str, Any]) -> bytes:
 
 def gen_source_bytes(src: dict[str, Any], dataset: dict[str, Any]) -> bytes:
     case = next(c for c in dataset["cases"] if c["id"] == src["case_id"])
+    if src.get("mime_type") == "text/plain":
+        return (f"CONFIDENTIAL INTELLIGENCE LEAD — SYNTHETIC\nSource ID: {src['source_id']}\n"
+            f"Case: {case['case_number']} — {case['title']}\nReceived: {(case['incident_date'] + timedelta(days=1, hours=4)).isoformat()}\n"
+            "Reliability: provisional; this lead requires corroboration.\n"
+            f"Assessment: activity consistent with {case['title'].lower()} was reported near the incident location. "
+            "Follow-up requested: compare the named vehicle and phone with CDR, ANPR and financial records.\n").encode("utf-8")
     lines = [
         f"Source Document — CONFIDENTIAL",
         f"Source ID: {src['source_id']}",
@@ -1431,6 +1456,32 @@ def derive_case_persons(dataset: dict[str, Any]) -> dict[str, list[str]]:
 
     return case_persons_dict
 
+def validate_canonical_dataset(dataset: dict[str, Any]) -> None:
+    """Fail before touching storage if the investigation corpus is inconsistent."""
+    case_ids = {c["id"] for c in dataset["cases"]}
+    phone_ids = {p["id"] for p in dataset["phones"]}
+    account_ids = {a["id"] for a in dataset["accounts"]}
+    vehicle_ids = {v["id"] for v in dataset["vehicles"]}
+    assert len(case_ids) == 20, "dataset must contain exactly 20 cases"
+    assert len({p["number"] for p in dataset["phones"]}) == len(phone_ids), "duplicate phone"
+    assert len({a["account_number"] for a in dataset["accounts"]}) == len(account_ids), "duplicate account"
+    for c in dataset["cases"]:
+        docs = [e for e in dataset["evidence"] if e["case_id"] == c["id"]]
+        assert any(e["doc_type"] == DocumentType.FIR for e in docs), f"missing FIR: {c['case_number']}"
+        if c["status"] == "CLOSED":
+            assert any(e["doc_type"] == DocumentType.CHARGE_SHEET for e in docs), f"missing charge sheet: {c['case_number']}"
+    for row in dataset["communications"]:
+        assert row["from"] in phone_ids and row["to"] in phone_ids, "orphan CDR phone"
+    for row in dataset["transactions"]:
+        assert row["from"] in account_ids and row["to"] in account_ids, "orphan transaction account"
+    for p in dataset["persons"]:
+        assert p["phone_ids"] and all(x in phone_ids for x in p["phone_ids"]), "orphan person phone"
+        assert all(x in account_ids for x in p["account_ids"]), "orphan person account"
+        assert all(x in vehicle_ids for x in p["vehicle_ids"]), "orphan person vehicle"
+    assert all(e["case_id"] in case_ids for e in dataset["evidence"])
+    assert all(s["case_id"] in case_ids for s in dataset["sources"])
+
+
 def seed_all() -> bool:
     print(f"[seed] Building {DEMO_DATASET_ID}...")
     settings = get_settings()
@@ -1439,6 +1490,8 @@ def seed_all() -> bool:
     # Build canonical data
     dataset = build_dataset()
     dataset["case_persons_dict"] = derive_case_persons(dataset)
+    validate_canonical_dataset(dataset)
+    print("  Canonical validation passed: no orphan phones, accounts, vehicles, cases or documents.")
 
     # Open DB session
     engine = get_sync_engine(settings)
@@ -1589,6 +1642,7 @@ def seed_all() -> bool:
                 id=c["id"],
                 case_number=c["case_number"],
                 title=c["title"],
+                description=c["description"],
                 jurisdiction_id=c["jurisdiction_id"],
                 dataset_id=DEMO_DATASET_ID,
                 dataset_case_key=c["case_number"],
@@ -1711,7 +1765,7 @@ def seed_all() -> bool:
                 filename=f["filename"],
                 extension=Path(sk).suffix.lstrip("."),
                 media_type=f["mime_type"],
-                file_kind="document" if f.get("is_pdf", True) else "table",
+                file_kind="document" if f.get("is_pdf", True) else ("structured" if f.get("mime_type") == "application/json" else ("text" if f.get("mime_type") == "text/plain" else "table")),
                 size_bytes=size,
                 sha256=fhash,
                 semantic_type=f["doc_type"].value if hasattr(f["doc_type"], "value") else str(f["doc_type"]),
@@ -1725,7 +1779,7 @@ def seed_all() -> bool:
         # SourceReference for each evidence doc
         for ev in dataset["evidence"]:
             did = doc_id_for(ev["evidence_id"])
-            srctype = "pdf" if ev["is_pdf"] else "csv"
+            srctype = "pdf" if ev["is_pdf"] else ("json" if ev["mime_type"] == "application/json" else ("txt" if ev["mime_type"] == "text/plain" else "csv"))
             ref = SourceReference(
                 doc_id=did,
                 case_id=ev["case_id"],
