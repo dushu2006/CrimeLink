@@ -182,10 +182,9 @@ export default function PersonRelationshipNetwork({
         {
           selector: "node",
           style: {
-            // Every person is a circle.  The ★ is a label marker plus a red
-            // body and an amber ring — never the node's own silhouette, so it
-            // can't be confused with selection or with an evidence node.
-            shape: "ellipse",
+            // Confirmed criminals are actual STAR nodes. All other people remain circles.
+            // The star is driven only by the authoritative criminal_status flag.
+            shape: (ele: any) => (ele.data("is_criminal") ? "star" : "ellipse"),
             "background-color": (ele: any) =>
               ele.data("is_criminal") ? CRIMINAL_FILL : PERSON_FILL,
             "border-width": (ele: any) => (ele.data("is_criminal") ? 4 : 2),
@@ -195,11 +194,10 @@ export default function PersonRelationshipNetwork({
               Math.min(64, 30 + 3 * Number(ele.data("relationship_count") || 0)),
             height: (ele: any) =>
               Math.min(64, 30 + 3 * Number(ele.data("relationship_count") || 0)),
-            // The star is part of the label, so it survives any layout and any
-            // zoom level, and it is driven by criminal_status alone.
+            // Keep the person name on the node; the silhouette itself conveys criminal status.
             label: (ele: any) => {
               const name = String(ele.data("name") ?? "");
-              const text = ele.data("is_criminal") ? `★\n${name}` : name;
+              const text = name;
               return ele.selected() || graphLabels.current ? text : "";
             },
             "text-wrap": "wrap",
@@ -297,8 +295,7 @@ export default function PersonRelationshipNetwork({
   return (
     <section className="panel inv-person-relationship-network" aria-labelledby="prn-title">
       <div className="inv-objective-head">
-        <div>
-          <h3 id="prn-title">PEOPLE NETWORK — PERSON → PERSON</h3>
+        <div>          <h3 id="prn-title">PEOPLE NETWORK — PERSON → PERSON</h3>
           <p className="muted" style={{ margin: "var(--space-1) 0 0" }}>
             {caseId
               ? "Who is connected to whom in this case. Supporting entities stay behind the edge."
@@ -597,8 +594,7 @@ export default function PersonRelationshipNetwork({
               SUPPORTING EVIDENCE{" "}
               <span className="muted" style={{ fontWeight: 400, fontSize: "var(--text-xs)" }}>
                 (aggregated behind this single relationship)
-              </span>
-            </h5>
+              </span>            </h5>
             {evidenceError && (
               <p
                 role="alert"
