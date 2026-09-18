@@ -133,6 +133,7 @@ class Case(Base):
     id: Mapped[str] = pk_column()
     case_number: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     jurisdiction_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     #: The dataset this case belongs to.  NULL means "created by hand in the
     #: console", which is always visible; a dataset-owned case is only visible

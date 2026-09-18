@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { ClassificationBadge } from "./ClassificationBadge";
 
 export interface PersonRelationship {
   source_person: string;
@@ -96,15 +97,23 @@ function classificationTone(c: string): string {
   switch (c) {
     case "FACT": return "success";
     case "INFERENCE": return "info";
-    case "HYPOTHESIS": return "warn";
+    case "HYPOTHESIS": return "warning";
     case "UNKNOWN": return "muted";
     default: return "muted";
   }
 }
 
+/** Tiny classification badge positioned inline in the relationship header. */
+function ClassificationBadgeInline({ classification }: { classification: string }) {
+  return (
+    <span className={`cl-badge cl-badge-${classificationTone(classification)} person-connection-class-badge`}>
+      {classification}
+    </span>
+  );
+}
+
 export function PersonConnectionCard({ relationship, onWhy, onViewEvidence, onViewTimeline, onShowProvenance, onOpenCase, onFocusPerson }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const [showWhy, setShowWhy] = useState(false);
 
   const confTone = confidenceTone(relationship.confidence_label, relationship.confidence);
   const classTone = classificationTone(relationship.classification);
@@ -119,18 +128,18 @@ export function PersonConnectionCard({ relationship, onWhy, onViewEvidence, onVi
     <div className="person-connection-card">
       <header className="person-connection-header">
         <div className="person-connection-persons">
-          <button className="person-pill" onClick={() => onFocusPerson?.(relationship.source_real_key || relationship.source_person)} title="Focus person">
-            <span className="person-pill-icon">👤</span>
+          <button className="person-pill person-pill-pro" onClick={() => onFocusPerson?.(relationship.source_real_key || relationship.source_person)} title="Focus person">
+            <span className="material-symbols-outlined person-pill-icon">person</span>
             <span className="person-pill-name">{relationship.source_person}</span>
           </button>
-          <span className="person-connection-arrow" aria-hidden>↔</span>
-          <button className="person-pill" onClick={() => onFocusPerson?.(relationship.target_real_key || relationship.target_person)} title="Focus person">
-            <span className="person-pill-icon">👤</span>
+          <span className="material-symbols-outlined person-connection-arrow" aria-hidden>swap_horiz</span>
+          <button className="person-pill person-pill-pro" onClick={() => onFocusPerson?.(relationship.target_real_key || relationship.target_person)} title="Focus person">
+            <span className="material-symbols-outlined person-pill-icon">person</span>
             <span className="person-pill-name">{relationship.target_person}</span>
           </button>
         </div>
         <div className="person-connection-meta">
-          <span className={`cl-badge cl-badge-${classTone}`}>{relationship.classification}</span>
+          <ClassificationBadgeInline classification={relationship.classification} />
           <span className={`confidence-badge confidence-${confTone}`} title={`${Math.round(relationship.confidence * 100)}% confidence`}>
             {relationship.confidence_label || (relationship.confidence >= 0.8 ? "High" : relationship.confidence >= 0.5 ? "Medium" : "Low")} · {Math.round(relationship.confidence * 100)}%
           </span>
@@ -138,7 +147,7 @@ export function PersonConnectionCard({ relationship, onWhy, onViewEvidence, onVi
       </header>
 
       <div className="person-connection-type-row">
-        <span className="person-connection-type">{relationship.relationship_type}</span>
+        <span className="person-connection-rel-type">{relationship.relationship_type.replace(/_/g, " ")}</span>
         {relationship.evidence_strength && (
           <EvidenceStrengthBar 
             strength={relationship.evidence_strength} 
@@ -151,52 +160,75 @@ export function PersonConnectionCard({ relationship, onWhy, onViewEvidence, onVi
         )}
       </div>
 
-      <div className="person-connection-why">
-        <strong>Why:</strong> {relationship.why || explanation.slice(0, 200) || "Connection established from available evidence"}
+      {/* WHY THIS MATTERS — always visible, compact, data-driven */}
+      <div className={`why-matters why-matters-${classTone}`}>
+        <div className="why-matters-label">
+          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>priority_high</span>
+          WHY THIS MATTERS
+        </div>
+        <p className="why-matters-text">
+          {relationship.why || relationship.explanation ||
+            "Additional source evidence is required to interpret the significance of this connection."}
+        </p>
+        <div className="why-matters-meta">
+          <span className="why-matters-meta-item">
+            <span className="material-symbols-outlined" style={{ fontSize: 12 }}>description</span>
+            {relationship.evidence_refs?.length || supportingCount} source record{(relationship.evidence_refs?.length || supportingCount) === 1 ? "" : "s"}
+          </span>
+          {relationship.supporting_evidence?.[0]?.timestamp &&
+           relationship.supporting_evidence[0].timestamp !== "Timestamp unavailable" && (
+            <span className="why-matters-meta-item">
+              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>schedule</span>
+              {relationship.supporting_evidence[0].timestamp}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="person-connection-evidence-summary">
-        <span className="evidence-summary-label">Evidence</span>
+        <span className="evidence-summary-label">
+          <span className="material-symbols-outlined" style={{ fontSize: 12 }}>folder_open</span>
+          SUPPORTING EVIDENCE
+        </span>
         <div className="evidence-chips">
           {evidenceChips.length > 0 ? evidenceChips.map((ref, i) => (
             <button key={`${ref}-${i}`} className="evidence-chip clickable" title={`Open evidence ${ref}`} onClick={onViewEvidence}>
-              {ref.length > 12 ? `${ref.slice(0, 10)}…` : ref} ↗
+              <span className="material-symbols-outlined" style={{ fontSize: 12 }}>description</span>
+              {ref.length > 14 ? `${ref.slice(0, 12)}…` : ref}
             </button>
           )) : (
-            <span className="evidence-chip muted">No direct doc refs — see supporting evidence</span>
+            <span className="evidence-chip" style={{ opacity: .6 }}>No direct doc refs</span>
           )}
-          {supportingCount > 0 && (
-            <button className="evidence-chip supporting clickable" onClick={onViewEvidence} title="Show all supporting evidence">
-              {supportingCount} supporting ↗
+          {supportingCount > evidenceChips.length && (
+            <button className="evidence-chip clickable" onClick={onViewEvidence} title="Show all supporting evidence">
+              +{supportingCount - evidenceChips.length} more
             </button>
           )}
         </div>
       </div>
 
       <footer className="person-connection-actions">
-        <button className="cl-btn cl-btn-sm cl-btn-secondary" onClick={() => setShowWhy(!showWhy)}>
-          {showWhy ? "Hide" : "Why?"} 
+        <button className="cl-btn cl-btn-sm" onClick={onViewEvidence}>
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+          Evidence
         </button>
-        <button className="cl-btn cl-btn-sm" onClick={onViewEvidence}>View Evidence</button>
-        <button className="cl-btn cl-btn-sm" onClick={onViewTimeline}>View Timeline</button>
-        <button className="cl-btn cl-btn-sm" onClick={onShowProvenance}>Show Provenance</button>
+        <button className="cl-btn cl-btn-sm" onClick={onViewTimeline}>
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>timeline</span>
+          Timeline
+        </button>
         <button className="cl-btn cl-btn-sm cl-btn-ghost" onClick={() => setExpanded(!expanded)}>
-          {expanded ? "Less" : "More"}
+          {expanded ? "Less detail" : "Details"}
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{expanded ? "expand_less" : "expand_more"}</span>
         </button>
       </footer>
 
-      {showWhy && (
+      {expanded && (
         <div className="person-connection-why-drawer">
-          <h4 className="why-drawer-title">Why this connection exists</h4>
-          
+          <h4 className="why-drawer-title">Detailed assessment</h4>
+
           <div className="why-section">
             <span className="why-label">CONNECTION</span>
             <p>{relationship.source_person} ↔ {relationship.target_person} — {relationship.relationship_type}</p>
-          </div>
-
-          <div className="why-section">
-            <span className="why-label">WHY</span>
-            <p>{relationship.why || "Records indicate interaction between these persons through supporting evidence."}</p>
           </div>
 
           <div className="why-section">
