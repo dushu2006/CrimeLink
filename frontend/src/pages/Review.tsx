@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { t } from "../i18n";
 import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
@@ -43,7 +43,10 @@ const TABS = ["identity", "patterns"] as const;
 
 export default function Review() {
   const { caseId = "" } = useParams();
-  const [tab, setTab] = useState<(typeof TABS)[number]>("identity");
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<(typeof TABS)[number]>(
+    searchParams.get("tab") === "patterns" ? "patterns" : "identity",
+  );
   const [matches, setMatches] = useState<MatchItem[] | null>(null);
   const [patterns, setPatterns] = useState<PatternItem[] | null>(null);
   const [sla, setSla] = useState<{ breached?: number; total?: number } | null>(null);
