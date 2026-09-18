@@ -103,6 +103,7 @@ export function NetworkGraph({
   const [legendOpen, setLegendOpen] = useState(true);
   const [filterLabels, setFilterLabels] = useState<string[]>([]);
   const [filterRels, setFilterRels] = useState<string[]>([]);
+  const [layoutName, setLayoutName] = useState<"fcose" | "circle" | "concentric" | "breadthfirst">("fcose");
 
   const labelOptions = useMemo(
     () => Array.from(new Set(nodes.map((n) => String(n.label).toUpperCase()))).sort(),
@@ -216,7 +217,7 @@ export function NetworkGraph({
       container: containerRef.current,
       elements,
       layout: {
-        name: "fcose",
+        name: layoutName,
         animate: false,
         nodeRepulsion: 12000,
         idealEdgeLength: 130,
@@ -297,8 +298,7 @@ export function NetworkGraph({
             "text-border-opacity": 0.8,
             "text-border-width": 1,
             "text-border-color": "#CBD5E1",
-          },
-        },
+          },        },
         {
           selector: "node:selected",
           style: { "border-width": 4, "border-color": "#1D4ED8" },
@@ -334,8 +334,7 @@ export function NetworkGraph({
       cy.destroy();
       cyRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [elements]);
+  }, [elements, layoutName]);
 
   if (loading) return <Spinner label="Loading graph…" />;
   if (error) return <ErrorState message={error} onRetry={onRetry} />;
@@ -351,6 +350,19 @@ export function NetworkGraph({
           {visibleNodes.length} node(s) · {visibleEdges.length} relationship(s)
           {targetKey ? " · person target marked" : ""}
         </span>
+        <label className="graph-layout-control" style={{ display: "inline-flex", alignItems: "center", gap: "6px", marginLeft: "8px" }}>
+          <span className="muted">Layout:</span>
+          <select
+            value={layoutName}
+            onChange={(event) => setLayoutName(event.target.value as typeof layoutName)}
+            aria-label="Graph layout"
+          >
+            <option value="fcose">Force-directed</option>
+            <option value="circle">Circular</option>
+            <option value="concentric">Concentric</option>
+            <option value="breadthfirst">Hierarchical</option>
+          </select>
+        </label>
         <button
           type="button"
           className="btn btn-tertiary btn-small"
