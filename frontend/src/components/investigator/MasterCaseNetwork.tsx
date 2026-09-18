@@ -93,7 +93,7 @@ const ENTITY_REL_TYPES = [
  * mesh, not an investigation aid.  The complete graph stays reachable through
  * the "Max nodes" control — it is an intentional mode, not the default.
  */
-const DEFAULT_ENTITY_NODE_BUDGET = 80;
+const DEFAULT_ENTITY_NODE_BUDGET = 600;
 
 type NetworkLevel = "people" | "case" | "entity";
 
@@ -126,7 +126,7 @@ interface MasterCaseNetworkProps {
 export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetworkProps) {
   // People first: the default investigator view is the person-to-person graph.
   const [level, setLevel] = useState<NetworkLevel>("people");
-  const [layoutName, setLayoutName] = useState<"fcose" | "circle" | "concentric">("fcose");
+  const [layoutName, setLayoutName] = useState<"fcose" | "circle" | "concentric" | "breadthfirst">("fcose");
 
   // Master Case Network state
   const [caseNetwork, setCaseNetwork] = useState<MasterCaseNetworkResult | null>(null);
@@ -148,7 +148,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
   // ENTITY NETWORK progressive disclosure.  People first, supporting entities
   // only on request, and a bounded node count — the full graph stays available
   // but is an explicit choice rather than the first thing that renders.
-  const [entityLabels, setEntityLabels] = useState<string[]>(["PERSON"]);
+  const [entityLabels, setEntityLabels] = useState<string[]>([...ENTITY_LABELS]);
   const [entityRelTypes, setEntityRelTypes] = useState<string[]>([]);
   const [entityBudget, setEntityBudget] = useState<number>(DEFAULT_ENTITY_NODE_BUDGET);
   const [entityTotal, setEntityTotal] = useState<{ nodes: number; edges: number } | null>(null);
@@ -397,8 +397,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
         setSelectedEntityNode(data.raw_node as GraphNodeRow);
       }
     },
-    onTapEdge: (edge: any) => {
-      if (level !== "case") return;
+    onTapEdge: (edge: any) => {      if (level !== "case") return;
       const data = edge.data();
       setSelectedEdge(data.raw_edge as MasterCaseEdge);
       setSelectedCase(null);
@@ -560,6 +559,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             <option value="fcose">Force-directed (fcose)</option>
             <option value="circle">Circular</option>
             <option value="concentric">Concentric</option>
+            <option value="breadthfirst">Hierarchical (breadth-first)</option>
           </select>
         </label>
         <GraphViewControls handle={graphHandle} />
@@ -599,7 +599,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
                   setEntityLabels((prev) => {
                     const next = on ? prev.filter((l) => l !== label) : [...prev, label];
                     // An empty graph is not a useful filter state.
-                    return next.length ? next : ["PERSON"];
+                    return next.length ? next : [...ENTITY_LABELS];
                   })
                 }
               >
@@ -797,8 +797,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               {selectedEdge.shared_entities.map((ent) => (
                 <li key={ent.provenance_key} className="inv-relationship">
                   <div className="inv-relationship-head">
-                    {ent.is_criminal ? (
-                      <span style={{ color: CRIMINAL_FILL, fontSize: "16px" }}>★</span>
+                    {ent.is_criminal ? (                      <span style={{ color: CRIMINAL_FILL, fontSize: "16px" }}>★</span>
                     ) : (
                       <span style={{ fontSize: "16px", color: "#475569" }}>○</span>
                     )}
