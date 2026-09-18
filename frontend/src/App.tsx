@@ -99,7 +99,7 @@ export default function App() {
           <Route path="/sources" element={<Suspense fallback={<PageSkeleton />}><SourceBrowser /></Suspense>} />
 
           {/* INTELLIGENCE — INVESTIGATOR only */}
-          <Route path="/patterns" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><CaseDashboardPage /></Suspense></ProtectedRoute>} />
+          <Route path="/patterns" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
           <Route path="/attention" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
           <Route path="/review" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
 
