@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, askCaseStream } from "../api/client";
+import { api, askCaseStream } from "../../api/client";
 
 const PHASES: Record<string, string> = {
   started: "Retrieving case context…",
