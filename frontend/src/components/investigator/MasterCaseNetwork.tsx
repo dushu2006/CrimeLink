@@ -112,6 +112,12 @@ const LABEL_COLOR: Record<string, string> = {
   DOCUMENT: "#475569",
   FIR: "#0F172A",
   TRANSACTION: "#0F766E",
+  FINANCIAL_TRANSACTION: "#0F766E",
+  COMMUNICATION: "#16A34A",
+  SOCIAL_ACCOUNT: "#0891B2",
+  SURVEILLANCE: "#9333EA",
+  INTELLIGENCE: "#DB2777",
+  EVIDENCE: "#64748B",
 };
 
 function entityColor(label: string): string {
@@ -397,8 +403,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
         setSelectedEntityNode(data.raw_node as GraphNodeRow);
       }
     },
-    onTapEdge: (edge: any) => {      if (level !== "case") return;
-      const data = edge.data();
+    onTapEdge: (edge: any) => {      if (level !== "case") return;      const data = edge.data();
       setSelectedEdge(data.raw_edge as MasterCaseEdge);
       setSelectedCase(null);
     },
@@ -797,8 +802,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               {selectedEdge.shared_entities.map((ent) => (
                 <li key={ent.provenance_key} className="inv-relationship">
                   <div className="inv-relationship-head">
-                    {ent.is_criminal ? (                      <span style={{ color: CRIMINAL_FILL, fontSize: "16px" }}>★</span>
-                    ) : (
+                    {ent.is_criminal ? (                      <span style={{ color: CRIMINAL_FILL, fontSize: "16px" }}>★</span>                    ) : (
                       <span style={{ fontSize: "16px", color: "#475569" }}>○</span>
                     )}
                     <strong>{ent.name}</strong>
