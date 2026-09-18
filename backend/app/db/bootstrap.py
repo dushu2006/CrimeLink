@@ -298,7 +298,6 @@ def wait_for_services(settings: Settings | None = None, timeout: float = 30.0) -
                 ) from exc
             log.warning("bootstrap.redis_unavailable", error=str(exc))
 
-
 def run_db_migrations(settings: Settings | None = None) -> None:
     settings = settings or get_settings()
     settings.ensure_directories()
@@ -505,6 +504,67 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         session.close()
 
 
+def _ensure_demo_source_bundle(settings: Settings) -> None:
+    """Materialize the active demo dataset's exact stored bytes into the repo bundle.
+
+    This is a development/presentation convenience only. It does not generate a
+    second corpus: it copies the bytes already registered in DatasetFile and
+    stored in the configured object store, then points the dataset workspace at
+    that project-local directory. Production keeps MinIO/object storage as the
+    source of bytes and never writes into the repository.
+    """
+    if settings.environment == "production" or settings.profile == "production":
+        return
+    session_maker = get_sync_sessionmaker()
+    session = session_maker()
+    try:
+        dataset = session.query(Dataset).filter(Dataset.id == DEMO_DATASET_ID).one_or_none()
+        if dataset is None:
+            return
+        bundle_root = (REPO_ROOT / "demo_dataset" / "runtime_sources").resolve()
+        bundle_root.mkdir(parents=True, exist_ok=True)
+        root_path = Path(dataset.root_path).resolve() if dataset.root_path else None
+        files = session.query(DatasetFile).filter(DatasetFile.dataset_id == DEMO_DATASET_ID).all()
+        needs_materialize = root_path != bundle_root or not bundle_root.is_dir()
+        if not needs_materialize:
+            needs_materialize = any(
+                not (bundle_root / f.relative_path).is_file()
+                for f in files
+                if f.relative_path
+            )
+        if not needs_materialize:
+            return
+
+        from app.container import Container
+
+        store = Container(settings).object_store
+        bucket = settings.minio_bucket_documents
+        for row in files:
+            relative = (row.relative_path or "").replace("\\", "/").lstrip("/")
+            if not relative:
+                continue
+            target = (bundle_root / relative).resolve()
+            if not target.is_relative_to(bundle_root):
+                raise RuntimeError(f"Refusing to materialize source outside bundle: {relative}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                payload = store.get(bucket, relative)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not materialize active demo source {relative}: {exc}"
+                ) from exc
+            target.write_bytes(payload)
+
+        dataset.root_path = str(bundle_root)
+        session.commit()
+        print(
+            f"[CrimeLink] Materialized {len(files)} demo source files into {bundle_root}",
+            flush=True,
+        )
+    finally:
+        session.close()
+
+
 def bootstrap_demo_dataset(settings: Settings | None = None, force_reseed: bool = False, validate: bool = True) -> bool:
     settings = settings or get_settings()
     force_reseed = force_reseed or os.getenv("CRIMELINK_FORCE_RESEED", "").lower() in ("true", "1", "yes")
@@ -518,6 +578,7 @@ def bootstrap_demo_dataset(settings: Settings | None = None, force_reseed: bool 
     status, reason = check_demo_dataset_status(settings)
 
     if status == "CORRECT" and not force_reseed:
+        _ensure_demo_source_bundle(settings)
         print(f"[CrimeLink] Demo dataset is already correctly seeded ({reason}).", flush=True)
         print("[CrimeLink] Startup is non-destructive — existing data preserved.", flush=True)
         return True
