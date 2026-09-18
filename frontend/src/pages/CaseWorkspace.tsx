@@ -33,6 +33,7 @@ import { isInvestigator, getRoleBadge } from "../lib/rbac";
 import { classifyRelationship } from "../lib/classification";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import StaleDataNotice from "../components/common/StaleDataNotice";
+import CaseRagChat from "../components/investigator/CaseRagChat";
 
 export default function CaseWorkspace() {
   const { caseId } = useParams();
@@ -217,6 +218,8 @@ export default function CaseWorkspace() {
           ? "· Investigate & review"
           : "· Read-only viewer — Case → People → Relationships → Evidence → Timeline"}
       </div>
+
+      <CaseRagChat caseId={caseId} />
 
       <div className="case-workspace-section">
         <div className="section-header">
