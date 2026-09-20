@@ -141,11 +141,21 @@ def enrich_finding_contract(
     safe_claims: list[ClaimCitation] = []
     for claim in claims:
         claim_refs = [str(ref) for ref in claim.evidence_refs if ref]
-        claim_types = (type_map.get(ref) for ref in claim_refs)
+        claim_types = {type_map.get(ref) for ref in claim_refs if type_map.get(ref)}
         derived = classify_evidence_support(
             claim.evidence_level, claim_refs, claim_types
         )
-        safe_claims.append(claim.model_copy(update={"support_level": derived}))
+        corroboration = None
+        if len(claim_types) >= 2 and len(claim_refs) >= 2:
+            corroboration = f"Corroborated across {len(claim_types)} evidence types ({', '.join(sorted(claim_types))})"
+        safe_claims.append(
+            claim.model_copy(
+                update={
+                    "support_level": derived,
+                    "corroboration": corroboration or claim.corroboration,
+                }
+            )
+        )
 
     safe_relationships: list[dict[str, Any]] = []
     for relationship in finding.relationships:
@@ -158,9 +168,12 @@ def enrich_finding_contract(
         level = str(item.get("classification") or "UNKNOWN").upper()
         if level not in {"FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"}:
             level = "UNKNOWN"
+        rel_types = {type_map.get(str(ref)) for ref in refs if type_map.get(str(ref))}
         item["support_level"] = classify_evidence_support(
-            level, refs, (type_map.get(str(ref)) for ref in refs)
+            level, refs, rel_types
         )
+        if len(rel_types) >= 2 and len(refs) >= 2:
+            item["corroboration"] = f"Corroborated across {len(rel_types)} evidence types ({', '.join(sorted(rel_types))})"
         safe_relationships.append(item)
 
     evidence_explanation = finding.evidence_explanation
@@ -183,6 +196,19 @@ def enrich_finding_contract(
                 "still requires investigator review."
             )
 
+    why_this_matters = finding.why_this_matters
+    if not why_this_matters:
+        if safe_claims:
+            why_this_matters = (
+                "This intelligence establishes documented connections and operational timelines "
+                "from verified platform evidence while isolating unproven investigative inferences."
+            )
+        else:
+            why_this_matters = (
+                "Authoritative case verification requires linking primary source records to "
+                "substantiate associations before formal investigative escalation."
+            )
+
     establishes = list(finding.establishes)
     if not establishes:
         establishes = [
@@ -190,12 +216,96 @@ def enrich_finding_contract(
             for claim in safe_claims
             if claim.evidence_level == "FACT" and claim.evidence_refs
         ][:8]
+    if not establishes and safe_claims:
+        establishes = [c.claim for c in safe_claims if c.evidence_refs][:5]
 
     does_not_establish = list(finding.does_not_establish)
     if not does_not_establish:
         does_not_establish = [
-            "The available records do not by themselves establish intent or legal responsibility."
+            "The available records do not by themselves establish criminal intent or legal culpability.",
+            "Communications or financial associations do not automatically establish conspiracy without explicit corroboration.",
         ]
+
+    limitations = list(finding.limitations)
+    if not limitations:
+        if finding.missing_evidence:
+            limitations = [
+                f"Missing case evidence types: {', '.join(finding.missing_evidence[:4])}.",
+                "Conclusions are constrained strictly to currently indexed case records.",
+            ]
+        else:
+            limitations = [
+                "Conclusions are constrained strictly to currently indexed case records.",
+            ]
+
+    # Calculate evidence coverage
+    total_claims = len(safe_claims)
+    supported_claims = sum(
+        1 for c in safe_claims if c.support_level in ("DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED")
+    )
+    inferred_claims = sum(1 for c in safe_claims if c.support_level == "INFERRED")
+    unsupported_claims = sum(1 for c in safe_claims if c.support_level == "UNSUPPORTED")
+    coverage_dict = {
+        "total_claims": total_claims,
+        "supported_claims": supported_claims,
+        "inferred_claims": inferred_claims,
+        "unsupported_claims": unsupported_claims,
+        "claims": total_claims,
+        "supported": supported_claims,
+        "unsupported": unsupported_claims,
+    }
+
+    claim_citations = [
+        {
+            "claim_text": c.claim,
+            "claim": c.claim,
+            "evidence_id": c.evidence_refs[0] if c.evidence_refs else "",
+            "evidence_refs": c.evidence_refs,
+            "support_status": c.support_level,
+            "support_level": c.support_level,
+            "corroboration": c.corroboration,
+        }
+        for c in safe_claims
+    ]
+
+    # Provenance summary: Why this answer
+    used_doc_ids = sorted({ref for claim in safe_claims for ref in claim.evidence_refs if ref} | {ref.doc_id for ref in finding.evidence_refs if ref.doc_id})
+    sources_used = [
+        {"doc_id": did, "document_type": type_map.get(did, "DOCUMENT")}
+        for did in used_doc_ids
+    ]
+    entities_considered = [
+        {"id": ent.pseudo_id, "label": ent.label or "Entity"}
+        for ent in finding.entities[:12]
+    ]
+    rel_paths = []
+    for rel in safe_relationships[:8]:
+        s = rel.get("source_person") or rel.get("source")
+        t = rel.get("target_person") or rel.get("target")
+        rt = rel.get("relationship_type") or rel.get("rel_type") or "connected to"
+        if s and t:
+            rel_paths.append(f"{s} -> {rt} -> {t}")
+
+    why_this_answer = finding.why_this_answer or {
+        "sources_used": sources_used,
+        "entities_considered": entities_considered,
+        "relationship_paths": rel_paths,
+    }
+
+    # Dynamic follow-up questions
+    followups = list(finding.followup_questions)
+    if not followups:
+        entity_names = [e.label for e in finding.entities if e.label and e.label not in ("?", "None")]
+        if entity_names:
+            primary = entity_names[0]
+            followups.append(f"Show the evidence supporting {primary}'s connection")
+            followups.append(f"Show {primary}'s timeline of documented activity")
+        if any("transfer" in str(r).lower() or "transaction" in str(r).lower() for r in safe_relationships):
+            followups.append("Show the financial relationships in this case.")
+        if any("call" in str(r).lower() for r in safe_relationships):
+            followups.append("What communication occurred before and after the alleged incident?")
+        followups.append("Which relationships are supported by multiple evidence sources?")
+        followups.append("Are there contradictions in the available evidence?")
 
     return finding.model_copy(
         update={
@@ -203,11 +313,17 @@ def enrich_finding_contract(
             "direct_answer": finding.direct_answer or finding.summary,
             "evidence_explanation": evidence_explanation,
             "investigator_interpretation": interpretation,
+            "why_this_matters": why_this_matters,
             "establishes": establishes,
             "does_not_establish": does_not_establish,
+            "limitations": limitations,
             "claims": safe_claims,
+            "claim_citations": claim_citations,
             "relationships": safe_relationships,
             "evidence_support": support,
+            "why_this_answer": why_this_answer,
+            "evidence_coverage": coverage_dict,
+            "followup_questions": followups[:5],
         }
     )
 

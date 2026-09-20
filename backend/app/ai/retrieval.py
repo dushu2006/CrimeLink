@@ -765,3 +765,54 @@ def build_timeline_from_context(
     events.sort(key=lambda e: str(e.get("timestamp", "")))
     
     return events
+
+
+def bucket_temporal_phases(
+    events: List[Dict[str, Any]],
+    *,
+    incident_date: str | None = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Bucket timeline events into before_incident, incident, and after_incident.
+
+    If an explicit incident_date is provided, events are partitioned relative to it.
+    Otherwise, if events exist, the median or key event is used as boundary.
+    """
+    if not events:
+        return {"before_incident": [], "incident": [], "after_incident": []}
+
+    sorted_events = sorted(events, key=lambda e: str(e.get("timestamp", "")))
+
+    if not incident_date:
+        for ev in sorted_events:
+            label = str(ev.get("label") or ev.get("rel_type") or "").upper()
+            if any(term in label for term in ("INCIDENT", "FIR", "BRIBE", "THEFT", "CRIME", "TENDER_SUBMIT")):
+                incident_date = str(ev.get("timestamp"))[:10]
+                break
+
+    if not incident_date:
+        if len(sorted_events) <= 2:
+            return {
+                "before_incident": sorted_events[:1],
+                "incident": sorted_events[1:2],
+                "after_incident": sorted_events[2:],
+            }
+        mid = len(sorted_events) // 2
+        incident_date = str(sorted_events[mid].get("timestamp"))[:10]
+
+    before, during, after = [], [], []
+    for ev in sorted_events:
+        ev_ts = str(ev.get("timestamp", ""))[:10]
+        if not ev_ts:
+            during.append(ev)
+        elif ev_ts < incident_date:
+            before.append(ev)
+        elif ev_ts == incident_date:
+            during.append(ev)
+        else:
+            after.append(ev)
+
+    return {
+        "before_incident": before,
+        "incident": during,
+        "after_incident": after,
+    }

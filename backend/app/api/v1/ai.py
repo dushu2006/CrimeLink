@@ -85,6 +85,10 @@ class AskRequest(BaseModel):
             "case subgraph."
         ),
     )
+    history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Optional prior conversation turns for within-case pronoun resolution.",
+    )
 
     @model_validator(mode="after")
     def _coalesce_and_require_text(self) -> "AskRequest":
@@ -145,6 +149,21 @@ async def _dataset_context(session: AsyncSession) -> tuple[str | None, bool]:
     return dataset.id, bool(dataset.graph_built_at)
 
 
+@router.get("/cases/{case_id}/context")
+async def get_case_context_summary(
+    case_id: str,
+    scope: JurisdictionScope = Depends(get_scope),
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(require_roles("INVESTIGATOR", "ADMIN", "VIEWER")),
+) -> dict[str, Any]:
+    """Get authoritative CaseAIContext (counts, timeline bounds, entity categories, suggested questions)."""
+    resolved_case = await case_service.require_case(session, scope, case_id)
+    canonical_case_id = resolved_case.id
+    gateway = get_ai_gateway()
+    case_ai_ctx = await gateway.get_case_ai_context(canonical_case_id)
+    return case_ai_ctx.as_summary_dict()
+
+
 @router.post("/cases/{case_id}/ask", response_model=AskResponse)
 async def ask_case_question(
     case_id: str,
@@ -173,6 +192,7 @@ async def ask_case_question(
         request_id=request_id,
         dataset_id=dataset_id,
         graph_ready=graph_ready,
+        history=payload.history,
     )
 
     if not response.available and response.fallback_reason:
@@ -231,6 +251,7 @@ async def ask_case_question_stream(
                 request_id=request_id,
                 dataset_id=dataset_id,
                 graph_ready=graph_ready,
+                history=payload.history,
             ):
                 yield json.dumps(event, default=str) + "\n"
         except Exception as exc:  # noqa: BLE001

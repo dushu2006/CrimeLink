@@ -1365,11 +1365,12 @@ export async function askCaseStream(
   caseId: string,
   question: string,
   handlers: AskStreamHandlers,
-  extra: { depth?: number; targetKey?: string | null } = {},
+  extra: { depth?: number; targetKey?: string | null; history?: Array<{ role: string; content: string }> } = {},
 ): Promise<void> {
   const body: Record<string, unknown> = { question };
   if (extra.depth) body.depth = extra.depth;
   if (extra.targetKey) body.target_key = extra.targetKey;
+  if (extra.history) body.history = extra.history;
 
   let received = false;
   const mark = () => {

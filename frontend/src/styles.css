@@ -3973,3 +3973,278 @@ ul.compact-list li::marker { color: var(--cl-accent); }
   box-shadow: 0 4px 10px rgba(37, 99, 235, 0.4);
 }
 
+/* =========================================================================
+   CASE EVIDENCE ASSISTANT — Dynamic Context, Claims & Provenance
+   ========================================================================= */
+.case-ai-context-card {
+  margin-bottom: 14px;
+  background: var(--cl-surface-2);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-r-lg);
+  padding: 14px 16px;
+}
+.case-ai-context-top {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--cl-border);
+}
+.case-ai-kicker {
+  font-family: var(--cl-font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cl-accent);
+}
+.case-ai-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cl-ink);
+}
+.case-ai-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.case-ai-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.case-ai-stat-label {
+  font-family: var(--cl-font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cl-text-3);
+}
+.case-ai-stat-val {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--cl-ink);
+}
+
+/* Suggested questions chips */
+.case-ai-suggestions {
+  margin-top: 10px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.case-ai-suggestions-label {
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cl-text-3);
+}
+.case-ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.case-ai-chip {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-r-pill);
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--cl-text-2);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+.case-ai-chip:hover {
+  background: var(--cl-accent-soft);
+  border-color: var(--cl-accent-tint);
+  color: var(--cl-accent);
+  transform: translateY(-1px);
+}
+.case-ai-chip-followup {
+  border-left: 2px solid var(--cl-accent);
+  font-weight: 500;
+}
+
+/* Structured response layout */
+.case-rag-structured-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0;
+}
+.case-rag-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.case-rag-section-title {
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cl-text-2);
+  margin: 0;
+}
+.case-rag-section-body {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--cl-ink);
+}
+
+/* Claim level evidence list */
+.case-rag-claims-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.case-rag-claim-card {
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-r-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.case-rag-claim-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.claim-badge {
+  font-family: var(--cl-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: var(--cl-r-sm);
+}
+.claim-badge-fact {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+.claim-badge-inference {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+.claim-badge-unsupported {
+  background: #fff1f2;
+  color: #9f1239;
+  border: 1px solid #fecdd3;
+}
+.claim-corroboration-badge {
+  font-family: var(--cl-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--cl-r-sm);
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+.claim-citation-btn {
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--cl-r-sm);
+  background: #f1f5f9;
+  color: var(--cl-accent);
+  border: 1px solid #cbd5e1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.claim-citation-btn:hover {
+  background: var(--cl-accent);
+  color: #ffffff;
+  border-color: var(--cl-accent);
+}
+.claim-inline-citation {
+  display: inline-block;
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  margin: 0 2px;
+  border-radius: var(--cl-r-sm);
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.claim-inline-citation:hover {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+/* Establishes / Limitations distinction */
+.case-rag-establishes {
+  border-left: 3px solid #10b981;
+  padding-left: 10px;
+}
+.case-rag-not-establishes {
+  border-left: 3px solid #f59e0b;
+  padding-left: 10px;
+}
+.case-rag-limitations {
+  border-left: 3px solid #94a3b8;
+  padding-left: 10px;
+}
+
+/* Provenance section */
+.case-rag-provenance {
+  margin-top: 10px;
+  background: var(--cl-surface);
+  border: 1px solid var(--cl-border);
+  border-radius: var(--cl-r-md);
+  padding: 10px 12px;
+}
+.case-rag-provenance-summary {
+  font-family: var(--cl-font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cl-accent);
+  cursor: pointer;
+  outline: none;
+}
+.case-rag-provenance-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.case-rag-coverage-bar {
+  display: flex;
+  gap: 12px;
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  color: var(--cl-text-2);
+}
+.provenance-tree {
+  font-family: var(--cl-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--cl-surface-2);
+  padding: 8px 10px;
+  border-radius: var(--cl-r-sm);
+  overflow-x: auto;
+  margin: 4px 0 0;
+}
+
+

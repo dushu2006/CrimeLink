@@ -7,7 +7,7 @@ becomes authoritative state.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -39,6 +39,7 @@ class ClaimCitation(BaseModel):
     support_level: Literal[
         "DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"
     ] = "UNSUPPORTED"
+    corroboration: str | None = None
 
 
 class FindingResult(BaseModel):
@@ -62,13 +63,21 @@ class FindingResult(BaseModel):
     direct_answer: str | None = None
     evidence_explanation: str | None = None
     investigator_interpretation: str | None = None
+    why_this_matters: str | None = None
     establishes: list[str] = Field(default_factory=list)
     does_not_establish: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
     claims: list[ClaimCitation] = Field(default_factory=list)
+    claim_citations: list[dict[str, Any]] = Field(default_factory=list)
     evidence_support: Literal[
         "DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"
     ] = "UNSUPPORTED"
+    why_this_answer: dict[str, Any] | None = None
+    evidence_coverage: dict[str, int] | None = None
+    contradictions: list[str] = Field(default_factory=list)
+    temporal_analysis: dict[str, Any] | None = None
+    followup_questions: list[str] = Field(default_factory=list)
 
     @field_validator("evidence_refs")
     @classmethod
