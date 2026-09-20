@@ -54,7 +54,19 @@ class EvidenceBoundary:
     # Timeline events (sorted chronologically)
     timeline: list[dict[str, Any]] = field(default_factory=list)
     # Deterministic analytics
+    #: Narrative conflicts between records.  Each entry states two conflicting
+    #: claims and their sources with status UNRESOLVED — the boundary never
+    #: says which record is right.
     contradictions: list[dict[str, Any]] = field(default_factory=list)
+    #: Assertions supported by more than one independent record, with the
+    #: evidence types involved (documentary support, never a legal conclusion).
+    corroboration: list[dict[str, Any]] = field(default_factory=list)
+    corroboration_summary: dict[str, Any] = field(default_factory=dict)
+    #: Anchored chronology for a temporal question (window + ordered events).
+    temporal: dict[str, Any] = field(default_factory=dict)
+    #: Which documents semantic retrieval contributed (ids + scores only — the
+    #: document text itself is already in `documents`, deduplicated).
+    semantic_matches: list[dict[str, Any]] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
     # Document IDs available for this case (for citation validation)
     available_document_ids: list[str] = field(default_factory=list)
@@ -159,6 +171,10 @@ def build_evidence_boundary(
     case_stats: dict[str, Any] | None = None,
     temporal_buckets: dict[str, list[dict[str, Any]]] | None = None,
     contradictions: list[dict[str, Any]] | None = None,
+    corroboration: list[dict[str, Any]] | None = None,
+    corroboration_summary: dict[str, Any] | None = None,
+    temporal: dict[str, Any] | None = None,
+    semantic_matches: list[dict[str, Any]] | None = None,
 ) -> EvidenceBoundary:
     """Categorize retrieved items into a clean EvidenceBoundary."""
 
@@ -367,6 +383,10 @@ def build_evidence_boundary(
         documents=cleaned_docs,
         timeline=timeline_list,
         contradictions=contradictions or [],
+        corroboration=corroboration or [],
+        corroboration_summary=corroboration_summary or {},
+        temporal=temporal or {},
+        semantic_matches=semantic_matches or [],
         available_document_ids=available_doc_ids,
         included_document_ids=sorted(set(included_doc_ids)),
         case_file_inventory=inventory,
@@ -418,6 +438,20 @@ def _scrub(text: str, terms: dict[str, str]) -> str:
         if real and real in out:
             out = re.sub(re.escape(real), terms[real], out, flags=re.IGNORECASE)
     return out
+
+
+def pseudonym_terms(nodes: Iterable[dict[str, Any]], pmap: Any) -> dict[str, str]:
+    """Public accessor for the real-value → pseudonym map of a case's entities.
+
+    Used by the semantic index: text is scrubbed with exactly the same terms
+    the boundary uses, so nothing is embedded that the model could not see.
+    """
+    return _raw_pii_terms(nodes, pmap)
+
+
+def pseudonymize_text(text: str, terms: dict[str, str]) -> str:
+    """Scrub free text with a term map produced by :func:`pseudonym_terms`."""
+    return _scrub(str(text or ""), terms)
 
 
 def pseudonymize_boundary(
@@ -508,6 +542,47 @@ def pseudonymize_boundary(
                     ev[field] = _swap(ev[field])
 
     clone.case_title = _scrub(str(clone.case_title or ""), pii_terms) or clone.case_title
+
+    # The question itself can name a person. The gateway rewrites it before the
+    # boundary is built; scrubbing here means a caller cannot forget to.
+    clone.question = _scrub(str(clone.question or ""), pii_terms) or clone.question
+
+    # Contradiction / corroboration / chronology objects quote record text, so
+    # they hide identities in exactly the same way document bodies do.
+    for item in clone.contradictions:
+        if not isinstance(item, dict):
+            continue
+        for field in ("entity", "detail", "time_display"):
+            if item.get(field):
+                item[field] = _scrub(str(item[field]), pii_terms)
+        for side in ("claim_a", "claim_b"):
+            claim = item.get(side)
+            if isinstance(claim, dict) and claim.get("text"):
+                claim["text"] = _scrub(str(claim["text"]), pii_terms)
+    for item in clone.corroboration:
+        if not isinstance(item, dict):
+            continue
+        for field in ("claim", "subject", "value"):
+            if item.get(field):
+                item[field] = _scrub(str(item[field]), pii_terms)
+    for summary in (clone.corroboration_summary or {}).get("top", []) or []:
+        if isinstance(summary, dict):
+            for field in ("claim", "subject", "value"):
+                if summary.get(field):
+                    summary[field] = _scrub(str(summary[field]), pii_terms)
+    if isinstance(clone.temporal, dict) and clone.temporal:
+        if clone.temporal.get("anchor"):
+            clone.temporal["anchor"] = _scrub(str(clone.temporal["anchor"]), pii_terms)
+        for event in clone.temporal.get("events", []) or []:
+            if not isinstance(event, dict):
+                continue
+            if event.get("description"):
+                event["description"] = _scrub(str(event["description"]), pii_terms)
+            if event.get("location"):
+                event["location"] = _scrub(str(event["location"]), pii_terms)
+            if event.get("entities"):
+                event["entities"] = [_scrub(str(label), pii_terms) for label in event["entities"]]
+
     clone.provenance = {}
     clone.retrieval = {}
     return clone

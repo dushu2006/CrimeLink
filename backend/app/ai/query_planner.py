@@ -23,6 +23,7 @@ INTENT_EVIDENCE_INVENTORY = "EVIDENCE_INVENTORY"
 INTENT_RELATIONSHIP = "RELATIONSHIP"
 INTENT_TIMELINE = "TIMELINE"
 INTENT_CONTRADICTION = "CONTRADICTION"
+INTENT_CORROBORATION = "CORROBORATION"
 INTENT_FINANCIAL = "FINANCIAL"
 INTENT_COMMUNICATION = "COMMUNICATION"
 INTENT_LOCATION = "LOCATION"
@@ -69,6 +70,11 @@ class QueryPlan:
     need_documents: bool = True
     # Filled in later against known case entities
     resolved_entity_keys: list[str] = field(default_factory=list)
+    #: Temporal shape of the question: BEFORE / AFTER / BETWEEN / AROUND /
+    #: NEAREST / CHRONOLOGICAL / "" (empty).  Filled by
+    #: :mod:`app.ai.temporal` when the question is anchored on an event.
+    temporal_relation: str = ""
+    temporal_anchor: str = ""
     confidence: float = 0.5
     # legacy compatibility fields
     answer_mode: str = "CASE_SUMMARY"
@@ -87,6 +93,7 @@ class QueryPlan:
             INTENT_PEOPLE: "connection",
             INTENT_CASE_OVERVIEW: "general",
             INTENT_CONTRADICTION: "evidence",
+            INTENT_CORROBORATION: "evidence",
         }.get(self.intent, "general")
 
 
@@ -105,6 +112,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str], int]] = [
         r"\b(timeline|chronolog|sequence|order\s+of\s+events|what\s+happened\s+(?:before|after|during)|"
         r"before\s+(?:the\s+)?incident|after\s+(?:the\s+)?incident|lead(?:ing)?\s+up\s+to|"
         r"when\s+did|events?\s+(?:leading|prior))\b", re.I), 30),
+    # Corroboration — asks which facts more than one record supports
+    (INTENT_CORROBORATION, re.compile(
+        r"\b(corroborat(?:e|ed|ion|ing)?|supported\s+by\s+(?:multiple|several|more\s+than\s+one)|"
+        r"multiple\s+(?:evidence\s+)?(?:sources?|records?|documents?)|independent\s+(?:sources?|records?|evidence)|"
+        r"more\s+than\s+one\s+(?:source|record|document)|which\s+facts?\s+are\s+supported|"
+        r"cross-?check(?:ed)?|backed\s+by|confirm(?:ed)?\s+by\s+(?:another|a\s+second))\b", re.I), 45),
     # Connections / relationships between entities — beats generic "evidence"
     (INTENT_RELATIONSHIP, re.compile(
         r"\b(connect(?:s|ed|ion|ions)?|link(?:s|ed|age)?|relat(?:e|ed|ions?|ionship)s?|associat(?:e|ed|ion)|"
@@ -125,7 +138,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str], int]] = [
     # Communication
     (INTENT_COMMUNICATION, re.compile(
         r"\b(calls?|calling?|phone\s+(?:records?|logs?)|mobile|sms|text|contact(?:ed|s)?\s+(?:records?|logs?)|"
-        r"communication|cdr|call\s+detail|spoke\s+(?:to|with))\b", re.I), 18),
+        r"communications?|communicated|cdr|call\s+detail|spoke\s+(?:to|with))\b", re.I), 18),
     # Location
     (INTENT_LOCATION, re.compile(
         r"\b(where|location|cctv|address|place|warehouse|spot|scene|tower\s+location|"
@@ -156,6 +169,32 @@ _EVIDENCE_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
 ]
 
 
+def _between_spans_are_dates(question: str) -> bool:
+    """True when "between X and Y" names two dates rather than two people."""
+    from app.ai.claims import parse_timestamp
+
+    match = re.search(r"\bbetween\s+(?P<start>[^,.;]{3,40}?)\s+and\s+(?P<end>[^,.;]{3,40})", question or "", re.I)
+    if not match:
+        return False
+    return bool(
+        parse_timestamp(match.group("start")) and parse_timestamp(match.group("end"))
+    )
+
+
+def _temporal_intent_override(question: str, intent: str) -> str | None:
+    """A chronology question is a chronology question without the word "timeline"."""
+    relation, anchor = _extract_temporal_shape(question)
+    if not relation:
+        return None
+    if relation == "BETWEEN":
+        if intent in (INTENT_RELATIONSHIP, INTENT_GENERAL, INTENT_CASE_OVERVIEW) and _between_spans_are_dates(question):
+            return INTENT_TIMELINE
+        return None
+    if anchor and intent in (INTENT_GENERAL, INTENT_CASE_OVERVIEW):
+        return INTENT_TIMELINE
+    return None
+
+
 def _classify_intent(question: str) -> tuple[str, float]:
     q = question or ""
     scores: dict[str, float] = {}
@@ -165,11 +204,22 @@ def _classify_intent(question: str) -> tuple[str, float]:
             scores[intent] = scores.get(intent, 0.0) + base + len(matches) * 2
     if not scores:
         # Fallback: "what happened" without further qualifiers → OVERVIEW
+        override = _temporal_intent_override(q, INTENT_GENERAL)
+        if override:
+            return override, 0.6
         if re.search(r"\bwhat\s+happened\b", q, re.I):
             return INTENT_CASE_OVERVIEW, 0.5
         return INTENT_GENERAL, 0.3
     intent = max(scores.items(), key=lambda x: x[1])[0]
-    return intent, min(1.0, 0.4 + scores[intent] / 50.0)
+    confidence = min(1.0, 0.4 + scores[intent] / 50.0)
+
+    # A question anchored on an event ("... around the incident", "... closest
+    # to the meeting", "between May 25 and June 1") is answered from the
+    # chronology, not from a case summary.
+    override = _temporal_intent_override(q, intent)
+    if override:
+        return override, max(confidence, 0.6)
+    return intent, confidence
 
 
 def _extract_person_names(question: str, known_names: Iterable[str] = ()) -> list[str]:
@@ -265,6 +315,36 @@ def _extract_temporal(question: str) -> dict[str, Any] | None:
     return None
 
 
+#: Temporal shapes the planner recognises, in priority order.
+_TEMPORAL_SHAPES: list[tuple[str, re.Pattern[str]]] = [
+    ("BETWEEN", re.compile(r"\bbetween\b[^,.;]{0,40}?\band\b", re.I)),
+    ("NEAREST", re.compile(r"\b(?:closest|nearest|most\s+recent|latest)\b", re.I)),
+    ("AFTER", re.compile(r"\b(?:after|following|since|subsequent\s+to|later\s+than)\b", re.I)),
+    ("BEFORE", re.compile(r"\b(?:before|prior\s+to|earlier\s+than|leading\s+up\s+to|ahead\s+of)\b", re.I)),
+    ("AROUND", re.compile(r"\b(?:around|near|close\s+to|during)\b", re.I)),
+]
+
+_TEMPORAL_ANCHOR_RE = re.compile(
+    r"\b(?:before|after|prior\s+to|following|since|around|near|leading\s+up\s+to|closest\s+to)\b\s+"
+    r"(?:the\s+|this\s+|that\s+)?(?P<anchor>[a-z][a-z\s]{2,40})",
+    re.I,
+)
+
+
+def _extract_temporal_shape(question: str) -> tuple[str, str]:
+    """What kind of chronology is being asked for, and anchored on what."""
+    text = str(question or "")
+    for relation, pattern in _TEMPORAL_SHAPES:
+        if pattern.search(text):
+            anchor = ""
+            match = _TEMPORAL_ANCHOR_RE.search(text)
+            if match:
+                anchor = match.group("anchor").strip().rstrip("?.,;:")
+                anchor = re.split(r"\s+(?:of|for|about|in)\s+", anchor)[0].strip()
+            return relation, anchor
+    return "", ""
+
+
 def _extract_evidence_types(question: str) -> list[str]:
     found: list[str] = []
     q = question.lower()
@@ -285,6 +365,8 @@ def _classify_response_style(intent: str, question: str) -> str:
         return STYLE_TIMELINE
     if intent == INTENT_CONTRADICTION:
         return STYLE_COMPARISON
+    if intent == INTENT_CORROBORATION:
+        return STYLE_NATURAL
     if intent == INTENT_RELATIONSHIP:
         return STYLE_NATURAL
     return STYLE_NATURAL
@@ -311,6 +393,10 @@ def plan_query(
     keywords = _extract_keywords(question)
     temporal = _extract_temporal(question)
     evidence_types = _extract_evidence_types(question)
+    temporal_relation, temporal_anchor = _extract_temporal_shape(question)
+    if not temporal_relation and intent == INTENT_TIMELINE:
+        # A chronology question without an explicit anchor is still chronological.
+        temporal_relation = "CHRONOLOGICAL"
 
     entity_types: list[str] = []
     relationship_types: list[str] = []
@@ -334,6 +420,10 @@ def plan_query(
         or temporal is not None
         or intent in (INTENT_CASE_OVERVIEW, INTENT_SUMMARY)
     )
+    if intent == INTENT_CONTRADICTION:
+        # A "contradictions" question is answered by comparing records, never
+        # by summarising the case.
+        need_documents = True
     need_graph_paths = intent in (INTENT_RELATIONSHIP, INTENT_PEOPLE)
     need_documents = True
     need_citations = True
@@ -346,6 +436,7 @@ def plan_query(
         INTENT_RELATIONSHIP: "RELATIONSHIP_ANALYSIS",
         INTENT_TIMELINE: "TIMELINE_ANALYSIS",
         INTENT_CONTRADICTION: "CONTRADICTION_ANALYSIS",
+        INTENT_CORROBORATION: "CORROBORATION_ANALYSIS",
         INTENT_FINANCIAL: "FINANCIAL_ANALYSIS",
         INTENT_COMMUNICATION: "COMMUNICATION_ANALYSIS",
         INTENT_LOCATION: "LOCATION_ANALYSIS",
@@ -384,6 +475,8 @@ def plan_query(
         need_timeline=need_timeline,
         need_graph_paths=need_graph_paths,
         need_documents=need_documents,
+        temporal_relation=temporal_relation,
+        temporal_anchor=temporal_anchor,
         confidence=confidence,
         answer_mode=answer_mode,
     )

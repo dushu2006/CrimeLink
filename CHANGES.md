@@ -1,3 +1,113 @@
+# CrimeLink — investigative intelligence round (four capabilities)
+
+**Branch:** `arena/01a0bf94-crimelink`
+
+This round makes the Case Evidence Assistant reason *across* records instead of
+only *about* one record at a time. Four capabilities were added — hybrid
+semantic retrieval, narrative contradiction detection, evidence corroboration
+and temporal reasoning — plus the pipeline that combines them, without adding a
+service, a key or a dependency.
+
+## A. What was missing
+
+| Capability | Before | After |
+|---|---|---|
+| Retrieval | lexical + structured + graph only | hybrid: lexical → semantic supplement → graph → merge → rerank → case boundary |
+| Contradictions | structural (dates, amounts, counts) | narrative: location, time, role/identity, amount, event description, relationship, status |
+| Corroboration | not first-class; a repeated fact was indistinguishable from a repeated sentence | `support_count`, independent evidence types, and a status per assertion |
+| Chronology | phase buckets around the incident | anchored selection: before/after/between/around/closest, with relative offsets and overlapping intervals |
+
+## B. How it is built
+
+One new module per capability, all standard-library-only, all deterministic
+first:
+
+* `app/ai/claims.py` — claims are the shared foundation. A claim is one
+  assertion attributed to **one** stored record (`dimension`, subject, object,
+  time, document, evidence type, quote). CSV/JSON evidence is read row-by-row
+  through the header, so a CDR row and a ledger row produce the same kinds of
+  claims a diary sentence does. Repeats inside one record collapse to one
+  claim: repetition is not corroboration.
+* `app/ai/contradiction.py` — groups claims by (subject, dimension, time
+  bucket) and reports the pairs that disagree, each with both accounts, their
+  documents and `status: UNRESOLVED`. It detects conflict; it never decides
+  truth, and it cannot cite a record the case does not hold.
+* `app/ai/corroboration.py` — one document is one source. An assertion is
+  `SINGLE_SOURCE`, `MULTI_SOURCE_SUPPORTED`, `MULTI_TYPE_CORROBORATED`,
+  `CONFLICTED` (a contested assertion is never presented as supported) or
+  `UNRESOLVED`.
+* `app/ai/temporal.py` — events normalised as
+  `{event_id, timestamp, start_time, end_time, entity_ids, event_type,
+  description, sources}`; relations BEFORE / AFTER / BETWEEN / AROUND /
+  NEAREST / CHRONOLOGICAL resolved against a real anchor (the case's incident
+  time when the question names the incident). An empty window widens to the
+  nearest records **and says so** rather than implying nothing happened.
+* `app/ai/semantic.py` — a local per-case JSON index beside the embedded graph.
+  Chunks carry case_id, document_id, chunk_id, evidence type, source metadata,
+  the pseudonymised text, the vector and a content hash. A changed record is
+  re-embedded; a retired record is dropped from disk. With no embedding key the
+  local hashing embedder is used, so the embedded profile stays runnable with
+  no network.
+
+Pipeline (both privacy modes):
+
+    PLANNER → CASE-SCOPED RETRIEVAL → RERANK → SEMANTIC SUPPLEMENT →
+    CASE BOUNDARY → INTELLIGENCE (claims → conflicts → corroboration →
+    chronology) → BOUNDARY + PSEUDONYMISE → LLM → CLAIM VALIDATION →
+    COMPOSER → CONTROLLED DE-ANONYMIZATION
+
+## C. Privacy and isolation (unchanged, and re-verified)
+
+* The vector index is a retrieval optimisation, **never** an authorization
+  layer: it is built from case-scoped records, queried inside the authorised
+  document set, and its hits still pass the same case validation.
+* In strict mode the index stores pseudonymised text only — a name never
+  reaches an embedding, and a test asserts the stored index contains
+  `PERSON_01` and not the real name.
+* The identity map stays inside CrimeLink. Contradiction, corroboration and
+  temporal objects are scrubbed before they reach a prompt, and a test asserts
+  no real name, and no map key, appears in the provider prompt.
+* Retrieved records are DATA. Instruction-like spans are removed outright
+  before the prompt is built (not merely labelled), the prompt keeps a clear
+  SYSTEM / USER / RETRIEVED-DATA separation, and a regression test drives the
+  exact injection string from the brief through the pipeline.
+
+## D. Verification
+
+* `backend/tests/test_semantic_retrieval.py` (9), `test_narrative_contradictions.py` (14),
+  `test_evidence_corroboration.py` (8), `test_temporal_reasoning.py` (11),
+  `test_investigative_security.py` (10), `test_case_intelligence_regression.py` (14).
+* Backend suite: **9 failed, 1052 passed** — the same nine pre-existing
+  failures as the base commit (demo v2 data quality, data integrity audit and
+  one runtime-context assertion); every new suite is green.
+* Frontend untouched: `tsc -b` clean, 193 tests pass, production build clean.
+* Live CR-2020 smoke (12 questions, deterministic path, no provider key):
+  **12/12 distinct**, each answer shaped by its question — a case header for
+  details, 10 people, 12 documents/11 types, "no direct documented connection"
+  for the person pair, 4 accounts for the financial question, a 12-event
+  chronology before the incident, the record in the ±6h window for
+  communications, an honest "no conflicting accounts" comparison for
+  contradictions, the one multi-record assertion with its four documents for
+  corroboration, an 85-event nearest-first sequence, a 3-event window between
+  22 and 29 May, and a two-paragraph briefing for the summary.
+* Real finding on the demo case: **"Anjali Hussain is documented as witness"
+  is recorded in four independent documents across four evidence types**
+  (CASE_DIARY, CHARGE_SHEET, FIR, WITNESS_STATEMENT) — previously invisible
+  because each record was read in isolation.
+
+## E. Honest limitations
+
+* Model-assisted narrative claim extraction exists (`validate_candidate_claims`)
+  but is off by default; the deterministic extractor is what runs.
+* The local hashing embedder is a lexical-semantic fallback, not a trained
+  model: with no embedding key it finds paraphrases through shared vocabulary,
+  not through learned meaning. The provider path is wired (`AIModelRouter.embed`)
+  and is used automatically once a key is configured.
+* Corroboration counts *documentary* support. It is deliberately silent about
+  truth, guilt and legal effect, and the wording it renders says so.
+
+---
+
 # CrimeLink — third-round audit (22-section brief)
 
 **Code commit:** `77ba473` · **Doc commit:** this file

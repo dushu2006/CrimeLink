@@ -247,6 +247,44 @@ class Settings(BaseSettings):
     #: investigator-facing path comfortably within model timeout.
     ai_interactive_max_context_doc_chars: int = 15000
 
+    # --- hybrid semantic retrieval ------------------------------------------
+    # Semantic retrieval *supplements* deterministic retrieval (exact terms,
+    # structured records, graph).  It is local-first: the index is a JSON file
+    # beside the embedded graph, and when no embedding provider is configured
+    # the deterministic local embedder is used, so the embedded profile needs
+    # no service, no key and no network.
+    ai_semantic_enabled: bool = True
+    #: Use ``AIModelRouter.embed`` when an embedding key is configured.  When
+    #: false, or when the provider is unavailable, the local embedder is used.
+    ai_semantic_use_provider_embeddings: bool = True
+    ai_semantic_top_k: int = 8
+    ai_semantic_min_score: float = 0.05
+    #: Upper bound on embedded chunks per case (a bound on work, not on recall
+    #: of the deterministic layers, which are unaffected).
+    ai_semantic_max_chunks: int = 600
+    #: How many semantic-only documents may join an already-ranked context.
+    ai_semantic_max_extra_documents: int = 4
+    #: Where per-case vector indexes live.  ``None`` → ``data_dir``/ai_index.
+    ai_index_dir: Path | None = None
+    #: Characters per embedded chunk and the overlap between adjacent chunks.
+    ai_semantic_chunk_chars: int = 700
+    ai_semantic_chunk_overlap: int = 120
+    #: Characters of each record kept for indexing and narrative analysis.
+    #: Chunking exists so a long record is *not* lost to a prompt-sized
+    #: excerpt: the index and the claim extractor read the whole record, while
+    #: the prompt still receives only what its own character budget allows.
+    ai_semantic_index_doc_chars: int = 12000
+
+    # --- narrative intelligence ---------------------------------------------
+    # Claims/contradictions/corroboration are extracted from at most this many
+    # case records per question, so a very large case file stays bounded.
+    ai_intelligence_max_documents: int = 40
+    #: Optional model-assisted narrative claim extraction.  Off by default: the
+    #: deterministic extractor always runs, and model-proposed claims are only
+    #: admitted after quoting a stored record verbatim.  Off keeps the
+    #: interactive path to a single model call.
+    ai_narrative_model_extraction: bool = False
+
     # ------------------------------------------------------ synthetic corpus
     synthetic_corpus_enabled: bool = False
     synthetic_corpus_seed: int = 20260902
@@ -387,6 +425,8 @@ class Settings(BaseSettings):
         """Keep the embedded graph beside the database unless told otherwise."""
         if self.graph_snapshot_path == DEFAULT_GRAPH_SNAPSHOT:
             object.__setattr__(self, "graph_snapshot_path", self.data_dir / "graph.json")
+        if self.ai_index_dir is None:
+            object.__setattr__(self, "ai_index_dir", self.data_dir / "ai_index")
         return self
 
     @field_validator("cors_origins", "trusted_hosts", mode="before")

@@ -319,9 +319,11 @@ def test_timeline_answer_is_chronological():
 def test_contradiction_answer_is_honest_when_none_are_found():
     result = deterministic_fallback(_boundary("Are there contradictions in the evidence?"))
     summary = result["summary"].lower()
-    assert "no deterministic contradictions" in summary
-    # The absence of a detector must not be presented as the absence of conflict.
-    assert "manual review" in summary
+    assert "no conflicting accounts were found" in summary
+    # "No conflict detected" must never be sold as "no conflict exists": the
+    # answer has to name what was compared and disclaim that it proves nothing.
+    assert "comparison covered" in summary
+    assert "not a statement that the accounts are complete or accurate" in summary
 
 
 def test_summary_is_concise_and_overview_is_fuller():

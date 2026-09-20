@@ -501,6 +501,24 @@ def read_pptx(path: Path) -> TextDocument:
     )
 
 
+def read_text_bytes(data: bytes, filename: str) -> TextDocument:
+    """Parse document bytes (object store) exactly like the on-disk reader.
+
+    The retrieval path can reach a record's bytes without a workspace copy of
+    it — a PDF in the object store, for example.  Rather than teach every
+    component a second byte-level parser, this writes the bytes to a temporary
+    file with the right suffix and defers to :func:`read_text`, so a record
+    parses the same way wherever it is read from.
+    """
+    import tempfile
+
+    suffix = Path(filename or "").suffix.lower()
+    with tempfile.NamedTemporaryFile(suffix=suffix or ".bin", delete=True) as handle:
+        handle.write(data)
+        handle.flush()
+        return read_text(Path(handle.name), extension=suffix or None)
+
+
 def read_text(path: Path, extension: str | None = None) -> TextDocument:
     ext = (extension or path.suffix).lower()
     if ext == ".pdf":

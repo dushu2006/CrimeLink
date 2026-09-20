@@ -15,12 +15,14 @@ The composer is responsible for two things:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from app.ai.evidence_boundary import EvidenceBoundary, pluralize
 from app.ai.query_planner import (
     INTENT_CASE_OVERVIEW, INTENT_PEOPLE, INTENT_EVIDENCE_INVENTORY,
     INTENT_RELATIONSHIP, INTENT_TIMELINE, INTENT_CONTRADICTION,
+    INTENT_CORROBORATION,
     INTENT_FINANCIAL, INTENT_COMMUNICATION, INTENT_LOCATION,
     INTENT_SUMMARY, INTENT_GENERAL,
     DETAIL_BRIEF,
@@ -58,7 +60,18 @@ CORE RULES:
 7. Answer in plain, clear, investigator-friendly prose. Be concise but
    informative. Do not dump raw database fields; explain what the records
    show in natural language.
-8. Output strict JSON matching the schema described in the user prompt.
+8. Where the evidence package reports that an assertion appears in more than
+   one record, say exactly that — "documented in N records", "across multiple
+   evidence sources". Corroboration means stronger DOCUMENTARY SUPPORT only: it
+   is never proof, never guilt, and never a legal conclusion.
+9. Where the evidence package reports a CONFLICT between records, describe both
+   accounts and their sources and state that the records do not resolve it. Do
+   NOT decide which record is correct, and do not label either account false —
+   only an independently authoritative record could establish that, and if the
+   package contains one, say which.
+10. For chronology questions, use only the dated events in the evidence package.
+   Never invent or estimate a date, and never build a sequence from assumption.
+11. Output strict JSON matching the schema described in the user prompt.
 """
 
 
@@ -116,6 +129,9 @@ Explain the connection in natural language:
 - the evidence that supports it (cite the specific records),
 - what sequence or path the records show,
 - and what the records do NOT establish (e.g. intent, purpose) where relevant.
+If the evidence package reports the connection as corroborated, say how many
+records document it and that it therefore has stronger documentary support —
+without turning that into a claim about intent or guilt.
 If there is no documented connection, say so clearly.
 The JSON must include: "summary", "connected" (boolean), "path" (array of steps),
 "supporting_evidence" (array of doc_ids), "limitations" (array of strings),
@@ -124,22 +140,52 @@ The JSON must include: "summary", "connected" (boolean), "path" (array of steps)
 
     if intent == INTENT_TIMELINE:
         return """Answer as a chronological narrative.
-Explain the sequence of relevant events in order, drawing on timestamped
-records (calls, transactions, sightings, dated documents). If the question
-asks "before the incident", focus on events leading up to the first major
-event; if "after", focus on events following it.
-If timestamps are missing, say "Timestamp unavailable" rather than inventing dates.
+The evidence package carries "temporal_reasoning": a relation (BEFORE / AFTER /
+BETWEEN / AROUND / NEAREST / CHRONOLOGICAL), the anchor it was resolved against
+and the dated events that fall inside that window, each with its own sources.
+- Explain those events in chronological order, each with its [DOC-ID].
+- State the anchor you used and its date, and say how many dated records fall
+  inside the window.
+- If the window is empty, say that no dated records fall in it and how many
+  dated records the case has in total.
+Never invent, round or extrapolate a date. If a record has no usable
+timestamp, say "timestamp unavailable" rather than placing it on the timeline.
 The JSON must include: "summary", "events" (array of {{when, what, evidence_refs}}),
 "claims" (array of {{claim, evidence_refs, evidence_level}}).
 """
 
     if intent == INTENT_CONTRADICTION:
-        return """Search for and explain contradictions or inconsistencies in the records.
-Compare conflicting statements, timestamps, or accounts across documents.
-For each contradiction, describe what one source says, what the other says,
-and why they conflict. If there are no meaningful contradictions, say so.
-The JSON must include: "summary", "contradictions" (array of {{description, source_a, source_b}}),
-"claims" (array of {{claim, evidence_refs, evidence_level}}).
+        return """Explain every conflict between records listed under
+"contradictions_detected" in the evidence package.
+For each one, in natural language:
+- state what the two records assert (quote the substance, not the raw object),
+- cite both records ([DOC-ID] each),
+- name the kind of conflict (location, timeline, identity/role, amount,
+  event description, relationship, status),
+- and state plainly that the available evidence does not currently resolve it.
+NEVER say which record is correct and never accuse a record of being false.
+Do not manufacture conflicts: if the package lists none, say that the checks
+run over the records (locations, times, amounts, roles, statuses,
+relationships) found no conflicting accounts, and name what was compared.
+The JSON must include: "summary", "contradictions" (array of
+{{description, source_a, source_b}}), "claims" (array of
+{{claim, evidence_refs, evidence_level}}).
+"""
+
+    if intent == INTENT_CORROBORATION:
+        return """Answer which assertions the case records support in more than one place.
+Use "corroboration" in the evidence package. For each assertion worth
+reporting, say:
+- what is asserted,
+- how many independent records assert it and which evidence types they are
+  ([DOC-ID] for each),
+- and that multi-source documentary support is stronger than a single
+  statement in one record — while being explicit that this is documentary
+  support, not proof, not truth, and not a conclusion about any person.
+If nothing is supported by more than one record, say so plainly and name how
+many assertions were examined.
+The JSON must include: "summary", "claims" (array of
+{{claim, evidence_refs, evidence_level}}).
 """
 
     if intent == INTENT_FINANCIAL:
@@ -241,6 +287,9 @@ def build_prompt(boundary: EvidenceBoundary) -> tuple[str, str]:
         "timeline": boundary.timeline[:40],
         "temporal_buckets": boundary.temporal_buckets,
         "contradictions_detected": boundary.contradictions,
+        "corroboration_summary": boundary.corroboration_summary,
+        "corroboration": boundary.corroboration[:12],
+        "temporal_reasoning": boundary.temporal,
         "followup_guidance": _followup_hint(boundary),
         "instruction": _intent_specific_instruction(boundary),
     }
@@ -259,7 +308,10 @@ def build_prompt(boundary: EvidenceBoundary) -> tuple[str, str]:
   ],
   "followup_questions": ["<2-4 questions grounded in actual case entities/evidence>"]
 }
-Do NOT wrap in markdown fences. Output ONLY the JSON object."""
+Do NOT wrap in markdown fences. Output ONLY the JSON object.
+
+For a claim that the evidence package reports across multiple records, you may
+add \"corroboration\": \"<how many records / which types, in plain words>\"."""
 
     user_prompt = (
         f"Investigator question: {boundary.question}\n\n"
@@ -279,6 +331,205 @@ Do NOT wrap in markdown fences. Output ONLY the JSON object."""
 def _rel_citation(rel: dict[str, Any]) -> str:
     refs = rel.get("source_doc_ids") or []
     return f"[{refs[0]}]" if refs else ""
+
+
+def _citations(*doc_ids: str) -> str:
+    return " ".join(f"[{doc_id}]" for doc_id in doc_ids if doc_id)
+
+
+#: Plain-English description of what kind of conflict was detected.
+_CONFLICT_PHRASING = {
+    "LOCATION_CONFLICT": "differing accounts of where someone was",
+    "TIMELINE_CONFLICT": "differing accounts of when something happened",
+    "IDENTITY_ROLE_CONFLICT": "differing accounts of a person's role",
+    "AMOUNT_CONFLICT": "differing amounts recorded at the same time",
+    "EVENT_DESCRIPTION_CONFLICT": "differing descriptions of the same event",
+    "RELATIONSHIP_CONFLICT": "one record asserting a link another denies",
+    "STATUS_CONFLICT": "differing case-status entries",
+}
+
+
+def _contradiction_lines(
+    contradiction: dict[str, Any],
+    claims: list[dict[str, Any]],
+) -> list[str]:
+    """Render one conflict as an investigator-readable, cited comparison.
+
+    The wording is deliberately even-handed: both accounts are reported, both
+    are cited, and the answer says the records do not resolve the difference.
+    """
+    if not isinstance(contradiction, dict):
+        return [f"- {contradiction}"]
+    entity = str(contradiction.get("entity") or "the subject")
+    when = str(contradiction.get("time_display") or "")
+    kind = _CONFLICT_PHRASING.get(str(contradiction.get("type")), "differing accounts")
+    claim_a = contradiction.get("claim_a") if isinstance(contradiction.get("claim_a"), dict) else {}
+    claim_b = contradiction.get("claim_b") if isinstance(contradiction.get("claim_b"), dict) else {}
+    sources = [str(ref) for ref in (contradiction.get("sources") or []) if ref]
+    or_phrase = f"{when}, " if when else ""
+    lines = [
+        f"- **{kind.capitalize()}** for {entity}{', ' + when if when else ''}: "
+        f"one record states *{claim_a.get('text', '')}* {_citations(str(claim_a.get('document_id') or ''))} "
+        f"while another states *{claim_b.get('text', '')}* {_citations(str(claim_b.get('document_id') or ''))}. "
+        f"The available evidence does not currently resolve this discrepancy."
+    ]
+    for ref in sources[:2]:
+        claims.append({
+            "claim": (
+                f"{or_phrase}Case records contain {kind} about {entity} in "
+                f"document {ref}."
+            ).strip(),
+            "evidence_refs": [ref],
+            "evidence_level": "FACT",
+        })
+    return lines
+
+
+def _corroboration_lines(
+    boundary: EvidenceBoundary,
+    claims: list[dict[str, Any]],
+    *,
+    limit: int = 8,
+) -> list[str]:
+    """Render multi-record support for the assertions that have it."""
+    entries = [c for c in (boundary.corroboration or []) if isinstance(c, dict)]
+    multi = [
+        c for c in entries
+        if int(c.get("support_count") or 0) >= 2 and not c.get("contradicted")
+    ]
+    lines: list[str] = []
+    for entry in multi[:limit]:
+        sources = [s for s in (entry.get("sources") or []) if isinstance(s, dict)]
+        doc_ids = [str(s.get("document_id")) for s in sources if s.get("document_id")]
+        types = sorted({str(s.get("evidence_type") or "DOCUMENT") for s in sources})
+        lines.append(
+            f"- {entry.get('claim')} — documented in "
+            f"{pluralize('case record', int(entry.get('support_count') or 0))} "
+            f"({', '.join(types)}) {_citations(*doc_ids[:4])}"
+        )
+        if doc_ids:
+            claims.append({
+                "claim": (
+                    f"{entry.get('subject') or 'The subject'} — "
+                    f"{entry.get('value') or entry.get('claim')} is documented in "
+                    f"{pluralize('record', int(entry.get('support_count') or 0))} "
+                    f"({', '.join(types)})."
+                ),
+                "evidence_refs": doc_ids[:4],
+                "evidence_level": "FACT",
+                "corroboration": (
+                    f"{pluralize('record', int(entry.get('support_count') or 0))} · "
+                    f"{pluralize('evidence type', len(types))}"
+                ),
+            })
+    return lines
+
+
+def _temporal_lines(
+    boundary: EvidenceBoundary,
+    claims: list[dict[str, Any]],
+    *,
+    limit: int = 12,
+) -> list[str]:
+    """Render the anchored chronology the temporal engine selected."""
+    temporal = boundary.temporal or {}
+    if not isinstance(temporal, dict) or not temporal:
+        return []
+    relation = str(temporal.get("relation") or "")
+    anchor = str(temporal.get("anchor") or "the anchor event")
+    anchor_display = str(temporal.get("anchor_time_display") or "")
+    events = [e for e in (temporal.get("events") or []) if isinstance(e, dict)]
+    total = int(temporal.get("total_events") or 0)
+    matched = int(temporal.get("matched_events") or len(events))
+
+    if relation == "BEFORE":
+        lead = f"Before {anchor}{f' ({anchor_display})' if anchor_display else ''}"
+    elif relation == "AFTER":
+        lead = f"After {anchor}{f' ({anchor_display})' if anchor_display else ''}"
+    elif relation == "BETWEEN":
+        start = str(temporal.get("window_start") or "")
+        end = str(temporal.get("window_end") or "")
+        lead = f"Between {start[:10]} and {end[:10]}"
+    elif relation == "NEAREST":
+        lead = f"Closest to {anchor}{f' ({anchor_display})' if anchor_display else ''}"
+    elif relation == "AROUND":
+        lead = f"Around {anchor}{f' ({anchor_display})' if anchor_display else ''}"
+    else:
+        lead = "In chronological order"
+
+    if not events:
+        return [
+            f"{lead}, no dated case record falls in that window "
+            f"({pluralize('dated record', total)} exist on the case in total), so no "
+            "chronology can be stated for it."
+        ]
+
+    lines = [
+        f"{lead}, the case records show {pluralize('relevant dated event', matched)}:"
+    ]
+    note = str(temporal.get("note") or "")
+    if "default window" in note:
+        lines.append(f"(Note: {note}.)")
+    for event in events[:limit]:
+        lines.append(_event_line(event, claims))
+    return lines
+
+
+#: Temporal relations that describe a window rather than a plain ordering.
+_TEMPORAL_RELATIONS = frozenset({"BEFORE", "AFTER", "AROUND", "NEAREST", "BETWEEN"})
+
+#: Evidence types that carry communications.
+_COMMUNICATION_TYPES = frozenset(
+    {"CDR", "CALL_RECORD", "CALL_DETAIL_RECORD", "COMMUNICATION", "SMS", "MESSAGING"}
+)
+
+
+def _is_communication_event(event: dict[str, Any]) -> bool:
+    haystack = " ".join(
+        str(event.get(key) or "") for key in ("event_type", "description")
+    ).lower()
+    return any(
+        token in haystack
+        for token in ("call", "called", "phone", "contact", "sms", "communication", "cdr", "message")
+    )
+
+
+def _window_phrase(temporal: dict[str, Any]) -> str:
+    """A human phrase for the temporal window the question asked about."""
+    relation = str(temporal.get("relation") or "")
+    anchor = str(temporal.get("anchor") or "the anchor event")
+    anchor_display = str(temporal.get("anchor_time_display") or "")
+    suffix = f" ({anchor_display})" if anchor_display else ""
+    if relation in {"BEFORE", "AFTER"}:
+        return f"{relation.title()} {anchor}{suffix}"
+    if relation == "AROUND":
+        return f"Around {anchor}{suffix}"
+    if relation == "NEAREST":
+        return f"Closest to {anchor}{suffix}"
+    if relation == "BETWEEN":
+        start = str(temporal.get("window_start") or "")[:10]
+        end = str(temporal.get("window_end") or "")[:10]
+        return f"Between {start} and {end}"
+    return "In chronological order"
+
+
+def _event_line(event: dict[str, Any], claims: list[dict[str, Any]]) -> str:
+    """One chronology line with its citation (shared by every answer shape)."""
+    when = str(event.get("time_display") or "timestamp unavailable")
+    description = str(event.get("description") or "recorded event")
+    description = description if len(description) <= 220 else description[:219] + "…"
+    refs = [
+        str(source.get("document_id"))
+        for source in (event.get("sources") or [])
+        if isinstance(source, dict) and source.get("document_id")
+    ]
+    if refs:
+        claims.append({
+            "claim": f"On {when}, {description}.",
+            "evidence_refs": [refs[0]],
+            "evidence_level": "FACT",
+        })
+    return f"- **{when}** — {description} {_citations(*refs[:2])}"
 
 
 def _timeline_line(
@@ -391,6 +642,8 @@ def _followups_for(boundary: EvidenceBoundary, intent: str) -> list[str]:
         out.append("What files are available?")
     if intent != INTENT_CONTRADICTION and len(boundary.documents) >= 3:
         out.append("Are there contradictions in the evidence?")
+    if intent != INTENT_CORROBORATION and len(boundary.documents) >= 2:
+        out.append("Which facts are supported by multiple evidence sources?")
     if intent != INTENT_SUMMARY:
         out.append("Summarize this case.")
 
@@ -482,8 +735,22 @@ def deterministic_fallback(boundary: EvidenceBoundary) -> dict[str, Any]:
                 people_mentioned.append(p["name"])
 
     elif intent == INTENT_TIMELINE:
-        events = boundary.timeline or []
-        if not events:
+        # An anchored question ("before the incident", "after the payment",
+        # "between May 25 and June 1") is answered from the temporal selection;
+        # only a generic chronology question falls back to phase buckets.
+        temporal = boundary.temporal or {}
+        if isinstance(temporal, dict) and temporal.get("relation") and temporal.get("relation") != "CHRONOLOGICAL":
+            summary_parts.extend(_temporal_lines(boundary, claims))
+            events = boundary.timeline or []
+            limitations.append(
+                "The chronology covers dated records only; undated records are "
+                "not placed on the timeline."
+            )
+        else:
+            events = boundary.timeline or []
+        if summary_parts:
+            pass
+        elif not events:
             summary_parts.append(
                 f"None of the {pluralize('record', len(docs))} retrieved for Case "
                 f"{boundary.case_number} carry a usable timestamp, so a chronological "
@@ -521,16 +788,45 @@ def deterministic_fallback(boundary: EvidenceBoundary) -> dict[str, Any]:
         contradictions = boundary.contradictions
         if not contradictions:
             summary_parts.append(
-                f"No deterministic contradictions were detected across the "
-                f"{pluralize('evidence record', len(docs))} retrieved for Case "
-                f"{boundary.case_number}. Record-level checks compare dates, amounts and "
-                "counts; narrative conflicts between statements are not detected "
-                "deterministically and would need closer manual review."
+                f"No conflicting accounts were found across the "
+                f"{pluralize('case record', len(docs))} examined for Case "
+                f"{boundary.case_number}. The comparison covered locations with times, "
+                "amounts recorded at the same moment, roles assigned to the same person, "
+                "case status entries and asserted or denied relationships. This means no "
+                "*difference in the records* was detected — it is not a statement that "
+                "the accounts are complete or accurate."
             )
         else:
-            summary_parts.append(f"{pluralize('possible contradiction', len(contradictions))} detected:")
-            for c in contradictions[:10]:
-                summary_parts.append(f"- {c.get('description', str(c))}")
+            summary_parts.append(
+                f"{pluralize('potentially conflicting pair of accounts', len(contradictions))} "
+                f"{'was' if len(contradictions) == 1 else 'were'} found in the case records. "
+                "The evidence does not resolve the differences."
+            )
+            for contradiction in contradictions[:8]:
+                summary_parts.extend(_contradiction_lines(contradiction, claims))
+
+    elif intent == INTENT_CORROBORATION:
+        lines = _corroboration_lines(boundary, claims)
+        examined = int((boundary.corroboration_summary or {}).get("assertions_examined") or 0)
+        sources_examined = int((boundary.corroboration_summary or {}).get("sources_examined") or 0)
+        if not lines:
+            summary_parts.append(
+                f"None of the {pluralize('assertion', examined)} drawn from the "
+                f"{pluralize('case record', sources_examined)} examined is stated in more "
+                "than one record, so nothing in this case is corroborated by a second "
+                "source at this point. A single-record assertion is not wrong — it simply "
+                "has one documentary source."
+            )
+        else:
+            summary_parts.append(
+                f"{pluralize('assertion', len(lines))} "
+                f"{'is' if len(lines) == 1 else 'are'} documented in more than one case "
+                "record, out of "
+                f"{pluralize('assertion', examined)} examined. Multi-source documentary "
+                "support means the same thing is recorded in more than one place; it is "
+                "not proof of the assertion and it is not a conclusion about any person."
+            )
+            summary_parts.extend(lines)
 
     elif intent == INTENT_RELATIONSHIP:
         # The planner resolved the people named in the question where possible.
@@ -674,9 +970,16 @@ def deterministic_fallback(boundary: EvidenceBoundary) -> dict[str, Any]:
                             })
         elif intent == INTENT_COMMUNICATION:
             call_rels = [r for r in rels if "CALL" in str(r.get("rel_type","")).upper() or r.get("call_count")]
-            if not call_rels:
-                summary_parts.append("No call/communication records were found in the retrieved context.")
-            else:
+            temporal = boundary.temporal if isinstance(boundary.temporal, dict) else {}
+            communication_events = [
+                event for event in (temporal.get("events") or [])
+                if _is_communication_event(event)
+            ]
+            comm_docs = [
+                d for d in docs
+                if str(d.get("document_type") or "").upper() in _COMMUNICATION_TYPES
+            ]
+            if call_rels:
                 summary_parts.append(
                     f"The case records document {pluralize('communication link', len(call_rels))}."
                 )
@@ -688,6 +991,38 @@ def deterministic_fallback(boundary: EvidenceBoundary) -> dict[str, Any]:
                     summary_parts.append(
                         f"- {r.get('source','?')} ↔ {r.get('target','?')}: {r.get('rel_type','contact')}{detail} {cite_str}"
                     )
+            elif temporal.get("events") and str(temporal.get("relation") or "") in _TEMPORAL_RELATIONS:
+                # "Communications around the incident" is a chronology
+                # question: answer it with the records that fall in that
+                # window (contacts first where the window holds any), each
+                # cited, rather than with a generic list.
+                if communication_events:
+                    trimmed = dict(temporal)
+                    trimmed["events"] = communication_events
+                    trimmed["matched_events"] = len(communication_events)
+                    display = trimmed
+                else:
+                    display = temporal
+                summary_parts.extend(
+                    _temporal_lines(replace(boundary, temporal=display), claims)
+                )
+            elif comm_docs:
+                verb = "was" if len(comm_docs) == 1 else "were"
+                summary_parts.append(
+                    f"{pluralize('communication record', len(comm_docs))} {verb} retrieved, "
+                    "but no dated contact between named entities could be reconstructed from them:"
+                )
+                for d in comm_docs[:8]:
+                    summary_parts.append(
+                        f"- {d.get('filename')} ({d.get('document_type')}) [{d.get('doc_id')}]"
+                    )
+                    claims.append({
+                        "claim": f"Communication record {d.get('filename')} is on file for this case.",
+                        "evidence_refs": [str(d.get("doc_id"))],
+                        "evidence_level": "FACT",
+                    })
+            else:
+                summary_parts.append("No call/communication records were found in the retrieved context.")
         else:  # LOCATION
             if not boundary.locations:
                 summary_parts.append("No location records were found in the retrieved context.")
@@ -909,8 +1244,10 @@ def fallback_to_finding(payload: dict[str, Any]) -> Any:
                 evidence_refs=[str(r) for r in item.get("evidence_refs", []) if r],
                 evidence_level=item.get("evidence_level", "FACT"),
                 support_level=(
-                    "DIRECTLY_SUPPORTED" if item.get("evidence_refs") else "UNSUPPORTED"
+                    "STRONGLY_SUPPORTED" if item.get("corroboration")
+                    else ("DIRECTLY_SUPPORTED" if item.get("evidence_refs") else "UNSUPPORTED")
                 ),
+                corroboration=item.get("corroboration") or None,
             ))
         except Exception:  # pragma: no cover - defensive against odd model shapes
             continue
