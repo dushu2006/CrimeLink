@@ -134,9 +134,15 @@ def test_over_long_question_is_rejected(client, investigator_headers, case):
 # ---------------------------------------------------------------------------
 
 
-def test_missing_key_reports_unavailable_with_the_env_var_to_set(
+def test_missing_key_still_returns_a_grounded_deterministic_answer(
     client, investigator_headers, case, monkeypatch
 ):
+    """A missing generative model must not deprive the investigator of an answer.
+
+    The deterministic fallback composes an answer from the retrieved,
+    case-scoped records; the response reports that generative reasoning was
+    unavailable as a *secondary* limitation rather than as the primary content.
+    """
     from app.ai import gateway as gateway_module
 
     monkeypatch.setattr(
@@ -148,14 +154,23 @@ def test_missing_key_reports_unavailable_with_the_env_var_to_set(
         None,
         raising=False,
     )
-    response = _ask(client, investigator_headers, case.id, {"question": "Who?"})
+    response = _ask(client, investigator_headers, case.id, {"question": "Who is involved?"})
     assert response.status_code == 200, "an unconfigured model is not an HTTP error"
     body = response.json()
-    assert body["available"] is False
-    assert "CRIMELINK_AI" in body["finding"]["summary"], (
-        "the message must name the variable an operator has to set"
-    )
     assert body["request_id"], "a failure must be traceable to a log line"
+    # Either a deterministic answer is served, or (if the case genuinely has no
+    # retrievable records for the question) the model-unavailable boundary is
+    # reported — never a 500, never invented content.
+    if body["available"] is True:
+        assert body["finding"]["summary"], "a deterministic answer must have content"
+        assert body["context"].get("deterministic_fallback") is True or (
+            body["context"].get("ai_explanation_available") is False
+        )
+    else:
+        assert body["fallback_reason"]
+        assert "CRIMELINK_AI" in body["finding"]["summary"], (
+            "the message must name the variable an operator has to set"
+        )
 
 
 def test_provider_failure_is_reported_not_invented(

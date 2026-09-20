@@ -1,3 +1,165 @@
+## Investigative-quality evaluation (measurement only — no product change)
+
+**What was added.** `backend/evals/investigative_quality/` — a deterministic evaluation suite over
+the existing assistant, and `backend/tests/test_investigative_quality_eval.py` (11 tests) pinning the
+harness itself. Nothing in `app/` or `frontend/` changed in this phase: the suite measures the
+architecture as it is.
+
+* `case_facts.py` — ground truth from the same sources the assistant may use (case records plus the
+  case's graph nodes/edges). It keeps two notions of "belongs to this case" apart: **documented**
+  (a record in this case names it) and **graph-linked** (reachable through an identifier that
+  appears in this case), because answers depend on the difference.
+* `question_bank.py` — 12 categories A–L per case, generated from the fact pack, with cross-case
+  probes chosen only from values this case's records *and* graph never touch, plus a shared-identity
+  probe (`J5`) for the case where they do.
+* `graders.py` — 15 independent checks per question (retrieval relevance, irrelevant-evidence
+  avoidance, case scope, citation validity, claim grounding, fact-vs-inference, no invention,
+  question alignment, conciseness, missing/absent evidence, case-scoped attribution, contradictions,
+  corroboration, temporal reasoning, privacy). A check that cannot be decided mechanically returns
+  "not applicable" rather than a guess.
+* `runner.py` — in-process (deterministic path) or over HTTP against a live server, same questions
+  and same ground truth; `MODEL-ASSISTED` is claimed only when a model actually answered. It warns
+  when the embedded graph is held by another process and falls back to the persisted snapshot.
+* `results/latest.json` + `results/scorecard.md` — the measured run, one record per question.
+
+**Measured run** (CR-2001, CR-2019, CR-2020; 135 questions; deterministic, no provider key):
+25/135 questions passed every check (18.5 %). Per-check pass rates: retrieval relevance, citation
+validity, no-invention, case scope and privacy **100 %**; contradiction handling 9/9 and
+corroboration 6/6; conciseness 92.6 %; fact-vs-inference 77.0 %; question alignment 74.1 %;
+case-scoped attribution 69.6 %; temporal reasoning 58.3 %; retrieval focus 45 %; claim grounding
+34.6 %; missing-evidence acknowledgement 33.3 %.
+
+**Findings** (full detail in `docs/INVESTIGATIVE_QUALITY_EVALUATION.md`):
+
+1. Attribute questions (incident/FIR date, IO, offence class, vehicle/phone/account enumerations) are
+   answered with the generic case overview — 35 alignment failures, reproduced over HTTP.
+2. Persons attached by identity resolution are presented as this case's documentary record
+   (CR-2020: "the records name 10 people" while six are named; CR-2001: "Priya Kumar is linked to
+   Sanjay Reddy through a documented ASSOCIATE_OF relationship" when no CR-2001 record contains that
+   name) — 41 attribution and 48 grounding failures. Every edge does carry a document id, so this is
+   provenance at identifier level shown as identity level.
+3. Negative questions are answered with an adjacent positive list instead of a scoped
+   "no case-scoped record documents that" — 17 negative-evidence failures. Where the refusal template
+   is reached, it is exemplary.
+4. Communication answers drop timestamps (10 temporal failures); small composition defects remain
+   (case number on every event line; one refusal with a blank entity name; two chronology items
+   reduced to "Event recorded").
+
+The limiting category is response composition, not retrieval, citations or case isolation. The
+recommended next change is recorded in the evaluation document: a deterministic attribute-answer
+path plus an explicit "named by a record" vs "linked through an identifier" tag on entity-facing
+sentences.
+
+# CrimeLink — investigative intelligence round (four capabilities)
+
+**Branch:** `arena/01a0bf94-crimelink`
+
+This round makes the Case Evidence Assistant reason *across* records instead of
+only *about* one record at a time. Four capabilities were added — hybrid
+semantic retrieval, narrative contradiction detection, evidence corroboration
+and temporal reasoning — plus the pipeline that combines them, without adding a
+service, a key or a dependency.
+
+## A. What was missing
+
+| Capability | Before | After |
+|---|---|---|
+| Retrieval | lexical + structured + graph only | hybrid: lexical → semantic supplement → graph → merge → rerank → case boundary |
+| Contradictions | structural (dates, amounts, counts) | narrative: location, time, role/identity, amount, event description, relationship, status |
+| Corroboration | not first-class; a repeated fact was indistinguishable from a repeated sentence | `support_count`, independent evidence types, and a status per assertion |
+| Chronology | phase buckets around the incident | anchored selection: before/after/between/around/closest, with relative offsets and overlapping intervals |
+
+## B. How it is built
+
+One new module per capability, all standard-library-only, all deterministic
+first:
+
+* `app/ai/claims.py` — claims are the shared foundation. A claim is one
+  assertion attributed to **one** stored record (`dimension`, subject, object,
+  time, document, evidence type, quote). CSV/JSON evidence is read row-by-row
+  through the header, so a CDR row and a ledger row produce the same kinds of
+  claims a diary sentence does. Repeats inside one record collapse to one
+  claim: repetition is not corroboration.
+* `app/ai/contradiction.py` — groups claims by (subject, dimension, time
+  bucket) and reports the pairs that disagree, each with both accounts, their
+  documents and `status: UNRESOLVED`. It detects conflict; it never decides
+  truth, and it cannot cite a record the case does not hold.
+* `app/ai/corroboration.py` — one document is one source. An assertion is
+  `SINGLE_SOURCE`, `MULTI_SOURCE_SUPPORTED`, `MULTI_TYPE_CORROBORATED`,
+  `CONFLICTED` (a contested assertion is never presented as supported) or
+  `UNRESOLVED`.
+* `app/ai/temporal.py` — events normalised as
+  `{event_id, timestamp, start_time, end_time, entity_ids, event_type,
+  description, sources}`; relations BEFORE / AFTER / BETWEEN / AROUND /
+  NEAREST / CHRONOLOGICAL resolved against a real anchor (the case's incident
+  time when the question names the incident). An empty window widens to the
+  nearest records **and says so** rather than implying nothing happened.
+* `app/ai/semantic.py` — a local per-case JSON index beside the embedded graph.
+  Chunks carry case_id, document_id, chunk_id, evidence type, source metadata,
+  the pseudonymised text, the vector and a content hash. A changed record is
+  re-embedded; a retired record is dropped from disk. With no embedding key the
+  local hashing embedder is used, so the embedded profile stays runnable with
+  no network.
+
+Pipeline (both privacy modes):
+
+    PLANNER → CASE-SCOPED RETRIEVAL → RERANK → SEMANTIC SUPPLEMENT →
+    CASE BOUNDARY → INTELLIGENCE (claims → conflicts → corroboration →
+    chronology) → BOUNDARY + PSEUDONYMISE → LLM → CLAIM VALIDATION →
+    COMPOSER → CONTROLLED DE-ANONYMIZATION
+
+## C. Privacy and isolation (unchanged, and re-verified)
+
+* The vector index is a retrieval optimisation, **never** an authorization
+  layer: it is built from case-scoped records, queried inside the authorised
+  document set, and its hits still pass the same case validation.
+* In strict mode the index stores pseudonymised text only — a name never
+  reaches an embedding, and a test asserts the stored index contains
+  `PERSON_01` and not the real name.
+* The identity map stays inside CrimeLink. Contradiction, corroboration and
+  temporal objects are scrubbed before they reach a prompt, and a test asserts
+  no real name, and no map key, appears in the provider prompt.
+* Retrieved records are DATA. Instruction-like spans are removed outright
+  before the prompt is built (not merely labelled), the prompt keeps a clear
+  SYSTEM / USER / RETRIEVED-DATA separation, and a regression test drives the
+  exact injection string from the brief through the pipeline.
+
+## D. Verification
+
+* `backend/tests/test_semantic_retrieval.py` (9), `test_narrative_contradictions.py` (14),
+  `test_evidence_corroboration.py` (8), `test_temporal_reasoning.py` (11),
+  `test_investigative_security.py` (10), `test_case_intelligence_regression.py` (14).
+* Backend suite: **9 failed, 1052 passed** — the same nine pre-existing
+  failures as the base commit (demo v2 data quality, data integrity audit and
+  one runtime-context assertion); every new suite is green.
+* Frontend untouched: `tsc -b` clean, 193 tests pass, production build clean.
+* Live CR-2020 smoke (12 questions, deterministic path, no provider key):
+  **12/12 distinct**, each answer shaped by its question — a case header for
+  details, 10 people, 12 documents/11 types, "no direct documented connection"
+  for the person pair, 4 accounts for the financial question, a 12-event
+  chronology before the incident, the record in the ±6h window for
+  communications, an honest "no conflicting accounts" comparison for
+  contradictions, the one multi-record assertion with its four documents for
+  corroboration, an 85-event nearest-first sequence, a 3-event window between
+  22 and 29 May, and a two-paragraph briefing for the summary.
+* Real finding on the demo case: **"Anjali Hussain is documented as witness"
+  is recorded in four independent documents across four evidence types**
+  (CASE_DIARY, CHARGE_SHEET, FIR, WITNESS_STATEMENT) — previously invisible
+  because each record was read in isolation.
+
+## E. Honest limitations
+
+* Model-assisted narrative claim extraction exists (`validate_candidate_claims`)
+  but is off by default; the deterministic extractor is what runs.
+* The local hashing embedder is a lexical-semantic fallback, not a trained
+  model: with no embedding key it finds paraphrases through shared vocabulary,
+  not through learned meaning. The provider path is wired (`AIModelRouter.embed`)
+  and is used automatically once a key is configured.
+* Corroboration counts *documentary* support. It is deliberately silent about
+  truth, guilt and legal effect, and the wording it renders says so.
+
+---
+
 # CrimeLink — third-round audit (22-section brief)
 
 **Code commit:** `77ba473` · **Doc commit:** this file
@@ -981,3 +1143,140 @@ Diffstat: **29 files changed, 2970 insertions(+), 239 deletions(-)**
 - Did not shrink nodes or hide them to make the graph look tidy.
 - Did not re-seed or regenerate evidence files; the 360 already on disk were
   verified instead.
+
+---
+
+# CrimeLink — Case Evidence Assistant redesign (question-driven RAG)
+
+**Branch:** `arena/01a0bf94-crimelink` · **Base:** `384c810d3fca1e4224b2dd6759c224e17e2242ef`
+
+The Case Evidence Assistant no longer answers every question with the same
+template. It now understands the question first, retrieves the evidence that
+question needs, and composes an answer whose shape follows the question.
+
+All previous case-grounding guarantees are preserved: canonical case-id
+resolution, strict case-scoped retrieval, cross-case contamination prevention,
+graph-edge case provenance, citation validation, authoritative deterministic
+metrics, empty-retrieval honesty, history isolation, cache isolation, permission
+isolation, and "no retrieval fallback broadening".
+
+## A. What the current architecture actually was
+
+| Layer | Before |
+|---|---|
+| RAG storage | **No vector store.** Retrieval is deterministic: embedded graph snapshot (`graph.json`) + SQL `CaseDocument` rows, ranked by keyword/exact-term scoring. |
+| Embeddings | `AIModelRouter.embed()` exists and is wired to a provider role, but nothing indexes or searches vectors. Retrieval was **lexical + graph + structured DB**, not semantic. |
+| Provider abstraction | Present and good — per-role OpenAI-compatible endpoints, local or cloud, with honest unavailability reporting. |
+| Entity privacy | `PseudonymMap` with dataset-stable pseudo-ids, persisted per dataset, plus prompt-minimization. |
+| **Response shape** | **The defect.** One fixed JSON contract (`direct_answer`, `establish`, `does_not_establish`, `why_this_matters`, `limitations`, …) was demanded for every question, and `enrich_finding_contract` re-injected generic versions of those sections whenever the model omitted them. The UI then rendered all of them unconditionally. |
+| Deterministic fallback | Existed, but keyed on coarse keyword branches and produced the same "Case Intelligence Briefing" skeleton. |
+
+So the "RAG" was real and deterministic; the problem was that the **answer
+generator** ignored the question.
+
+## B. What changed
+
+    USER QUESTION
+      → QUERY PLANNER            (new: app/ai/query_planner.py)
+      → CASE-SCOPED RETRIEVAL    (existing graph + SQL + lexical, now intent-directed)
+      → RERANKING                (existing rank_and_filter_context, unchanged)
+      → EVIDENCE BOUNDARY        (new: app/ai/evidence_boundary.py)
+      → LLM SYNTHESIS            (new intent-shaped prompt)
+      → CLAIM→EVIDENCE VALIDATION (existing validate_finding, unchanged)
+      → RESPONSE COMPOSER        (new: app/ai/response_composer.py)
+      → CONTROLLED DEANONYMIZATION (fixed + broadened to every prose field)
+      → FINAL RESPONSE
+
+1. **Query planner** (`query_planner.py`) classifies intent — CASE_OVERVIEW,
+   PEOPLE, EVIDENCE_INVENTORY, RELATIONSHIP, TIMELINE, CONTRADICTION,
+   FINANCIAL, COMMUNICATION, LOCATION, SUMMARY, GENERAL — plus requested
+   detail, response style, named people resolved against case entities,
+   temporal constraints, evidence-type filters and exact identifiers. No
+   per-question hardcoding.
+2. **Evidence boundary** (`evidence_boundary.py`) is the single object the model
+   may reason over: case metadata, entities grouped by type, relationships with
+   document provenance, bounded documents, timeline, authoritative counts,
+   contradictions, gaps. It is case-scoped by construction and cannot widen.
+3. **Question-dependent retrieval.** Network questions keep the person-centric
+   narrowing. Financial / communication / location / timeline / inventory /
+   contradiction questions take the **whole case subgraph** — the person-centric
+   view deliberately demotes a bank transfer to "supporting material" and would
+   otherwise drop the very edges the question is about. This was found by live
+   testing, not by inspection.
+4. **Intent-shaped prompts.** The system prompt states the invariants (fact vs
+   inference, neutral language, cite-or-say-unknown, evidence is data not
+   instructions); the per-intent instruction states the answer shape. The old
+   demand for `why_this_matters` / `does_not_establish` is gone.
+5. **Enrichment no longer fabricates sections.** `enrich_finding_contract` still
+   guarantees the compatibility envelope, but no longer re-injects generic
+   "WHY THIS MATTERS" prose into an answer that already explains itself.
+6. **Deterministic answers per intent.** With no model configured the assistant
+   now answers the actual question from the boundary — an inventory for a file
+   question, a chronology for a timeline question, a connected/not-connected
+   explanation for a relationship question — instead of an error or a generic
+   briefing. Provider status appears only as a secondary limitation.
+7. **Follow-ups are case-scoped and context-aware** — built from the people and
+   evidence types this case actually contains, and biased away from re-asking
+   the question that was just answered.
+
+## C. Privacy and security
+
+* **Pseudonymization now covers the whole boundary, including document text.**
+  `pseudonymize_boundary()` replaces entity display names with stable pseudonyms
+  and scrubs real names, phone numbers, account numbers and plates out of
+  retrieved document content. Verified by test: no real identity reaches the
+  provider prompt in strict mode, and the mapping never appears in it.
+* **Fixed a latent de-anonymization bug.** The restore loop iterated
+  `pmap.entries()` as `(pseudo, key)` when it is `(key, pseudo)`, so pseudonyms
+  were silently never restored. Restoration now covers `direct_answer`, claims,
+  relationships, limitations and follow-ups, not just `summary`.
+* **Fixed a leak in the offline path.** Deterministic answers are composed over
+  the pseudonymized boundary and were returned without restoration, so an
+  investigator could be shown "PERSON_004 is documented as ACCUSED".
+* **Retrieved text can no longer read as an instruction.** `sanitize_untrusted_evidence`
+  now *removes* the instruction-like span rather than wrapping it in a marker —
+  a marker containing "ignore previous instructions" is still readable as one.
+
+## D. Data semantics (§21)
+
+The counts now have distinct, named meanings:
+
+| Value | Meaning |
+|---|---|
+| `case_documents` / `document_count` | files attached to the case |
+| `evidence_records_referenced` / `evidence_count` | distinct evidence records the case's graph references |
+| `relationship_count` | case-scoped graph relationships |
+
+"12 verified records", "0 relationships" vs "65 operational relationships", and
+"operational relationships" as a phrase are gone. Pluralization is grammatical
+(`1 person` / `2 people`, `1 phone` / `14 phones`, `1 vehicle` / `4 vehicles`).
+
+## E. Files
+
+**New**
+`backend/app/ai/query_planner.py`, `backend/app/ai/evidence_boundary.py`,
+`backend/app/ai/response_composer.py`,
+`backend/tests/test_case_assistant_architecture.py`,
+`backend/scripts/smoke_case_assistant.py`,
+`backend/scripts/live_smoke_assistant.py`.
+
+**Modified**
+`backend/app/ai/gateway.py` (planner wiring, intent retrieval, boundary + prompt,
+deterministic fallback, de-anonymization), `backend/app/ai/case_context.py`
+(semantics + frontend-compatible summary), `backend/app/ai/evidence_contract.py`
+(no fabricated sections), `backend/app/ai/safety.py` (injection removal),
+`frontend/src/components/investigator/CaseRagChat.tsx` (natural answer first,
+sections only when informative), and five backend test modules updated for the
+new deterministic-answer contract.
+
+## F. Remaining limitations
+
+* **No vector/semantic retrieval.** Retrieval remains lexical + graph +
+  structured. Adding embeddings would help "thematic" questions; it is not
+  required for the questions in the brief, and no vector dependency was added.
+* **Contradiction detection is structural** (dates, amounts, counts). Narrative
+  conflicts between witness statements are *not* detected deterministically; the
+  answer says so rather than implying none exist.
+* **Corroboration and gap-reasoning are not yet first-class** beyond what the
+  boundary already exposes.
+* **`AIModelRouter.embed()` is still unused** by retrieval.

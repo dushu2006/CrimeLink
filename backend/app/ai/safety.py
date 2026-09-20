@@ -19,8 +19,34 @@ FORBIDDEN_AUTHORITATIVE_ACTIONS = frozenset({
     "create_authoritative_edge", "recommend_arrest", "recommend_guilt",
 })
 _NEUTRAL_TERMS = ("criminal", "guilty", "terrorist", "gang member", "kingpin", "mastermind")
+
+#: Instruction-like spans inside a case record.  Extension is deliberately in
+#: the *removal* direction rather than the "label it" direction: a model reads
+#: text, not intentions, so the imperative sentence itself must not survive.
+#:
+#: Note the identity clause: it matches "reveal PERSON_01's real identity" or
+#: "disclose the true identity", but not a case record that discusses witness
+#: identity protection ("do not reveal the identity of the informant"), which
+#: is a legitimate investigative sentence rather than an instruction to a model.
 _PROMPT_INJECTION = re.compile(
-    r"(?:ignore\s+(?:all\s+)?previous instructions|system\s+message|developer\s+message|reveal\s+the\s+prompt|act\s+as\s+the\s+system)",
+    r"(?:"
+    r"ignore\s+(?:all\s+|any\s+|these\s+|those\s+|the\s+)?(?:previous|prior|above|earlier|foregoing|preceding)?\s*"
+    r"(?:instructions?|prompts?|rules?|directions?|messages?)"
+    r"|disregard\s+(?:all\s+|any\s+|the\s+)?(?:previous|prior|above|earlier|foregoing)?\s*"
+    r"(?:instructions?|prompts?|rules?|directions?)"
+    r"|forget\s+(?:everything|all\s+(?:previous|prior|above)\s+(?:instructions?|rules?))"
+    r"|(?:reveal|disclose|print|show|repeat|output|share|tell)\s+(?:me\s+)?(?:the\s+|your\s+)?"
+    r"(?:system\s+|developer\s+|hidden\s+|initial\s+|full\s+)?(?:prompt|instructions?|system\s+message|developer\s+message)"
+    r"|(?:reveal|disclose|expose|divulge|unmask)\s+[^.\n]{0,40}?(?:real|true|actual)\s+identit(?:y|ies)"
+    r"|unrestricted\s+(?:information|mode|answer|access|response)"
+    r"|(?:you\s+are\s+now|from\s+now\s+on\s+you\s+(?:are|will|must)|act\s+as\s+(?:the\s+)?(?:system|developer|admin|root|dAN))"
+    r"|(?:new|updated)\s+instructions?\s*[:=]"
+    r"|(?:system|developer)\s+message\s*[:=]"
+    r"|override\s+(?:the\s+)?(?:system|safety|security|previous|all)"
+    r"|jailbreak|do\s+anything\s+now"
+    r"|do\s+not\s+follow\s+(?:the\s+)?(?:system|previous|above|those)"
+    r"|without\s+(?:any\s+|all\s+)?restrictions?"
+    r")",
     re.IGNORECASE,
 )
 
@@ -41,10 +67,24 @@ class SafetyReport:
         return not self.evidence_errors and not self.entity_errors
 
 
+#: What an instruction-like span inside a case record is replaced with.  The
+#: imperative text itself is *removed*, not merely labelled: a marker that still
+#: contains "ignore previous instructions" is still readable as an instruction
+#: by a model that does not respect the marker.  The marker preserves the fact
+#: that something was stripped, which is what an investigator needs to know —
+#: the original text remains unmodified in the evidence store.
+_UNTRUSTED_PLACEHOLDER = "[UNTRUSTED_TEXT: instruction-like content removed from evidence]"
+
+
 def sanitize_untrusted_evidence(text: str) -> str:
-    """Mark instruction-like text as data; never treat evidence as a prompt."""
+    """Neutralise instruction-like text inside retrieved evidence.
+
+    Retrieved documents are DATA.  Any span that reads like an instruction to
+    the model is replaced before the evidence is placed in a prompt, so the
+    content cannot be read as one — the marker alone is not relied upon.
+    """
     value = str(text or "")
-    return _PROMPT_INJECTION.sub(lambda match: f"[UNTRUSTED_TEXT:{match.group(0)}]", value)
+    return _PROMPT_INJECTION.sub(_UNTRUSTED_PLACEHOLDER, value)
 
 
 def validate_authoritative_action(action: str) -> None:

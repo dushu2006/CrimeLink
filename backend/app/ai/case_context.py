@@ -33,6 +33,16 @@ class CaseContextStats:
     evidence_types_count: int = 0
     evidence_types: list[str] = field(default_factory=list)
     entity_counts_by_type: dict[str, int] = field(default_factory=dict)
+    #: Distinct *documents* attached to the case.  Deliberately separate from
+    #: ``evidence_count``, which counts every evidence record the case's graph
+    #: nodes and relationships reference — a larger set, because one document
+    #: can reference many records.  Conflating the two produced answers that
+    #: claimed "12 records" in one place and "35" in another.
+    document_count: int = 0
+
+    @property
+    def document_count_or_evidence(self) -> int:
+        return self.document_count or self.evidence_count
 
     def as_dict(self) -> dict[str, int | str]:
         """Canonical 5-key dictionary preserved for backward compatibility."""
@@ -55,6 +65,10 @@ class CaseContextStats:
             "evidence_types_count": self.evidence_types_count or len(self.evidence_types),
             "evidence_types": list(self.evidence_types),
             "entity_counts_by_type": dict(self.entity_counts_by_type),
+            "document_count": self.document_count_or_evidence,
+            # Named so a reader cannot confuse the two:
+            "evidence_records_referenced": self.evidence_count,
+            "case_documents": self.document_count_or_evidence,
         }
 
 
@@ -142,16 +156,60 @@ class CaseAIContext:
     provenance: dict[str, Any] = field(default_factory=dict)
 
     def as_summary_dict(self) -> dict[str, Any]:
+        stats_detailed = self.stats.as_detailed_dict()
+        # Compute entity_counts_by_type with correct plural labels the frontend understands
+        entity_counts_by_type: dict[str, int] = {}
+        label_remap = {
+            "people": "people",
+            "persons": "people",
+            "person": "people",
+            "accounts": "accounts",
+            "account": "accounts",
+            "phones": "phones",
+            "phone": "phones",
+            "vehicles": "vehicles",
+            "vehicle": "vehicles",
+            "locations": "locations",
+            "location": "locations",
+            "organizations": "organizations",
+            "organization": "organizations",
+        }
+        for raw_key, count in stats_detailed.get("entity_counts_by_type", {}).items():
+            norm = label_remap.get(raw_key.lower(), raw_key.lower())
+            entity_counts_by_type[norm] = entity_counts_by_type.get(norm, 0) + int(count or 0)
+
+        timeline_dict = {
+            "first_recorded": self.timeline_summary.get("first_recorded", "N/A"),
+            "latest_recorded": self.timeline_summary.get("latest_recorded", "N/A"),
+            "event_count": self.timeline_summary.get("total_events", 0),
+        }
+
         return {
             "case_id": self.case_id,
             "case_number": self.case_number,
+            "title": self.case_title,
             "case_title": self.case_title,
             "status": self.status,
             "jurisdiction": self.jurisdiction,
-            "stats": self.stats.as_detailed_dict(),
-            "timeline": self.timeline_summary,
-            "suggested_questions": self.suggested_questions,
-            "missing_evidence_types": self.missing_evidence_types,
+            "stats": {
+                # Frontend-compatible field names
+                "documents_indexed": self.stats.evidence_count,
+                "evidence_count": self.stats.evidence_count,
+                "evidence_types_count": self.stats.evidence_types_count,
+                "evidence_types": list(self.stats.evidence_types),
+                "entities_extracted": self.stats.entity_count,
+                "entity_count": self.stats.entity_count,
+                "person_count": self.stats.person_count,
+                "relationships_mapped": self.stats.relationship_count,
+                "relationship_count": self.stats.relationship_count,
+                "entity_counts_by_type": entity_counts_by_type,
+                "coverage_percent": 100 if self.stats.evidence_count > 0 else 0,
+                "confidence_score": 1.0,
+            },
+            "timeline": timeline_dict,
+            "timeline_summary": self.timeline_summary,
+            "suggested_questions": list(self.suggested_questions),
+            "missing_evidence_types": list(self.missing_evidence_types),
             "evidence_count": self.stats.evidence_count,
             "canonical_entities_count": self.stats.entity_count,
         }
@@ -432,6 +490,7 @@ def build_case_ai_context(
         case_id, nodes=nodes, edges=edges, documents=documents, require_scope=True
     )
     stats = validation.stats
+    stats.document_count = len(validation.documents)
 
     # Compute timeline bounds from events, nodes, edges, documents
     timestamps: list[str] = []

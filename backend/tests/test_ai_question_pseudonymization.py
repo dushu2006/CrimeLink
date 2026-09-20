@@ -8,7 +8,35 @@ from app.domain.models import CaseGraphSnapshot, GraphNode
 
 
 def _payload(prompt: str) -> dict:
-    return json.loads(prompt[prompt.index('\n{"question"') + 1:])
+    """The JSON evidence package at the tail of the prompt.
+
+    The prompt shape is owned by ``app.ai.response_composer``; this helper finds
+    the last balanced JSON object rather than depending on a key ordering.
+    """
+    start = prompt.find("{")
+    while start != -1:
+        try:
+            payload = json.loads(prompt[start:])
+            if isinstance(payload, dict):
+                return payload
+        except ValueError:
+            pass
+        start = prompt.find("{", start + 1)
+    raise AssertionError("the prompt did not contain a JSON evidence package")
+
+
+def _question_sent_to_model(prompt: str) -> str:
+    """The investigator's question as the provider receives it."""
+    payload = _payload(prompt)
+    if "question" in payload:
+        return str(payload["question"])
+    # Composer may nest it; search the serialized payload text as a fallback.
+    match = json.loads(json.dumps(payload))
+    if isinstance(match, dict):
+        for value in match.values():
+            if isinstance(value, dict) and "question" in value:
+                return str(value["question"])
+    raise AssertionError("no question found in the evidence package")
 
 
 class RecordingRouter:
@@ -81,8 +109,9 @@ async def test_target_question_uses_the_same_pseudonym_as_context(settings, monk
 
     assert "PERSON_001" in prompt
     assert "Chetan Patel" not in prompt
-    payload = _payload(prompt)
-    assert "PERSON_001" in payload["question"]
+    # The pseudonym the question uses is the same one the evidence uses, so the
+    # model can resolve the subject without ever seeing her real identity.
+    assert "PERSON_001" in _question_sent_to_model(prompt)
 
 
 async def test_free_form_question_rewrites_in_scope_name(settings, monkeypatch):
@@ -90,13 +119,18 @@ async def test_free_form_question_rewrites_in_scope_name(settings, monkeypatch):
 
     assert "PERSON_001" in prompt
     assert "Chetan Patel" not in prompt
+    assert "PERSON_001" in _question_sent_to_model(prompt)
 
 
 async def test_free_form_question_leaves_out_of_scope_name_unchanged(settings, monkeypatch):
     prompt = await _ask(settings, monkeypatch, "What connects Sachin Joshi to this case?")
 
+    # A name that is not in this case cannot be pseudonymized — it must survive
+    # verbatim, and no case pseudonym may be invented for it.
     assert "Sachin Joshi" in prompt
-    assert "PERSON_001" not in _payload(prompt)["question"]
+    question = _question_sent_to_model(prompt)
+    assert "Sachin Joshi" in question
+    assert "PERSON_001" not in question
 
 
 def test_ai_analysis_stage_persists_a_present_entity_finding(settings, monkeypatch):

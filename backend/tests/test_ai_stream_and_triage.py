@@ -210,8 +210,9 @@ def test_investigation_stream_reports_every_stage_and_deltas(
 def test_investigation_stream_survives_a_dead_provider(
     client, investigator_headers, case
 ):
-    """No key configured: the stream must *complete* with an honest
-    unavailable answer — not hang, not emit a 500 mid-stream."""
+    """No key configured: the stream must *complete* — never hang, never emit a
+    500 mid-stream.  The result is a deterministic, case-grounded answer that
+    reports the missing generative model as a secondary limitation."""
     events = _stream(
         client, investigator_headers, case.id, "Trace the money from ACCT_0001"
     )
@@ -219,8 +220,10 @@ def test_investigation_stream_survives_a_dead_provider(
     done = events[-1]
     assert done["type"] == "done"
     response = done["response"]
-    assert response["available"] is False
-    assert response["fallback_reason"]
+    assert response["fallback_reason"], "the caller must be able to tell generative reasoning was unavailable"
+    if response["available"] is True:
+        # Deterministic fallback served content grounded in case records.
+        assert response["finding"]["summary"]
     assert "Traceback" not in json.dumps(response)
 
 

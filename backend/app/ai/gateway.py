@@ -51,6 +51,17 @@ except Exception:
 _RETRIEVAL_CACHE: dict[str, dict] = {}
 _RETRIEVAL_CACHE_VERSION = 0
 
+#: Claim / contradiction / corroboration cache.  Keyed by case + a fingerprint
+#: of the live document set (and the privacy mode, so one mode's objects can
+#: never be served to the other).  Rebuilt automatically when a record changes.
+_INTELLIGENCE_CACHE: dict[str, dict] = {}
+_INTELLIGENCE_CACHE_LIMIT = 32
+#: Case-scoped entity nodes, so a narrative claim resolves the same entities no
+#: matter how narrowly the question-scoped retrieval happened to slice the
+#: graph.  Bounded like the other caches here.
+_CASE_ENTITY_CACHE: dict[str, list[dict[str, Any]]] = {}
+_CASE_ENTITY_CACHE_LIMIT = 32
+
 from app.ai.router import AIModelRouter, get_router
 from app.ai.schemas import AIEntityRef, AIResponse, ClaimCitation, EvidenceRef, FindingResult, ReasoningStep
 from app.ai.safety import AISafetyViolation, sanitize_untrusted_evidence, validate_finding
@@ -59,6 +70,7 @@ from app.ai.retrieval import (
     rank_and_filter_context,
     compress_context,
     build_timeline_from_context,
+    bucket_temporal_phases,
     QueryUnderstanding,
 )
 from app.ai.case_context import CaseContextStats, validate_case_context
@@ -67,6 +79,55 @@ from app.ai.evidence_contract import (
     enrich_finding_contract,
     evidence_inventory,
 )
+from app.ai.query_planner import (
+    plan_query,
+    resolve_plan_entities,
+    QueryPlan,
+    INTENT_COMMUNICATION,
+    INTENT_CONTRADICTION,
+    INTENT_CORROBORATION,
+    INTENT_EVIDENCE_INVENTORY,
+    INTENT_FINANCIAL,
+    INTENT_LOCATION,
+    INTENT_TIMELINE,
+)
+from app.ai.evidence_boundary import (
+    build_evidence_boundary,
+    pseudonymize_boundary,
+    pseudonym_terms,
+    pseudonymize_text,
+)
+from app.ai.claims import (
+    EntityVocabulary,
+    claims_from_edges,
+    extract_claims_from_documents,
+    validate_candidate_claims,
+)
+from app.ai.contradiction import (
+    contradicted_identities,
+    detect_contradictions,
+    summarize_contradictions,
+)
+from app.ai.corroboration import corroborate_claims, summarize_corroboration
+from app.ai.temporal import (
+    events_from_claims,
+    events_from_graph,
+    merge_events,
+    select_temporal_events,
+)
+from app.ai.semantic import (
+    LocalHashingEmbedder,
+    RouterEmbedder,
+    SemanticIndexStore,
+    merge_retrieval_candidates,
+    search_case_index,
+)
+from app.ai.response_composer import (
+    build_prompt as build_intent_prompt,
+    deterministic_fallback as intent_deterministic_fallback,
+    fallback_to_finding,
+)
+from app.ai.safety import sanitize_untrusted_evidence
 
 # Person-centric Graph-RAG — production implementation
 try:
@@ -1391,12 +1452,18 @@ class AIGateway:
             # Build Order Step 2: deterministic retrieval before any vector RAG
             # -----------------------------------------------------------------
             # Query Understanding: intent, temporal, spatial, evidence filters
+            # We build BOTH the legacy QueryUnderstanding (used by the existing
+            # rank_and_filter_context) AND the new QueryPlan (used by the
+            # response composer and evidence boundary).
+            query_plan: QueryPlan
             try:
                 query_understanding = understand_query(question)
+                query_plan = plan_query(question)
                 timer.stage("query_understanding_ms")
             except Exception as exc:
                 log.warning("ai.query_understanding_failed", query_id=query_id, error=str(exc))
                 query_understanding = QueryUnderstanding(original_question=question, intent="general", keywords=set())
+                query_plan = QueryPlan(original_question=question)
 
             # --- Phase 3: query-to-entity detection (before subgraph retrieval) ---
             detected_entity_keys: list[str] = []
@@ -1407,7 +1474,19 @@ class AIGateway:
             if not target_key:
                 try:
                     all_case_nodes = await self._get_all_case_nodes(case_id)
+                    # Resolve the new plan's person names against known nodes
+                    try:
+                        query_plan = resolve_plan_entities(query_plan, all_case_nodes)
+                    except Exception as exc:
+                        log.warning("ai.plan_entity_resolution_failed", query_id=query_id, error=str(exc))
+
                     detected_entity_keys = self._detect_entities_in_question(question, all_case_nodes)
+                    # Merge plan-resolved keys
+                    plan_keys = [k for k in query_plan.resolved_entity_keys if k]
+                    for pk in plan_keys:
+                        if pk not in detected_entity_keys:
+                            detected_entity_keys.append(pk)
+
                     if not detected_entity_keys and history:
                         resolved_history_keys = self._resolve_entities_from_history(question, history, all_case_nodes)
                         if resolved_history_keys:
@@ -1421,6 +1500,7 @@ class AIGateway:
                         effective_target_keys = detected_entity_keys
                         # Merge with query understanding entities
                         query_understanding.entities = detected_entity_keys
+                        query_plan.entities = detected_entity_keys
                         log.info(
                             "ai.entity_detection",
                             query_id=query_id,
@@ -1429,6 +1509,7 @@ class AIGateway:
                             detected_keys=detected_entity_keys[:5],
                             question_preview=question[:100],
                             intent=query_understanding.intent,
+                            plan_intent=query_plan.intent,
                             path=entity_detection_path,
                         )
                     else:
@@ -1439,22 +1520,43 @@ class AIGateway:
                             reason="no_entity_match",
                             question_preview=question[:100],
                             intent=query_understanding.intent,
+                            plan_intent=query_plan.intent,
                         )
                 except Exception as exc:
                     log.warning("ai.entity_detection_failed", query_id=query_id, error=str(exc))
 
             await send({
                 "type": "stage", "stage": "retrieving",
-                "message": f"Retrieving case context… (intent: {query_understanding.intent})",
+                "message": f"Retrieving case context… (intent: {query_plan.intent})",
             })
 
-            # Retrieve subgraph: person-centric — PERSON → PERSON only, supporting as evidence
-            if effective_target_keys:
+            # Retrieve subgraph.  The retrieval strategy follows the question:
+            # a network question is answered from the person-centric narrowing,
+            # while a financial / communication / timeline / inventory question
+            # needs the whole case subgraph — those evidence types are exactly
+            # what the person-centric filter treats as "supporting" and drops.
+            max_nodes_eff = (
+                self.settings.ai_max_context_nodes
+                if self.settings.ai_allow_raw_pii
+                else self.settings.ai_interactive_max_context_nodes
+            )
+            max_edges_eff = (
+                self.settings.ai_max_context_edges
+                if self.settings.ai_allow_raw_pii
+                else self.settings.ai_interactive_max_context_edges
+            )
+            whole_case_intents = {
+                INTENT_FINANCIAL, INTENT_COMMUNICATION, INTENT_LOCATION,
+                INTENT_EVIDENCE_INVENTORY, INTENT_CONTRADICTION, INTENT_TIMELINE,
+            }
+            wants_whole_case = query_plan.intent in whole_case_intents
+
+            if effective_target_keys and not wants_whole_case:
                 try:
                     nodes, edges = await self._retrieve_subgraph_multi(
                         case_id, target_keys=effective_target_keys, depth=depth,
-                        max_nodes=self.settings.ai_max_context_nodes if self.settings.ai_allow_raw_pii else self.settings.ai_interactive_max_context_nodes,
-                        max_edges=self.settings.ai_max_context_edges if self.settings.ai_allow_raw_pii else self.settings.ai_interactive_max_context_edges,
+                        max_nodes=max_nodes_eff,
+                        max_edges=max_edges_eff,
                         question=question,
                         dataset_id=dataset_id,
                     )
@@ -1466,18 +1568,38 @@ class AIGateway:
             else:
                 try:
                     nodes, edges = await self._retrieve_subgraph(
-                        case_id, depth=depth, target_key=target_key,
+                        case_id, depth=depth,
+                        target_key=None if wants_whole_case else target_key,
                         question=question,
                         dataset_id=dataset_id,
+                        # Whole-case intents must not be collapsed to the
+                        # person→person view: the financial and communication
+                        # edges are the answer, not supporting material.
+                        person_centric=not wants_whole_case,
+                        max_nodes=max_nodes_eff,
+                        max_edges=max_edges_eff,
                     )
                 except TypeError:
-                    nodes, edges = await self._retrieve_subgraph(
-                        case_id, depth=depth, target_key=target_key
-                    )
+                    try:
+                        nodes, edges = await self._retrieve_subgraph(
+                            case_id, depth=depth, target_key=target_key,
+                            question=question, dataset_id=dataset_id,
+                        )
+                    except TypeError:
+                        nodes, edges = await self._retrieve_subgraph(
+                            case_id, depth=depth, target_key=target_key
+                        )
                 effective_target_key_for_log = target_key
 
             # --- Phase 2 + Investigation Retrieval Engine: document relevance + evidence filters ---
-            all_documents = await self._retrieve_case_documents(case_id)
+            # Records are read in full (up to a generous sanity bound) because
+            # the semantic index chunks long exports and the narrative
+            # intelligence must see every row.  The *prompt* is still bounded
+            # later by the ranking/compression character budget — a long record
+            # no longer loses its tail before retrieval sees it.
+            all_documents = await self._retrieve_case_documents(
+                case_id, max_chars_per_doc=self.settings.ai_semantic_index_doc_chars
+            )
             documents_available_count = len(all_documents)
 
             doc_char_budget = (
@@ -1507,6 +1629,7 @@ class AIGateway:
                     timeline_order=query_understanding.requires_timeline,
                 )
                 # Use ranked/filtered results
+                lexical_scores = dict(compressed.scores)
                 # For backward compat, keep nodes/edges as filtered, but docs as ranked
                 # We still run old filter as fallback check for target_key join
                 old_filtered_docs, _, _ = self._filter_relevant_documents(
@@ -1548,6 +1671,31 @@ class AIGateway:
                     docs_available = len(all_documents)
                     docs_included = len(documents)
                 ranking_ms = 0
+
+            # --- Hybrid semantic retrieval ------------------------------------
+            # Vectors *supplement* the deterministic layers: lexical, structured
+            # and graph results keep their place, and a semantic-only candidate
+            # is added behind them, inside the same character budget.  The
+            # index never bypasses the case boundary below — its hits are merged
+            # here and then validated with everything else.
+            semantic_diagnostics: dict[str, Any] = {"enabled": False}
+            pmap = PseudonymMap()
+            try:
+                documents, semantic_diagnostics = await self._augment_with_semantic_retrieval(
+                    query_id=query_id,
+                    case_id=case_id,
+                    question=question,
+                    documents=documents,
+                    all_documents=all_documents,
+                    nodes=nodes,
+                    pmap=None if self.settings.ai_allow_raw_pii else pmap,
+                    lexical_scores=locals().get("lexical_scores") or {},
+                    budget_chars=doc_char_budget,
+                    merge_documents=self._bounded_documents(all_documents),
+                )
+                timer.stage("semantic_ms")
+            except Exception as exc:
+                log.warning("ai.semantic_stage_failed", query_id=query_id, error=str(exc))
 
             # Authoritative case boundary. The graph adapter already returns a
             # case snapshot, but this second boundary prevents a future adapter,
@@ -1670,7 +1818,11 @@ class AIGateway:
                 "detected_entity_count": len(detected_entity_keys),
                 # Investigation Retrieval Engine — new fields
                 "query_intent": query_understanding.intent,
-                "answer_mode": query_understanding.answer_mode,
+                # The planner's intent is the one that actually shaped the answer.
+                "plan_intent": query_plan.intent,
+                "response_style": query_plan.response_style,
+                "detail": query_plan.detail,
+                "answer_mode": query_plan.answer_mode,
                 "query_exact_terms": query_understanding.exact_terms,
                 "query_keywords": list(query_understanding.keywords)[:15],
                 "temporal_filter": query_understanding.temporal.raw_text if query_understanding.temporal else None,
@@ -1759,17 +1911,20 @@ class AIGateway:
                 props = n.get("properties", {}) or {}
                 lbl = n.get("label", "Entity")
                 if lbl == "BankAccount":
-                    acc_num = props.get("account_number") or key_to_name.get(key, key)
-                    bank = props.get("bank_name")
+                    # Prefer the entity's own stored label ("Kotak Mahindra
+                    # Bank a/c 8916"): a bare account number tells an
+                    # investigator nothing about which bank it is.
+                    explicit = props.get("name")
                     owner_key = account_owners.get(key) or (account_owners.get(key.split(":")[-1]) if key else None)
                     owner_name = key_to_name.get(owner_key) if owner_key else None
-                    parts = []
-                    if bank:
-                        parts.append(bank)
-                    parts.append(f"({acc_num})")
-                    if owner_name:
-                        parts.append(f"[Owner: {owner_name}]")
-                    disp = " ".join(parts)
+                    if explicit and str(explicit).strip():
+                        disp = str(explicit).strip()
+                    else:
+                        acc_num = props.get("account_number") or key_to_name.get(key, key)
+                        bank = props.get("bank") or props.get("bank_name")
+                        disp = f"{bank} a/c {acc_num}" if bank else f"a/c {acc_num}"
+                    if owner_name and owner_name not in disp:
+                        disp = f"{disp} (owner: {owner_name})"
                     key_to_name[key] = disp
                     if key:
                         key_to_name[key.split(":")[-1]] = disp
@@ -1780,7 +1935,11 @@ class AIGateway:
                     if key:
                         key_to_name[key.split(":")[-1]] = disp
 
-            pmap = PseudonymMap()
+            # One pseudonym map per request: the same stable pseudonyms are
+            # used by the semantic index and the evidence boundary, so the
+            # model sees one consistent set of identifiers.
+            if pmap is None:
+                pmap = PseudonymMap()
             if self.settings.ai_allow_raw_pii:
                 # Direct real-world entities in context
                 safe_nodes = []
@@ -1833,12 +1992,38 @@ class AIGateway:
                     pseudonymized = False
             timer.stage("context_ms")
 
-            # 4. Build model-specific context
+            # 4. Build model-specific context — intent-aware.
+            # Resolve canonical case metadata for the evidence boundary.
+            try:
+                _, case_number_meta, _, case_row_meta = await self._resolve_case_keys(case_id)
+                case_title_meta = case_row_meta.title if case_row_meta and case_row_meta.title else "Active Investigation"
+                case_status_meta = case_row_meta.status if case_row_meta and case_row_meta.status else "OPEN"
+                jurisdiction_meta = case_row_meta.jurisdiction_id if case_row_meta and case_row_meta.jurisdiction_id else "METRO-CENTRAL"
+            except Exception:
+                case_number_meta = case_id
+                case_title_meta = "Active Investigation"
+                case_status_meta = "OPEN"
+                jurisdiction_meta = "METRO-CENTRAL"
+
+            # Sanitize document content against prompt injection before it
+            # reaches the prompt builder.
+            sanitized_documents = []
+            for d in documents:
+                sd = dict(d)
+                if sd.get("content"):
+                    sd["content"] = sanitize_untrusted_evidence(str(sd["content"]))
+                sanitized_documents.append(sd)
+
+            # Build Evidence Boundary and intent-driven prompt.  This runs in
+            # both privacy modes: in strict mode the boundary is pseudonymized
+            # before it becomes a prompt, so identity never reaches the model.
+            use_new_pipeline = True
             question_for_model = question
             if pseudonymized:
                 question_for_model = self._rewrite_question_for_pseudonyms(
                     question, nodes, pmap, target_key=target_key,
                 )
+
             eff_nodes = (
                 self.settings.ai_max_context_nodes
                 if self.settings.ai_allow_raw_pii
@@ -1849,20 +2034,157 @@ class AIGateway:
                 if self.settings.ai_allow_raw_pii
                 else self.settings.ai_interactive_max_context_edges
             )
-            context = self._build_reasoning_context(
-                safe_nodes, safe_edges, question_for_model,
-                max_nodes=eff_nodes,
-                max_edges=eff_edges,
-                documents=documents,
-                case_id=case_id,
-                case_counts=case_counts.as_dict(),
-                answer_mode=query_understanding.answer_mode,
-                evidence_boundary={
-                    "available_types": case_evidence_inventory["available_types"],
-                    "missing_types": case_evidence_inventory["missing_types"],
-                    "included_document_ids": included_evidence_inventory["document_ids"],
-                },
-            )
+
+            if use_new_pipeline:
+                try:
+                    # Build timeline (for timeline-related queries)
+                    timeline_events = []
+                    try:
+                        if query_plan.need_timeline:
+                            timeline_events = build_timeline_from_context(nodes, edges)
+                    except Exception as exc:
+                        log.warning("ai.boundary_timeline_failed", query_id=query_id, error=str(exc))
+
+                    # Narrative intelligence: claims → conflicts →
+                    # corroboration, plus the anchored chronology for a
+                    # temporal question.  Derived only from case-scoped records
+                    # that retrieval already authorised; the records are read in
+                    # full so a row near the end of a long export still counts,
+                    # but the document ids are exactly the ones already in the
+                    # evidence set — intelligence never widens the case scope.
+                    intelligence_documents = []
+                    intelligence_document_ids: set[str] = set()
+                    cap = max(1, int(self.settings.ai_intelligence_max_documents))
+                    for document in all_documents[:cap]:
+                        doc_id = str(document.get("doc_id") or "")
+                        if not doc_id:
+                            continue
+                        entry = dict(document)
+                        entry["content"] = sanitize_untrusted_evidence(
+                            str(entry.get("content") or "")
+                        )
+                        intelligence_documents.append(entry)
+                        intelligence_document_ids.add(doc_id)
+                    intelligence: dict[str, Any] = {}
+                    try:
+                        intelligence = await self._build_case_intelligence(
+                            case_id=case_id,
+                            question=question,
+                            plan=query_plan,
+                            documents=intelligence_documents,
+                            nodes=nodes,
+                            edges=edges,
+                            key_to_name=key_to_name,
+                            timeline_entries=timeline_events,
+                            privacy_mode="raw" if self.settings.ai_allow_raw_pii else "pseudonymized",
+                        )
+                        timer.stage("intelligence_ms")
+                    except Exception as exc:
+                        log.warning("ai.case_intelligence_failed", query_id=query_id, error=str(exc))
+
+                    temporal_selection = intelligence.get("temporal")
+                    boundary = build_evidence_boundary(
+                        case_id=case_id,
+                        case_number=case_number_meta,
+                        case_title=case_title_meta,
+                        case_status=case_status_meta,
+                        jurisdiction=jurisdiction_meta,
+                        question=question_for_model,
+                        plan=query_plan,
+                        nodes=nodes,
+                        edges=edges,
+                        documents=sanitized_documents,
+                        all_case_document_ids=case_evidence_inventory.get("document_ids", []),
+                        all_case_documents=all_documents,
+                        timeline=timeline_events,
+                        available_evidence_types=case_evidence_inventory.get("available_types", []),
+                        missing_evidence_types=case_evidence_inventory.get("missing_types", []),
+                        case_stats=case_counts.as_detailed_dict(),
+                        contradictions=intelligence.get("contradiction_dicts", []),
+                        corroboration=intelligence.get("corroboration_dicts", []),
+                        corroboration_summary=intelligence.get("corroboration_summary", {}),
+                        temporal=(
+                            temporal_selection.as_dict(
+                                document_titles={
+                                    str(document.get("doc_id")): str(document.get("filename") or document.get("doc_id"))
+                                    for document in all_documents
+                                    if document.get("doc_id")
+                                }
+                            )
+                            if temporal_selection is not None
+                            else {}
+                        ),
+                        semantic_matches=semantic_diagnostics.get("hits", []),
+                    )
+                    if pseudonymized:
+                        # Privacy boundary: identities become stable pseudonyms
+                        # and the identity map stays inside CrimeLink.
+                        boundary = pseudonymize_boundary(boundary, pmap, nodes=nodes)
+                    intent_system_prompt, context = build_intent_prompt(boundary)
+                    reasoning_prompt = intent_system_prompt
+                    # A conflict or a corroboration is a property of the case
+                    # file, so the claims behind them may cite any record the
+                    # case holds — including one the ranking step kept out of
+                    # the prompt.  Those ids are real case records, and the
+                    # citation validator is told about them here rather than
+                    # silently dropping the finding.
+                    context_report["retrieved_evidence_ids"] = sorted(
+                        set(context_report.get("retrieved_evidence_ids") or [])
+                        | intelligence_document_ids
+                    )
+                    context_report["semantic_retrieval"] = semantic_diagnostics
+                    context_report["contradictions_detected"] = intelligence.get(
+                        "contradiction_summary", {}
+                    )
+                    context_report["corroboration"] = intelligence.get("corroboration_summary", {})
+                    context_report["temporal_reasoning"] = (
+                        {
+                            "relation": temporal_selection.relation,
+                            "anchor": temporal_selection.anchor_label,
+                            "anchor_time": temporal_selection.anchor_time,
+                            "matched_events": temporal_selection.matched,
+                            "total_events": temporal_selection.total_events,
+                        }
+                        if temporal_selection is not None
+                        else {}
+                    )
+                    log.info(
+                        "ai.intent_prompt_built",
+                        query_id=query_id,
+                        intent=query_plan.intent,
+                        response_style=query_plan.response_style,
+                        persons=len(boundary.persons),
+                        relationships=len(boundary.relationships),
+                        documents=len(boundary.documents),
+                        contradictions=len(boundary.contradictions),
+                        corroborated=boundary.corroboration_summary.get("multi_source", 0),
+                        temporal_events=len((boundary.temporal or {}).get("events", [])),
+                        semantic_hits=len(boundary.semantic_matches),
+                    )
+                except Exception as exc:
+                    log.warning("ai.intent_pipeline_failed_fallback", query_id=query_id, error=str(exc))
+                    use_new_pipeline = False
+
+            if not use_new_pipeline:
+                context = self._build_reasoning_context(
+                    safe_nodes, safe_edges, question_for_model,
+                    max_nodes=eff_nodes,
+                    max_edges=eff_edges,
+                    documents=sanitized_documents,
+                    case_id=case_id,
+                    case_counts=case_counts.as_dict(),
+                    answer_mode=query_plan.answer_mode,
+                    evidence_boundary={
+                        "available_types": case_evidence_inventory["available_types"],
+                        "missing_types": case_evidence_inventory["missing_types"],
+                        "included_document_ids": included_evidence_inventory["document_ids"],
+                    },
+                )
+                reasoning_prompt = (
+                    SYSTEM_PROMPT_REASONING_RAW
+                    if self.settings.ai_allow_raw_pii
+                    else SYSTEM_PROMPT_REASONING
+                )
             timer.stage("prompt_build_ms")
 
             # --- Phase 1 instrumentation: detailed context metrics ---
@@ -2070,23 +2392,59 @@ class AIGateway:
                         log.warning("ai.deterministic_fallback_failed", query_id=query_id, error=str(exc))
 
                 if not deterministic_finding and (case_id or case_counts.evidence_count > 0):
-                    try:
-                        deterministic_finding = await self._synthesize_grounded_case_finding(
-                            question=question,
-                            case_id=case_id,
-                            nodes=nodes,
-                            edges=edges,
-                            documents=documents,
-                            key_to_name=key_to_name,
-                            case_counts=case_counts.as_dict(),
-                            answer_scope_complete=(
-                                len(documents) == documents_available_count
-                                and not context_scope_filtered
-                            ),
-                            fallback_reason=result.get("reason"),
-                        )
-                    except Exception as exc:
-                        log.warning("ai.grounded_synthesis_failed", query_id=query_id, error=str(exc))
+                    # Only use the new intent-driven deterministic fallback when
+                    # there is actual case-scoped evidence to ground the answer.
+                    _local_boundary = locals().get('boundary') if use_new_pipeline else None
+                    if (use_new_pipeline and _local_boundary is not None
+                            and case_counts.evidence_count > 0):
+                        try:
+                            fb = intent_deterministic_fallback(_local_boundary)
+                            fb["answer_mode"] = query_plan.answer_mode
+                            deterministic_finding = fallback_to_finding(fb)
+                            deterministic_finding.limitations = list(
+                                deterministic_finding.limitations
+                            ) + [
+                                "AI narrative generation was unavailable; this answer was "
+                                "composed deterministically from the retrieved case-scoped records."
+                            ]
+                            # The boundary the fallback reasoned over is the
+                            # pseudonymized one — restore real identities for the
+                            # authorized investigator before returning it.
+                            if pseudonymized:
+                                self._restore_identities_in_finding(
+                                    deterministic_finding, pmap, key_to_name
+                                )
+                            log.info(
+                                "ai.intent_deterministic_fallback_used",
+                                query_id=query_id,
+                                case_id=case_id,
+                                intent=query_plan.intent,
+                                evidence_refs=len(deterministic_finding.evidence_refs),
+                                reason=result.get("reason"),
+                            )
+                        except Exception as exc:
+                            log.warning(
+                                "ai.intent_deterministic_fallback_failed",
+                                query_id=query_id, error=str(exc),
+                            )
+                    if not deterministic_finding:
+                        try:
+                            deterministic_finding = await self._synthesize_grounded_case_finding(
+                                question=question,
+                                case_id=case_id,
+                                nodes=nodes,
+                                edges=edges,
+                                documents=documents,
+                                key_to_name=key_to_name,
+                                case_counts=case_counts.as_dict(),
+                                answer_scope_complete=(
+                                    len(documents) == documents_available_count
+                                    and not context_scope_filtered
+                                ),
+                                fallback_reason=result.get("reason"),
+                            )
+                        except Exception as exc:
+                            log.warning("ai.grounded_synthesis_failed", query_id=query_id, error=str(exc))
 
                 if deterministic_finding:
                     deterministic_finding = enrich_finding_contract(
@@ -2166,11 +2524,19 @@ class AIGateway:
                 for document in documents
                 if document.get("doc_id")
             }
+            # The new intent-driven prompt puts the natural answer in `summary`.
+            # Map it to `direct_answer` so the existing UI renders it directly.
+            if finding.summary and not finding.direct_answer:
+                finding.direct_answer = finding.summary
+            # Don't dump generic boilerplate when the model omitted it.
             finding = enrich_finding_contract(
                 finding,
                 evidence_type_by_id=evidence_type_by_id,
-                answer_mode=query_understanding.answer_mode,
+                answer_mode=query_plan.answer_mode,
             )
+            # After enrichment, make sure direct_answer still uses the model's natural prose
+            if not finding.direct_answer and finding.summary:
+                finding.direct_answer = finding.summary
             finding.missing_evidence = list(
                 context_report.get("evidence_inventory", {}).get("missing_types", [])
             )
@@ -2206,15 +2572,11 @@ class AIGateway:
                     recommended_review=True,
                     uncertainties=[str(exc)],
                 )
-            if finding and finding.summary:
-                if pseudonymized:
-                    for pseudo, real_key in pmap.entries().items():
-                        real_name = key_to_name.get(real_key, pseudo)
-                        if real_name != pseudo:
-                            finding.summary = re.sub(rf"\b{re.escape(pseudo)}\b", real_name, finding.summary)
-                for id_token, real_name in key_to_name.items():
-                    if id_token and len(id_token) > 4 and id_token in finding.summary and id_token != real_name:
-                        finding.summary = re.sub(rf"\b{re.escape(id_token)}\b", real_name, finding.summary)
+            if finding:
+                # Controlled de-anonymization: the model reasoned about
+                # pseudonyms, and CrimeLink — which holds the mapping — restores
+                # the real identities for the authorized investigator.
+                self._restore_identities_in_finding(finding, pmap, key_to_name)
             context_report["timing"] = timer.report()
 
             # 7. Audit
@@ -2287,6 +2649,62 @@ class AIGateway:
                 context={"timing": timer.report(), "dataset_id": dataset_id},
             )
 
+    # ------------------------------------------- controlled de-anonymization
+
+    @staticmethod
+    def _restore_identities_in_finding(
+        finding: FindingResult,
+        pmap: PseudonymMap,
+        key_to_name: dict[str, str],
+        *,
+        pseudonymized: bool = True,
+    ) -> FindingResult:
+        """Replace pseudonyms with real identities for an authorized investigator.
+
+        The mapping lives only in CrimeLink; the model never received it. This
+        runs over every prose field, not just ``summary``, because the
+        intent-driven answers put their content in ``direct_answer``.
+        """
+        def restore(text: str | None) -> str | None:
+            if not text:
+                return text
+            out = str(text)
+            if pseudonymized:
+                # ``entries()`` is {real provenance key: pseudo id} — iterating
+                # it the other way round silently never restored anything.
+                for real_key, pseudo in pmap.entries().items():
+                    real_name = key_to_name.get(real_key, pseudo)
+                    if real_name and real_name != pseudo:
+                        out = re.sub(rf"\b{re.escape(pseudo)}\b", real_name, out)
+            for id_token, real_name in key_to_name.items():
+                if id_token and len(id_token) > 4 and id_token in out and id_token != real_name:
+                    out = re.sub(rf"\b{re.escape(id_token)}\b", real_name, out)
+            return out
+
+        for field in (
+            "summary", "direct_answer", "evidence_explanation",
+            "investigator_interpretation", "why_this_matters", "finding_type",
+        ):
+            value = getattr(finding, field, None)
+            if isinstance(value, str) and value:
+                setattr(finding, field, restore(value))
+        for field in (
+            "establishes", "does_not_establish", "limitations", "uncertainties",
+            "missing_evidence", "followup_questions",
+        ):
+            items = getattr(finding, field, None)
+            if isinstance(items, list) and items:
+                setattr(finding, field, [str(restore(str(item))) for item in items])
+        for claim in finding.claims:
+            if claim.claim:
+                claim.claim = restore(claim.claim) or claim.claim
+        for rel in finding.relationships:
+            if isinstance(rel, dict):
+                for key_name in ("source_person", "target_person", "explanation"):
+                    if rel.get(key_name):
+                        rel[key_name] = restore(str(rel[key_name]))
+        return finding
+
     # ------------------------------------------------- structured unavailability
 
     @staticmethod
@@ -2311,15 +2729,25 @@ class AIGateway:
         max_nodes: int | None = None, max_edges: int | None = None,
         question: str | None = None,
         dataset_id: str | None = None,
+        person_centric: bool = True,
     ) -> tuple[list[dict], list[dict]]:
-        """Person-centric retrieval — bounded by context budget, PERSON-first.
+        """Case-scoped retrieval — bounded by the context budget.
 
-        When question is available and person_graph_rag is present, uses
-        person-centric pipeline: exact person match → metadata → graph traversal
-        → evidence filtering → ranking → compaction. Final relationships are
-        PERSON → PERSON only; supporting entities (phone, vehicle, location,
-        file, doc, org, address) are used as EVIDENCE, not as final nodes.
-        LLM never receives entire graph — only relevant paths.
+        With ``person_centric=True`` (the default, used for network questions)
+        the person-centric pipeline runs: exact person match → metadata → graph
+        traversal → evidence filtering → ranking → compaction.  Final
+        relationships are PERSON → PERSON only; supporting entities (phone,
+        vehicle, location, file, doc, org, address) are used as EVIDENCE, not
+        as final nodes.
+
+        With ``person_centric=False`` the whole case subgraph is returned
+        (still bounded and still case-scoped).  Financial, communication,
+        timeline and inventory questions need this: the person-centric view
+        deliberately treats a bank transfer as supporting material and would
+        otherwise drop the very edges the question is about.
+
+        The LLM never receives the entire graph either way — only the bounded,
+        case-scoped slice.
         """
         from app.container import get_container
         from app.domain.models import CaseGraphSnapshot
@@ -2340,7 +2768,7 @@ class AIGateway:
         max_edges_eff = max_edges or self.settings.ai_max_context_edges
 
         # PERSON-CENTRIC path when question is provided and RAG available
-        if HAS_PERSON_RAG and question:
+        if HAS_PERSON_RAG and question and person_centric:
             try:
                 rag_result = person_graph_rag_retrieval(
                     snap,
@@ -2740,6 +3168,7 @@ class AIGateway:
             entity_count=len(snapshot_nodes),
             person_count=person_count,
             relationship_count=len(snapshot_edges),
+            document_count=len({d.get("doc_id") for d in all_documents if d.get("doc_id")}),
         )
 
     async def _get_all_case_nodes(self, case_id: str) -> list[dict]:
@@ -2850,12 +3279,271 @@ class AIGateway:
             events=timeline,
         )
 
+    # ------------------------------------------------------------------ #
+    # Investigative intelligence: claims → contradictions → corroboration,
+    # chronology, and hybrid semantic retrieval.
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _case_incident_time(documents: list[dict[str, Any]]) -> str | None:
+        """The case's own incident datetime, read from its records.
+
+        "Before the incident" needs an anchor, and the FIR/diary header carries
+        it explicitly.  Reading it from the record is authoritative; guessing
+        the earliest timestamp in the graph would anchor the chronology on the
+        moment the file was opened instead.
+        """
+        from app.ai.claims import parse_timestamp
+
+        patterns = (
+            r"incident\s*(?:date|time|datetime)?\s*[:\-]\s*([^\n;|]{4,40})",
+            r"date\s+of\s+incident\s*[:\-]\s*([^\n;|]{4,40})",
+        )
+        for document in documents or ():
+            content = str(document.get("content") or "")
+            if not content:
+                continue
+            for pattern in patterns:
+                match = re.search(pattern, content, re.I)
+                if not match:
+                    continue
+                parsed = parse_timestamp(match.group(1))
+                if parsed:
+                    return parsed
+        return None
+
+    @staticmethod
+    @staticmethod
+    def _bounded_documents(
+        documents: list[dict[str, Any]], per_doc_chars: int = 3000
+    ) -> list[dict[str, Any]]:
+        """Prompt-sized copies of the retrieved records (ids unchanged)."""
+        bounded: list[dict[str, Any]] = []
+        for document in documents or ():
+            content = str(document.get("content") or "")
+            if len(content) <= per_doc_chars:
+                bounded.append(document)
+                continue
+            entry = dict(document)
+            entry["content"] = content[:per_doc_chars]
+            entry["content_truncated"] = True
+            bounded.append(entry)
+        return bounded
+
+    @staticmethod
+    def _documents_fingerprint(documents: list[dict[str, Any]]) -> str:
+        digest = hashlib.sha256()
+        for document in sorted(documents or (), key=lambda d: str(d.get("doc_id"))):
+            digest.update(str(document.get("doc_id")).encode("utf-8"))
+            digest.update(str(document.get("document_type") or "").encode("utf-8"))
+            digest.update(hashlib.sha256(str(document.get("content") or "").encode("utf-8")).digest())
+        return digest.hexdigest()[:32]
+
+    async def _build_case_intelligence(
+        self,
+        *,
+        case_id: str,
+        question: str,
+        plan: QueryPlan,
+        documents: list[dict[str, Any]],
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        key_to_name: dict[str, str],
+        timeline_entries: list[dict[str, Any]],
+        privacy_mode: str,
+    ) -> dict[str, Any]:
+        """Extract claims, conflicts, corroboration and chronology for a case.
+
+        Everything here is derived from case-scoped data that retrieval has
+        already authorised, and it is cached per (case, document fingerprint,
+        privacy mode) so a repeated question does not re-derive it.
+        """
+        fingerprint = self._documents_fingerprint(documents)
+        cache_key = f"{case_id}|{fingerprint}|{privacy_mode}"
+        cached = _INTELLIGENCE_CACHE.get(cache_key)
+
+        def _with_temporal(intelligence: dict[str, Any]) -> dict[str, Any]:
+            """Attach the chronology for *this* question.
+
+            Claims, conflicts and corroboration depend only on the records, so
+            they are cached.  Which events a question is about depends on the
+            question, so the temporal selection is computed per call — caching
+            it would answer "closest to the incident" with the previous
+            question's window.
+            """
+            intelligence["temporal"] = None
+            if plan.need_timeline or plan.temporal_relation:
+                intelligence["temporal"] = select_temporal_events(
+                    question,
+                    intelligence.get("events") or (),
+                    case_incident_time=intelligence.get("incident_time"),
+                    now=intelligence.get("incident_time"),
+                )
+            return intelligence
+
+        if cached is not None:
+            return _with_temporal(cached)
+
+        started = time.perf_counter()
+        scoped_documents = documents[: max(1, self.settings.ai_intelligence_max_documents)]
+        vocabulary = EntityVocabulary.from_nodes(nodes)
+        if len(vocabulary) < 4:
+            # A narrow question-scoped subgraph must not blind the claim
+            # extractor: "which facts are corroborated" names no entity, and a
+            # prose record still has to resolve its people and numbers.
+            case_nodes = _CASE_ENTITY_CACHE.get(case_id)
+            if case_nodes is None:
+                try:
+                    case_nodes = await self._get_all_case_nodes(case_id)
+                except Exception:
+                    case_nodes = []
+                if len(_CASE_ENTITY_CACHE) >= _CASE_ENTITY_CACHE_LIMIT:
+                    _CASE_ENTITY_CACHE.pop(next(iter(_CASE_ENTITY_CACHE)))
+                _CASE_ENTITY_CACHE[case_id] = case_nodes
+            if case_nodes:
+                vocabulary = EntityVocabulary.from_nodes(list(nodes) + list(case_nodes))
+        evidence_types = {
+            str(document.get("doc_id")): str(document.get("document_type") or "DOCUMENT").upper()
+            for document in scoped_documents
+        }
+        claims = extract_claims_from_documents(scoped_documents, vocabulary=vocabulary)
+        claims.extend(
+            claims_from_edges(edges, key_to_label=key_to_name, evidence_types=evidence_types)
+        )
+
+        contradictions = detect_contradictions(claims)
+        contradicted = contradicted_identities(contradictions)
+        corroborations = corroborate_claims(claims, contradicted_keys=contradicted)
+
+        incident_time = self._case_incident_time(scoped_documents)
+        record_events = events_from_claims(claims)
+        graph_events = events_from_graph(timeline_entries, key_to_label=key_to_name)
+        events = merge_events(record_events, graph_events)
+
+        result = {
+            "claims": claims,
+            "contradictions": contradictions,
+            "corroborations": corroborations,
+            "contradiction_dicts": [c.as_dict() for c in contradictions],
+            "contradiction_summary": summarize_contradictions(contradictions),
+            "corroboration_dicts": [c.as_dict() for c in corroborations],
+            "corroboration_summary": summarize_corroboration(corroborations),
+            "events": events,
+            "incident_time": incident_time,
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        }
+        if len(_INTELLIGENCE_CACHE) >= _INTELLIGENCE_CACHE_LIMIT:
+            _INTELLIGENCE_CACHE.pop(next(iter(_INTELLIGENCE_CACHE)))
+        _INTELLIGENCE_CACHE[cache_key] = result
+        _with_temporal(result)
+        log.info(
+            "ai.case_intelligence_built",
+            case_id=case_id,
+            documents=len(scoped_documents),
+            claims=len(claims),
+            contradictions=len(contradictions),
+            corroborated=result["corroboration_summary"].get("multi_source", 0),
+            events=len(events),
+            elapsed_ms=result["elapsed_ms"],
+        )
+        return result
+
+    def _semantic_components(self) -> tuple[SemanticIndexStore, RouterEmbedder]:
+        directory = self.settings.ai_index_dir or (self.settings.data_dir / "ai_index")
+        store = SemanticIndexStore(directory)
+        embedder = RouterEmbedder(
+            self.router,
+            task="retrieval",
+            fallback=LocalHashingEmbedder(),
+            enabled=bool(self.settings.ai_semantic_use_provider_embeddings),
+        )
+        return store, embedder
+
+    async def _augment_with_semantic_retrieval(
+        self,
+        *,
+        query_id: str,
+        case_id: str,
+        question: str,
+        documents: list[dict[str, Any]],
+        all_documents: list[dict[str, Any]],
+        nodes: list[dict[str, Any]],
+        pmap: PseudonymMap | None,
+        lexical_scores: dict[str, float] | None,
+        budget_chars: int,
+        merge_documents: list[dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Fuse semantic candidates into the deterministic document set.
+
+        The vector index is a retrieval mechanism, never an authorization
+        layer: it is built from case-scoped records, queried inside the
+        authorised document set, and its hits still pass through the same case
+        validation as everything else.
+        """
+        diagnostics: dict[str, Any] = {"enabled": bool(self.settings.ai_semantic_enabled)}
+        if not self.settings.ai_semantic_enabled or not all_documents:
+            return documents, diagnostics
+
+        terms = pseudonym_terms(nodes, pmap) if pmap is not None else {}
+        transform = (lambda text: pseudonymize_text(text, terms)) if terms else None
+        store, embedder = self._semantic_components()
+        try:
+            hits, stats = await search_case_index(
+                case_id=case_id,
+                question=question,
+                documents=all_documents,
+                store=store,
+                embedder=embedder,
+                text_transform=transform,
+                authorized_document_ids=[str(d.get("doc_id")) for d in all_documents if d.get("doc_id")],
+                top_k=self.settings.ai_semantic_top_k,
+                min_score=self.settings.ai_semantic_min_score,
+                max_chunks=self.settings.ai_semantic_max_chunks,
+            )
+        except Exception as exc:  # pragma: no cover - retrieval must never break answering
+            log.warning("ai.semantic_retrieval_failed", query_id=query_id, error=str(exc))
+            diagnostics.update({"enabled": True, "available": False, "reason": type(exc).__name__})
+            return documents, diagnostics
+
+        merged, merge_stats = merge_retrieval_candidates(
+            documents,
+            hits,
+            all_documents=merge_documents if merge_documents is not None else all_documents,
+            lexical_scores=lexical_scores,
+            budget_chars=budget_chars,
+            max_extra=self.settings.ai_semantic_max_extra_documents,
+        )
+        diagnostics.update(
+            {
+                "enabled": True,
+                "available": stats.available,
+                "reason": stats.reason,
+                "engine": stats.model,
+                "embedder": "provider" if stats.model and not stats.model.startswith("local-") else "local",
+                "chunks_indexed": stats.chunks,
+                "documents_indexed": stats.documents,
+                "embedded_now": stats.embedded,
+                **merge_stats,
+                "hits": [hit.as_dict() for hit in hits[:10]],
+            }
+        )
+        log.info(
+            "ai.semantic_retrieval_merged",
+            query_id=query_id,
+            case_id=case_id,
+            hits=len(hits),
+            merged=merge_stats.get("merged"),
+            semantic_only=merge_stats.get("semantic_only_merged"),
+            engine=stats.model,
+        )
+        return merged, diagnostics
+
     async def _retrieve_case_documents(self, case_id: str, max_chars_per_doc: int = 3000) -> list[dict[str, Any]]:
         """Retrieve text and metadata for all documents associated with this case."""
         from app.container import get_container
         from app.db.session import async_session
         from app.db.models import CaseDocument
-        from app.datasets.readers import read_text
+        from app.datasets.readers import read_text, read_text_bytes
         from sqlalchemy import select
 
         canonical_id, case_number, all_keys, _ = await self._resolve_case_keys(case_id)
@@ -2907,15 +3595,24 @@ class AIGateway:
                                     text_content = found_file.read_text(encoding="utf-8", errors="replace")
                         except Exception:
                             pass
-                    # 3. Fallback to raw object store storage_key for text-like files
+                    # 3. Fallback to the raw object store. Every type has a
+                    #    reader, so a PDF whose workspace copy is gone still
+                    #    reaches retrieval instead of silently contributing an
+                    #    empty record.
                     if not text_content and doc.storage_key:
                         fn = (doc.filename or "").lower()
-                        if fn.endswith((".txt", ".csv", ".json", ".md", ".log")):
+                        supported = (
+                            ".txt", ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".md", ".log",
+                            ".pdf", ".docx", ".pptx",
+                        )
+                        if fn.endswith(supported):
                             try:
                                 raw = container.object_store.get(
                                     self.settings.minio_bucket_documents, doc.storage_key
                                 )
-                                text_content = raw.decode("utf-8", errors="replace")
+                                text_content = read_text_bytes(
+                                    raw, doc.filename or doc.storage_key
+                                ).text
                             except Exception:
                                 pass
                     # Metadata remains retrievable even when a parser/object-store
