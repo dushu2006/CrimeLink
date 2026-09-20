@@ -398,7 +398,7 @@ export default function TimelinePage() {
                             {ev.docIds.length > 1 && <span className="ev-count">+{ev.docIds.length - 1}</span>}
                           </button>
                         ) : (
-                          <span className="evidence-chip" style={{ opacity: .6 }}>No source doc</span>
+                          <span className="evidence-chip" style={{ opacity: .6 }}>No source document recorded</span>
                         )}
                       </div>
                     </div>
