@@ -30,6 +30,17 @@ class ReasoningStep(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
 
 
+class ClaimCitation(BaseModel):
+    """One factual or analytical claim and the records that support it."""
+
+    claim: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    evidence_level: Literal["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"] = "UNKNOWN"
+    support_level: Literal[
+        "DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"
+    ] = "UNSUPPORTED"
+
+
 class FindingResult(BaseModel):
     """Structured output contract for any AI finding."""
 
@@ -44,6 +55,20 @@ class FindingResult(BaseModel):
     uncertainties: list[str] = Field(default_factory=list)
     recommended_review: bool = True
     suggested_next_actions: list[str] = Field(default_factory=list)
+
+    # Backwards-compatible structured explanation layers.  ``summary`` and
+    # ``evidence_refs`` remain the stable fields used by existing clients.
+    answer_mode: str = "GENERAL"
+    direct_answer: str | None = None
+    evidence_explanation: str | None = None
+    investigator_interpretation: str | None = None
+    establishes: list[str] = Field(default_factory=list)
+    does_not_establish: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    claims: list[ClaimCitation] = Field(default_factory=list)
+    evidence_support: Literal[
+        "DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"
+    ] = "UNSUPPORTED"
 
     @field_validator("evidence_refs")
     @classmethod

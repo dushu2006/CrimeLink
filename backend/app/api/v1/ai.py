@@ -155,14 +155,18 @@ async def ask_case_question(
     session: AsyncSession = Depends(get_db_session),
 ) -> AskResponse:
     """Ask a question about one case, answered from that case's evidence only."""
-    await case_service.require_case(session, scope, case_id)
+    # Resolve the user-facing case reference exactly once at the backend
+    # boundary. The gateway and graph store use the internal Case.id; passing a
+    # display case number through here produced empty/zero RAG contexts.
+    resolved_case = await case_service.require_case(session, scope, case_id)
+    canonical_case_id = resolved_case.id
     dataset_id, graph_ready = await _dataset_context(session)
 
     request_id = getattr(request.state, "trace_id", None) or str(uuid.uuid4())
     gateway = get_ai_gateway()
     response = await gateway.ask(
         question=payload.question,
-        case_id=case_id,
+        case_id=canonical_case_id,
         principal_id=principal.id,
         depth=payload.depth,
         target_key=payload.target_key,
@@ -207,7 +211,8 @@ async def ask_case_question_stream(
     session: AsyncSession = Depends(get_db_session),
 ):
     """NDJSON progress stream for one question — the interactive path."""
-    await case_service.require_case(session, scope, case_id)
+    resolved_case = await case_service.require_case(session, scope, case_id)
+    canonical_case_id = resolved_case.id
     dataset_id, graph_ready = await _dataset_context(session)
 
     request_id = getattr(request.state, "trace_id", None) or str(uuid.uuid4())
@@ -219,7 +224,7 @@ async def ask_case_question_stream(
         try:
             async for event in gateway.ask_stream(
                 question=payload.question,
-                case_id=case_id,
+                case_id=canonical_case_id,
                 principal_id=principal.id,
                 depth=payload.depth,
                 target_key=payload.target_key,

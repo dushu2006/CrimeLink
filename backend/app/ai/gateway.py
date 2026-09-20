@@ -61,6 +61,12 @@ from app.ai.retrieval import (
     build_timeline_from_context,
     QueryUnderstanding,
 )
+from app.ai.case_context import CaseContextStats, validate_case_context
+from app.ai.evidence_contract import (
+    citation_coverage,
+    enrich_finding_contract,
+    evidence_inventory,
+)
 
 # Person-centric Graph-RAG — production implementation
 try:
@@ -118,6 +124,16 @@ YOU MUST FOLLOW THESE RULES:
 7. Do not recommend merging identities, deleting evidence, or making any
    irreversible change. All serious findings require human review.
 8. Be conservative: if the evidence is weak, say so.
+9. Return three explicit explanation layers: direct_answer, evidence_explanation,
+   and investigator_interpretation. Also return establishes, does_not_establish,
+   and claims. Every claim must include one or more evidence_refs from the
+   supplied case context; an uncited claim is UNSUPPORTED.
+10. Use evidence_support values only as follows: DIRECTLY_SUPPORTED for a
+    directly documented fact, STRONGLY_SUPPORTED for corroboration across
+    independent evidence types, INFERRED for an analytical reading, and
+    UNSUPPORTED when the records are insufficient.
+11. If the evidence boundary is incomplete, mention the missing evidence types
+    as a limitation. Never turn missing records into a negative finding.
 """
 
 
@@ -143,6 +159,16 @@ YOU MUST FOLLOW THESE RULES:
 6. Do not recommend merging identities, deleting evidence, or making any
    irreversible change. All serious findings require human review.
 7. Be conservative: if the evidence is weak, say so.
+8. Return three explicit explanation layers: direct_answer, evidence_explanation,
+   and investigator_interpretation. Also return establishes, does_not_establish,
+   and claims. Every claim must include one or more evidence_refs from the
+   supplied case context; an uncited claim is UNSUPPORTED.
+9. Use evidence_support values only as follows: DIRECTLY_SUPPORTED for a
+   directly documented fact, STRONGLY_SUPPORTED for corroboration across
+   independent evidence types, INFERRED for an analytical reading, and
+   UNSUPPORTED when the records are insufficient.
+10. If the evidence boundary is incomplete, mention the missing evidence types
+    as a limitation. Never turn missing records into a negative finding.
 """
 
 SYSTEM_PROMPT_EXPLANATION = """You are an explanation assistant for an investigative platform.
@@ -171,6 +197,13 @@ ROLE_ENV_KEYS = {
     "classification": "CRIMELINK_AI_CLASSIFICATION_API_KEY",
     "embedding": "CRIMELINK_AI_EMBEDDING_API_KEY",
 }
+
+# Common evidence classes are metadata for missing-data awareness only.  Their
+# absence is never treated as proof that an event did not occur.
+KNOWN_EVIDENCE_TYPES = (
+    "FIR", "CALL_RECORD", "BANK_STATEMENT", "CCTV", "WITNESS_STATEMENT",
+    "FIELD_REPORT", "FORENSIC_REPORT", "SURVEILLANCE",
+)
 
 
 def unavailable_summary(role: str, reason: str | None) -> str:
@@ -579,6 +612,22 @@ class AIGateway:
             language_edits=language_edits,
         )
 
+    @staticmethod
+    def _insufficient_case_evidence_finding() -> FindingResult:
+        """Honest result used before any model can see an empty case context."""
+        return FindingResult(
+            finding_type="INSUFFICIENT_CASE_EVIDENCE",
+            summary=(
+                "Insufficient case-scoped evidence was retrieved to answer this question reliably. "
+                "Available evidence: 0 records, 0 validated entities, and 0 validated relationships. "
+                "Please inspect the linked evidence records or refine the question."
+            ),
+            confidence=0.0,
+            evidence_level="UNKNOWN",
+            recommended_review=True,
+            uncertainties=["No case-scoped evidence records were available to support a factual answer."],
+        )
+
     async def _synthesize_grounded_case_finding(
         self,
         *,
@@ -588,10 +637,12 @@ class AIGateway:
         edges: list[dict[str, Any]],
         documents: list[dict[str, Any]],
         key_to_name: dict[str, str],
+        case_counts: dict[str, Any] | None = None,
+        answer_scope_complete: bool = True,
         fallback_reason: str | None = None,
     ) -> FindingResult:
         """Deterministic, grounded synthesis when external cloud LLM provider is unavailable."""
-        from app.db.models import Case, CaseDocument
+        from app.db.models import Case
         from sqlalchemy import select, or_
 
         case_number = case_id
@@ -605,19 +656,26 @@ class AIGateway:
                 if c:
                     case_number = c.case_number
                     case_title = c.title
-                    if not documents:
-                        doc_res = await session.execute(
-                            select(CaseDocument).where(CaseDocument.case_id == c.id)
-                        )
-                        for d in doc_res.scalars().all():
-                            documents.append({
-                                "doc_id": d.id,
-                                "filename": d.filename,
-                                "title": d.filename,
-                                "doc_type": str(d.document_type.value if hasattr(d.document_type, "value") else d.document_type),
-                            })
         except Exception as exc:
-            log.warning("ai.case_doc_fallback_failed", error=str(exc))
+            log.warning("ai.case_metadata_failed", case_id=case_id, error=str(exc))
+
+        # Never refill a narrow answer with every document in the database.
+        # ``documents`` is the already validated retrieval scope; ``case_counts``
+        # is the stable case-level metadata used for quantitative statements.
+        case_counts = case_counts or {
+            "case_id": case_id,
+            "evidence_count": len({str(d.get("doc_id")) for d in documents if d.get("doc_id")}),
+            "entity_count": len(nodes),
+            "person_count": sum(1 for n in nodes if str(n.get("label", "")).upper() == "PERSON"),
+            "relationship_count": len(edges),
+        }
+        evidence_count = int(case_counts.get("evidence_count", 0) or 0)
+        entity_count = int(case_counts.get("entity_count", 0) or 0)
+        relationship_count = int(case_counts.get("relationship_count", 0) or 0)
+        person_count = int(case_counts.get("person_count", 0) or 0)
+
+        if evidence_count == 0:
+            return self._insufficient_case_evidence_finding()
 
         # 1. Parse people and their roles
         persons = []
@@ -659,6 +717,12 @@ class AIGateway:
             fn = d.get("filename") or d.get("title") or did
             if fn:
                 doc_names.append(str(fn))
+        if not doc_ids:
+            # A graph edge can be usable evidence before its relational document
+            # row is materialized. Preserve that source id for citation rather
+            # than claiming an uncited deterministic fact.
+            doc_ids = sorted(self._collect_subgraph_doc_ids(nodes, edges, case_id=case_id))
+            doc_names.extend(doc_ids)
 
         # 3. Analyze connections / relationships
         rel_summaries = []
@@ -685,9 +749,9 @@ class AIGateway:
             person_highlights = ", ".join(f"{p['name']} ({p['role']})" for p in persons[:5])
             lines = [
                 f"**Case {case_number} — {case_title}** is an active law-enforcement investigation.",
-                f"• **Key Individuals Identified**: {person_highlights if persons else '10+ persons under active inquiry'}.",
-                f"• **Evidentiary Foundation**: Grounded in {len(documents)} verified operational records on file (including {', '.join(doc_names[:4]) if doc_names else 'primary case evidence'}).",
-                f"• **Network Activity**: Graph intelligence establishes {len(edges)} cross-entity relationships across telephone communications, banking movements, and documented associations.",
+                f"• **Key Individuals Identified**: {person_highlights if persons else 'No person names in the retrieved context'}.",
+                f"• **Evidentiary Foundation**: {evidence_count} case-scoped operational records are available (retrieved {len(documents)} for this question; including {', '.join(doc_names[:4]) if doc_names else 'no readable document text'}).",
+                f"• **Network Activity**: The case-scoped graph contains {relationship_count} evidenced relationships and {entity_count} entities.",
             ]
             if rel_summaries:
                 lines.append(f"• **Primary Linkages**: {'; '.join(rel_summaries[:3])}.")
@@ -699,7 +763,12 @@ class AIGateway:
             for p in persons[:8]:
                 prefix = "★ " if p["is_criminal"] else "👤 "
                 lines.append(f"• {prefix}**{p['name']}** — {p['role']}")
-            lines.append(f"Total {len(persons)} individuals documented across {len(documents)} case records.")
+            if answer_scope_complete:
+                lines.append(f"Total {person_count} individuals documented across {evidence_count} case records.")
+            else:
+                lines.append(
+                    f"The retrieved context lists {len(persons)} individuals; the case-level register contains {person_count} individuals across {evidence_count} records."
+                )
             summary_text = "\n".join(lines)
 
         elif any(w in q_lower for w in ("connect", "relation", "link", "association", "call", "transfer", "money")):
@@ -708,24 +777,24 @@ class AIGateway:
                 for r in rel_summaries[:6]:
                     lines.append(f"• {r}")
             else:
-                lines.append(f"• {len(edges)} multi-entity links recorded across phone, financial, and scene records.")
-            lines.append(f"Supported by {len(documents)} evidence documents on record.")
+                lines.append(f"• No relationship was present in the retrieved case-scoped context. The case register contains {relationship_count} evidenced relationships.")
+            lines.append(f"Retrieved context is supported by {len(documents)} of {evidence_count} case evidence documents.")
             summary_text = "\n".join(lines)
 
         elif any(w in q_lower for w in ("evidence", "document", "record", "fir", "cdr", "bank", "file")):
             lines = [f"**Evidence Records filed for Case {case_number}:**"]
             for d in doc_names[:8]:
                 lines.append(f"• 📄 `{d}`")
-            lines.append(f"Total {len(documents)} evidentiary records verified and hash-validated.")
+            lines.append(f"The case register contains {evidence_count} evidentiary records; {len(documents)} were retrieved for this question.")
             summary_text = "\n".join(lines)
 
         else:
             person_str = ", ".join(p['name'] for p in persons[:4]) if persons else "Persons under review"
             summary_text = (
                 f"**Case Briefing — {case_number} ({case_title}):**\n"
-                f"This case contains {len(documents)} verified documents and {len(nodes)} identified entities. "
-                f"Key individuals on record include {person_str}. "
-                f"Graph analysis maps {len(edges)} operational links spanning communication, financial transactions, and scene associations. "
+                f"This case register contains {evidence_count} verified documents and {entity_count} identified entities. "
+                f"Key individuals in the retrieved context include {person_str}. "
+                f"The case-scoped graph records {relationship_count} operational links spanning communication, financial transactions, and scene associations. "
                 f"All findings are grounded directly in stored evidence."
             )
 
@@ -740,20 +809,20 @@ class AIGateway:
         steps = [
             ReasoningStep(
                 step=1,
-                statement=f"Examined {len(documents)} stored case documents and validated chain of custody.",
-                evidence_level="FACT",
+                statement=f"Case-scoped metadata reports {evidence_count} stored case documents; {len(documents)} were included in this answer context.",
+                evidence_level="FACT" if ev_refs[:2] else "UNKNOWN",
                 evidence_refs=[d.doc_id for d in ev_refs[:2]],
             ),
             ReasoningStep(
                 step=2,
-                statement=f"Mapped {len(nodes)} graph entities and {len(edges)} cross-entity linkages.",
-                evidence_level="FACT",
+                statement=f"Case-scoped metadata reports {entity_count} entities and {relationship_count} evidenced linkages; the answer context includes {len(nodes)} entities and {len(edges)} linkages.",
+                evidence_level="FACT" if ev_refs[2:4] else "UNKNOWN",
                 evidence_refs=[d.doc_id for d in ev_refs[2:4]],
             ),
             ReasoningStep(
                 step=3,
                 statement="Synthesized grounded intelligence briefing directly from verified platform records.",
-                evidence_level="FACT",
+                evidence_level="FACT" if ev_refs[:1] else "UNKNOWN",
                 evidence_refs=[d.doc_id for d in ev_refs[:1]],
             ),
         ]
@@ -1029,8 +1098,85 @@ class AIGateway:
                     docs_included = len(documents)
                 ranking_ms = 0
 
+            # Authoritative case boundary. The graph adapter already returns a
+            # case snapshot, but this second boundary prevents a future adapter,
+            # keyword/vector path, or graph-neighbour expansion from widening
+            # the context after retrieval. Explicitly scoped records from another
+            # case are always rejected.
+            if case_id:
+                retrieved_entity_ids = [
+                    str(node.get("provenance_key") or node.get("id"))
+                    for node in nodes
+                    if node.get("provenance_key") or node.get("id")
+                ]
+                retrieved_relationship_ids = [
+                    f"{edge.get('source_key') or edge.get('source')}->{edge.get('target_key') or edge.get('target')}:{edge.get('rel_type')}"
+                    for edge in edges
+                ]
+                retrieved_document_ids = [
+                    str(document.get("doc_id"))
+                    for document in all_documents
+                    if document.get("doc_id")
+                ]
+                retrieved_context_document_ids = [
+                    str(document.get("doc_id"))
+                    for document in documents
+                    if document.get("doc_id")
+                ]
+                validated_context = validate_case_context(
+                    case_id, nodes=nodes, edges=edges, documents=documents, require_scope=True
+                )
+                nodes = validated_context.nodes
+                edges = validated_context.edges
+                documents = validated_context.documents
+                docs_included = len(documents)
+                context_scope_filtered = validated_context.filtered_out_count
+                log.info(
+                    "ai.case_context_validated",
+                    query_id=query_id,
+                    requested_case_id=case_id,
+                    retrieved_document_ids=retrieved_document_ids,
+                    retrieved_entity_ids=retrieved_entity_ids,
+                    retrieved_relationship_ids=retrieved_relationship_ids,
+                    retrieved_context_document_ids=retrieved_context_document_ids,
+                    validated_entity_ids=[
+                        str(n.get("provenance_key") or n.get("id"))
+                        for n in nodes
+                        if n.get("provenance_key") or n.get("id")
+                    ],
+                    validated_relationship_ids=[
+                        f"{e.get('source_key') or e.get('source')}->{e.get('target_key') or e.get('target')}:{e.get('rel_type')}"
+                        for e in edges
+                    ],
+                    filtered_out_cross_case_items=context_scope_filtered,
+                    final_context_item_count=len(nodes) + len(edges) + len(documents),
+                )
+                case_counts = await self._case_scope_counts(
+                    case_id, all_documents=all_documents
+                )
+            else:
+                # The unscoped /ai/ask endpoint is an explicit dataset-level
+                # workflow, not Case Evidence Assistant. It may reason across
+                # cases, but it is labelled as such and never masquerades as a
+                # case-scoped answer.
+                context_scope_filtered = 0
+                case_counts = CaseContextStats(
+                    case_id="",
+                    evidence_count=len({str(d.get("doc_id")) for d in all_documents if d.get("doc_id")}),
+                    entity_count=len(nodes),
+                    person_count=sum(1 for n in nodes if str(n.get("label", "")).upper() == "PERSON"),
+                    relationship_count=len(edges),
+                )
             timer.stage("retrieval_ms")
             documents_total_chars = sum(len(str(d.get("content", ""))) for d in documents)
+            case_evidence_inventory = evidence_inventory(
+                all_documents,
+                known_types=KNOWN_EVIDENCE_TYPES,
+            )
+            included_evidence_inventory = evidence_inventory(
+                documents,
+                known_types=KNOWN_EVIDENCE_TYPES,
+            )
 
             # Build timeline if required (for evidence-grounded timeline feature)
             timeline_events = []
@@ -1050,7 +1196,19 @@ class AIGateway:
                 "retrieved": bool(nodes or edges),
                 "dataset_id": dataset_id,
                 "graph_ready": graph_ready,
+                "case_id": case_id,
+                "case_scope": "CASE_SCOPED" if case_id else "DATASET_SCOPED",
+                "case_counts": case_counts.as_dict(),
                 "evidence_ids": [str(document.get("doc_id")) for document in documents if document.get("doc_id")],
+                "retrieved_evidence_ids": sorted(
+                    {
+                        str(document.get("doc_id"))
+                        for document in documents
+                        if document.get("doc_id")
+                    }
+                    | self._collect_subgraph_doc_ids(nodes, edges, case_id=case_id)
+                ),
+                "filtered_out_cross_case_items": context_scope_filtered,
                 "timing": {},
                 "documents_count": len(documents),
                 "documents_total_chars": documents_total_chars,
@@ -1061,6 +1219,8 @@ class AIGateway:
                 "detected_entity_count": len(detected_entity_keys),
                 # Investigation Retrieval Engine — new fields
                 "query_intent": query_understanding.intent,
+                "answer_mode": query_understanding.answer_mode,
+                "query_exact_terms": query_understanding.exact_terms,
                 "query_keywords": list(query_understanding.keywords)[:15],
                 "temporal_filter": query_understanding.temporal.raw_text if query_understanding.temporal else None,
                 "spatial_filter": query_understanding.spatial.locations if query_understanding.spatial else None,
@@ -1074,6 +1234,23 @@ class AIGateway:
                 "query_confidence": query_understanding.confidence,
                 "ranking_ms": locals().get("ranking_ms", 0),
                 "timeline_events_count": len(timeline_events),
+                "evidence_inventory": {
+                    "available_types": case_evidence_inventory["available_types"],
+                    "included_types": included_evidence_inventory["available_types"],
+                    "missing_types": case_evidence_inventory["missing_types"],
+                    "available_document_ids": case_evidence_inventory["document_ids"],
+                    "included_document_ids": included_evidence_inventory["document_ids"],
+                },
+                "evidence_boundary": {
+                    "case_id": case_id,
+                    "included_document_ids": included_evidence_inventory["document_ids"],
+                    "excluded_document_count": max(
+                        0,
+                        len(case_evidence_inventory["document_ids"])
+                        - len(included_evidence_inventory["document_ids"]),
+                    ),
+                    "cross_case_retrieval": False if case_id else True,
+                },
                 # Evidence-grounded AI: expose node/edge IDs for "Why?" / "Show Evidence"
                 "evidence_grounding": {
                     "node_ids": [n.get("provenance_key") for n in nodes[:20]],
@@ -1226,6 +1403,14 @@ class AIGateway:
                 max_nodes=eff_nodes,
                 max_edges=eff_edges,
                 documents=documents,
+                case_id=case_id,
+                case_counts=case_counts.as_dict(),
+                answer_mode=query_understanding.answer_mode,
+                evidence_boundary={
+                    "available_types": case_evidence_inventory["available_types"],
+                    "missing_types": case_evidence_inventory["missing_types"],
+                    "included_document_ids": included_evidence_inventory["document_ids"],
+                },
             )
             timer.stage("prompt_build_ms")
 
@@ -1266,6 +1451,46 @@ class AIGateway:
                 retrieval_ms=timer.stages.get("retrieval_ms", 0),
                 prompt_build_ms=timer.stages.get("prompt_build_ms", 0),
             )
+
+            # Do not ask a model to decide what "insufficient evidence" means.
+            # If a provider is configured, return the deterministic boundary
+            # result now; if it is not configured, continue to the normal
+            # unavailable-provider response expected by the existing contract.
+            if case_id and case_counts.evidence_count == 0:
+                try:
+                    provider_available = bool(self.router.route("investigation_reasoning").available)
+                except Exception:
+                    provider_available = False
+                if provider_available and isinstance(self.router, AIModelRouter):
+                    finding = enrich_finding_contract(
+                        self._insufficient_case_evidence_finding(),
+                        answer_mode=query_understanding.answer_mode,
+                    )
+                    finding.missing_evidence = list(
+                        context_report.get("evidence_inventory", {}).get("missing_types", [])
+                    )
+                    context_report["insufficient_evidence"] = True
+                    context_report["timing"] = timer.report()
+                    await send({
+                        "type": "stage",
+                        "stage": "insufficient_evidence",
+                        "message": "No case-scoped evidence is available for a reliable answer.",
+                    })
+                    await self._audit(
+                        query_id=query_id, case_id=case_id,
+                        user_id=principal_id or user_id, role="reasoning",
+                        model=None, latency_ms=0, tokens=(None, None),
+                        pmap_size=len(pmap), question=question,
+                        output_hash=None, success=True,
+                        error="insufficient_case_evidence",
+                    )
+                    return AIResponse(
+                        query_id=query_id, role="reasoning", model=None,
+                        finding=finding, pseudonymized=pseudonymized,
+                        available=True, fallback_reason="insufficient_case_evidence",
+                        latency_ms=max(1, context_report["timing"]["total_ms"]),
+                        context=context_report,
+                    )
 
             # 5. Ask reasoning model (streaming tokens to the UI when a
             #    progress channel exists)
@@ -1334,7 +1559,14 @@ class AIGateway:
                 # Graph-RAG → candidates → validation → deterministic result → OPTIONAL AI explanation
                 # AI failure ≠ investigation failure — return deterministic result usable with View Evidence/Timeline
                 deterministic_finding = None
-                if HAS_HARDENING and 'person_rag_result' in locals() and locals().get('person_rag_result'):
+                provider_failed = str(result.get("reason", "")).startswith("invocation_failed:")
+                if (
+                    case_counts.evidence_count > 0
+                    and not provider_failed
+                    and HAS_HARDENING
+                    and 'person_rag_result' in locals()
+                    and locals().get('person_rag_result')
+                ):
                     try:
                         det_result = build_deterministic_result(locals()['person_rag_result'])
                         # Build FindingResult from deterministic
@@ -1386,7 +1618,7 @@ class AIGateway:
                     except Exception as exc:
                         log.warning("ai.deterministic_fallback_failed", query_id=query_id, error=str(exc))
 
-                if not deterministic_finding:
+                if case_counts.evidence_count > 0 and not provider_failed and not deterministic_finding:
                     try:
                         deterministic_finding = await self._synthesize_grounded_case_finding(
                             question=question,
@@ -1395,12 +1627,29 @@ class AIGateway:
                             edges=edges,
                             documents=documents,
                             key_to_name=key_to_name,
+                            case_counts=case_counts.as_dict(),
+                            answer_scope_complete=(
+                                len(documents) == documents_available_count
+                                and not context_scope_filtered
+                            ),
                             fallback_reason=result.get("reason"),
                         )
                     except Exception as exc:
                         log.warning("ai.grounded_synthesis_failed", query_id=query_id, error=str(exc))
 
                 if deterministic_finding:
+                    deterministic_finding = enrich_finding_contract(
+                        deterministic_finding,
+                        evidence_type_by_id={
+                            str(document.get("doc_id")): str(document.get("document_type") or "UNKNOWN")
+                            for document in documents
+                            if document.get("doc_id")
+                        },
+                        answer_mode=query_understanding.answer_mode,
+                    )
+                    deterministic_finding.missing_evidence = list(
+                        context_report.get("evidence_inventory", {}).get("missing_types", [])
+                    )
                     context_report["timing"] = timer.report()
                     context_report["deterministic_fallback"] = True
                     context_report["ai_explanation_available"] = False
@@ -1454,6 +1703,23 @@ class AIGateway:
             await send({"type": "stage", "stage": "validating",
                         "message": "Validating and attaching evidence…"})
             finding = self._parse_and_validate(result["content"])
+            evidence_type_by_id = {
+                str(document.get("doc_id")): str(document.get("document_type") or "UNKNOWN")
+                for document in documents
+                if document.get("doc_id")
+            }
+            finding = enrich_finding_contract(
+                finding,
+                evidence_type_by_id=evidence_type_by_id,
+                answer_mode=query_understanding.answer_mode,
+            )
+            finding.missing_evidence = list(
+                context_report.get("evidence_inventory", {}).get("missing_types", [])
+            )
+            evidence_ids = context_report.get("retrieved_evidence_ids", [])
+            context_report["claim_citation_coverage"] = citation_coverage(
+                finding, evidence_ids
+            )
             try:
                 # Enforce references when the retrieval layer supplied an
                 # evidence package.  Some offline/legacy adapters deliberately
@@ -1461,12 +1727,16 @@ class AIGateway:
                 # safer than pretending an empty adapter result is a complete
                 # package.  Direct safety tests still reject references against
                 # an explicit allowed set.
-                evidence_ids = context_report.get("evidence_ids", [])
+                evidence_ids = context_report.get("retrieved_evidence_ids", [])
                 if evidence_ids:
                     validate_finding(
                         finding,
                         allowed_evidence_ids=evidence_ids,
-                        allowed_entity_ids={*key_to_name.keys(), *pmap.entries().keys()},
+                        allowed_entity_ids={
+                            *key_to_name.keys(),
+                            *pmap.entries().keys(),
+                            *pmap.entries().values(),
+                        },
                     )
             except AISafetyViolation as exc:
                 log.warning("ai.safety_firewall_rejected_output", query_id=query_id, error=str(exc))
@@ -1681,6 +1951,7 @@ class AIGateway:
                             "confidence": se["confidence"],
                             "timestamp": se.get("properties", {}).get("timestamp") or se.get("properties", {}).get("last_ts"),
                             "source_doc_ids": se.get("properties", {}).get("source_doc_ids", [se.get("properties", {}).get("source_doc_id")]),
+                            "case_ids": se.get("properties", {}).get("case_ids") or se.get("properties", {}).get("case_scope") or [],
                         })
                 for e in snap.edges:
                     if len(edges) >= max_edges_eff:
@@ -1700,6 +1971,7 @@ class AIGateway:
                         "confidence": e.confidence,
                         "timestamp": props.get("timestamp") or props.get("last_ts"),
                         "source_doc_ids": props.get("source_doc_ids", [props.get("source_doc_id")]),
+                        "case_ids": props.get("case_ids") or props.get("case_scope") or [],
                     }
                     if "amount" in props and props["amount"] is not None:
                         edge_entry["amount"] = props["amount"]
@@ -1763,6 +2035,7 @@ class AIGateway:
                 "confidence": e.confidence,
                 "timestamp": props.get("timestamp") or props.get("last_ts"),
                 "source_doc_ids": props.get("source_doc_ids", [props.get("source_doc_id")]),
+                "case_ids": props.get("case_ids") or props.get("case_scope") or [],
             }
             if "amount" in props and props["amount"] is not None:
                 edge_entry["amount"] = props["amount"]
@@ -1848,6 +2121,7 @@ class AIGateway:
                             "confidence": se["confidence"],
                             "timestamp": se.get("properties", {}).get("timestamp") or se.get("properties", {}).get("last_ts"),
                             "source_doc_ids": se.get("properties", {}).get("source_doc_ids", [se.get("properties", {}).get("source_doc_id")]),
+                            "case_ids": se.get("properties", {}).get("case_ids") or se.get("properties", {}).get("case_scope") or [],
                         })
                 for e in snap.edges:
                     if len(edges) >= max_edges_eff:
@@ -1867,6 +2141,7 @@ class AIGateway:
                         "confidence": e.confidence,
                         "timestamp": props.get("timestamp") or props.get("last_ts"),
                         "source_doc_ids": props.get("source_doc_ids", [props.get("source_doc_id")]),
+                        "case_ids": props.get("case_ids") or props.get("case_scope") or [],
                     }
                     if "amount" in props and props["amount"] is not None:
                         edge_entry["amount"] = props["amount"]
@@ -1930,6 +2205,7 @@ class AIGateway:
                 "confidence": e.confidence,
                 "timestamp": props.get("timestamp") or props.get("last_ts"),
                 "source_doc_ids": props.get("source_doc_ids", [props.get("source_doc_id")]),
+                "case_ids": props.get("case_ids") or props.get("case_scope") or [],
             }
             if "amount" in props and props["amount"] is not None:
                 edge_entry["amount"] = props["amount"]
@@ -1939,6 +2215,83 @@ class AIGateway:
             if len(edges) >= max_edges_eff:
                 break
         return nodes, edges
+
+    async def _case_scope_counts(
+        self,
+        case_id: str,
+        *,
+        all_documents: list[dict[str, Any]],
+    ) -> CaseContextStats:
+        """Compute case-level counts from the authoritative scoped snapshot.
+
+        These values are metadata, not an LLM answer.  Query-specific ranking
+        may include one document or ten documents, but the case counts remain
+        stable for the same case and graph version.
+        """
+        # Never substitute the query's ranked subset for authoritative case
+        # totals when the snapshot read fails. Unknown totals are represented as
+        # zero/empty rather than being presented as complete case metadata.
+        snapshot_nodes: list[dict[str, Any]] = []
+        snapshot_edges: list[Any] = []
+        try:
+            from app.container import get_container
+
+            graph = get_container().graph_store
+            try:
+                snapshot = await asyncio.to_thread(graph.get_case_snapshot, case_id)
+            except Exception:
+                snapshot = graph.get_case_snapshot(case_id)
+            snapshot_nodes = [
+                {"label": node.label, "properties": node.properties}
+                for node in (snapshot.nodes or {}).values()
+                if node.label != "Case"
+            ]
+            snapshot_edges = list(snapshot.edges or [])
+        except Exception as exc:
+            log.warning("ai.case_counts_failed", case_id=case_id, error=str(exc))
+
+        evidence_ids = {
+            str(document.get("doc_id"))
+            for document in all_documents
+            if document.get("doc_id")
+        }
+
+        # A graph-backed evidence path may be available before a relational
+        # CaseDocument row is materialized (for example during ingestion). Its
+        # source document id is still evidence provenance and must contribute to
+        # the deterministic count; it is not a license to invent document text.
+        for item in snapshot_nodes:
+            properties = item.get("properties") or {}
+            # Canonical nodes can aggregate source documents from several cases.
+            # Only a node whose complete membership is this case can contribute
+            # a document id without a per-document case map. Shared-node
+            # provenance is retained for entity attribution, not counted as
+            # current-case evidence.
+            node_cases = {str(value) for value in (properties.get("case_ids") or []) if value}
+            if node_cases != {case_id}:
+                continue
+            if properties.get("source_doc_id"):
+                evidence_ids.add(str(properties["source_doc_id"]))
+            evidence_ids.update(str(value) for value in (properties.get("source_doc_ids") or []) if value)
+        for edge in snapshot_edges:
+            properties = edge.get("properties") if isinstance(edge, dict) else getattr(edge, "properties", {})
+            properties = properties or {}
+            if properties.get("source_doc_id"):
+                evidence_ids.add(str(properties["source_doc_id"]))
+            evidence_ids.update(str(value) for value in (properties.get("source_doc_ids") or []) if value)
+
+        person_count = sum(
+            1
+            for node in snapshot_nodes
+            if str(node.get("label", "")).upper() == "PERSON"
+        )
+        return CaseContextStats(
+            case_id=case_id,
+            evidence_count=len(evidence_ids),
+            entity_count=len(snapshot_nodes),
+            person_count=person_count,
+            relationship_count=len(snapshot_edges),
+        )
 
     async def _get_all_case_nodes(self, case_id: str) -> list[dict]:
         """Get all nodes for a case (unbounded) for entity detection.
@@ -2036,16 +2389,20 @@ class AIGateway:
                                 text_content = raw.decode("utf-8", errors="replace")
                             except Exception:
                                 pass
-                    if text_content:
-                        clean_text = text_content[:max_chars_per_doc].strip()
-                        docs_out.append({
-                            "doc_id": doc.id,
-                            "filename": doc.filename,
-                            "document_type": doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type),
-                            # Evidence text is untrusted input.  Instruction-like
-                            # strings are marked as text before entering a model prompt.
-                            "content": sanitize_untrusted_evidence(clean_text),
-                        })
+                    # Metadata remains retrievable even when a parser/object-store
+                    # read fails. It is still a case evidence record, but an empty
+                    # content field prevents the model from treating unavailable
+                    # bytes as facts.
+                    clean_text = text_content[:max_chars_per_doc].strip() if text_content else ""
+                    docs_out.append({
+                        "doc_id": doc.id,
+                        "case_id": case_id,
+                        "filename": doc.filename,
+                        "document_type": doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type),
+                        # Evidence text is untrusted input. Instruction-like
+                        # strings are marked as text before entering a model prompt.
+                        "content": sanitize_untrusted_evidence(clean_text),
+                    })
         except Exception as exc:
             log.warning("ai.retrieve_documents_failed", case_id=case_id, error=str(exc))
         return docs_out
@@ -2099,11 +2456,17 @@ class AIGateway:
         return seen
 
     @staticmethod
-    def _collect_subgraph_doc_ids(nodes: list[dict], edges: list[dict]) -> set[str]:
-        """Collect all source_doc_ids referenced by a subgraph (nodes+edges)."""
+    def _collect_subgraph_doc_ids(
+        nodes: list[dict], edges: list[dict], *, case_id: str | None = None
+    ) -> set[str]:
+        """Collect source docs without attributing shared-node docs to a case."""
         doc_ids: set[str] = set()
         for n in nodes:
             props = n.get("properties", {}) or {}
+            if case_id:
+                node_cases = {str(value) for value in (props.get("case_ids") or []) if value}
+                if node_cases != {case_id}:
+                    continue
             # source_doc_ids may be list, source_doc_id single
             sids = props.get("source_doc_ids")
             if isinstance(sids, (list, tuple, set)):
@@ -2114,6 +2477,10 @@ class AIGateway:
             if sid:
                 doc_ids.add(str(sid))
         for e in edges:
+            if case_id and case_id not in {
+                str(value) for value in (e.get("case_ids") or e.get("case_scope") or []) if value
+            }:
+                continue
             sids = e.get("source_doc_ids")
             if isinstance(sids, (list, tuple, set)):
                 for sid in sids:
@@ -2448,6 +2815,10 @@ class AIGateway:
         self, nodes: list[dict], edges: list[dict], question: str,
         *, max_nodes: int | None = None, max_edges: int | None = None,
         documents: list[dict] | None = None,
+        case_id: str | None = None,
+        case_counts: dict[str, Any] | None = None,
+        answer_mode: str = "CASE_SUMMARY",
+        evidence_boundary: dict[str, Any] | None = None,
     ) -> str:
         """Person-centric reasoning context — PEOPLE → RELATIONSHIPS → EVIDENCE → EXPLANATION.
 
@@ -2552,14 +2923,26 @@ class AIGateway:
         transfers.sort(key=lambda x: x["amount"], reverse=True)
         calls.sort(key=lambda x: x["call_count"], reverse=True)
 
+        authoritative = case_counts or {"case_id": case_id}
         exact_analytics = {
-            "total_persons": len(person_nodes),
-            "total_supporting_entities": len(supporting_entities),
-            "total_person_to_person_relationships": len(person_person_edges),
-            "total_supporting_relationships": len(supporting_edges_for_context),
-            "entity_counts_by_type": entity_counts_by_type,
-            "all_persons_count": len(persons),
-            "all_persons_list": persons[:40],
+            # These are authoritative case-level values. Query-specific node and
+            # edge lists below are retrieval scope and must not be used to
+            # recalculate case totals.
+            "case_scope": {
+                "case_id": case_id,
+                **authoritative,
+            },
+            "total_persons": int(authoritative.get("person_count", 0) or 0),
+            "total_entities": int(authoritative.get("entity_count", 0) or 0),
+            "total_evidence": int(authoritative.get("evidence_count", 0) or 0),
+            "total_relationships": int(authoritative.get("relationship_count", 0) or 0),
+            "retrieved_persons": len(person_nodes),
+            "retrieved_supporting_entities": len(supporting_entities),
+            "retrieved_person_to_person_relationships": len(person_person_edges),
+            "retrieved_supporting_relationships": len(supporting_edges_for_context),
+            "entity_counts_by_type_retrieved": entity_counts_by_type,
+            "retrieved_persons_count": len(persons),
+            "retrieved_persons_list": persons[:40],
             "person_person_relationships": [
                 {
                     "source": key_to_display.get(e.get("source_key"), e.get("source_key")),
@@ -2583,19 +2966,28 @@ class AIGateway:
         # Compact payload — PERSON-first, supporting as evidence
         payload = {
             "question": question,
+            "answer_mode": answer_mode,
+            "case_id": case_id,
+            "case_scope": case_counts or {"case_id": case_id},
+            "evidence_boundary": evidence_boundary or {"case_id": case_id},
             "instruction": (
                 "You are a person-centric investigative assistant. "
+                f"Use the {answer_mode} answer contract. "
                 "FINAL GRAPH MUST BE PERSON → PERSON ONLY. "
                 "Phones, vehicles, locations, files, CCTV, docs, orgs, addresses are INTERNAL EVIDENCE, NOT final nodes. "
                 "Example: A owns PHONE-X contacted PHONE-Y belongs to B → output A↔B with PHONE-X/Y as supporting evidence. "
                 "Never claim A and C directly connected merely because same investigation — preserve reasoning path and evidence. "
+                "The case_scope metrics are backend-generated and authoritative; never recalculate counts from the retrieved subset. "
                 "Preserve FACT/INFERENCE/HYPOTHESIS/UNKNOWN, never collapse, never present inference as fact. "
                 "Privacy: RAW→PII protection→PSEUDONYMIZATION→GRAPH-RAG→relevant pseudonymized context→you. "
                 "Never invent timestamps: if missing use 'Timestamp unavailable'. Every claim traceable. "
                 "Explanation must be clear: WHO, WHAT evidence, WHEN, HOW, HOW strong, FACT/INFERENCE, WHAT IS NOT KNOWN. "
                 "Structure: CONNECTION, WHY, SUPPORTING EVIDENCE (E-042), TIMELINE (12 Aug 20:14 or 'Timestamp unavailable'), "
                 "ASSESSMENT, CLASSIFICATION (INFERENCE), CONFIDENCE (High/Med/Low), WHAT IS NOT KNOWN. "
-                "Prefer 3 highly supported over 30 weak. If insufficient: 'No reliable person-to-person connection was established'."
+                "Prefer 3 highly supported over 30 weak. If insufficient: 'No reliable person-to-person connection was established'. "
+                "Return direct_answer, evidence_explanation, investigator_interpretation, establishes, does_not_establish, missing_evidence, claims, and evidence_support. "
+                "Every claims[] item must have claim, evidence_refs, evidence_level, and evidence_support. "
+                "Do not claim that a missing evidence type proves absence."
             ),
             "exact_analytics": exact_analytics,
             "nodes": [
@@ -2660,7 +3052,9 @@ class AIGateway:
                 "Return ONLY a single raw JSON object matching FindingResult schema with NO preamble: "
                 "{finding_type, summary, confidence, evidence_level, entities[], "
                 "relationships[], evidence_refs[], reasoning_steps[], uncertainties[], "
-                "recommended_review, suggested_next_actions[]}. "
+                "recommended_review, suggested_next_actions[], answer_mode, direct_answer, "
+                "evidence_explanation, investigator_interpretation, establishes, "
+                "does_not_establish, missing_evidence, claims[], evidence_support}. "
                 "Relationships array MUST contain only PERSON→PERSON with fields: "
                 "source_person, target_person, relationship_type, classification (FACT/INFERENCE/HYPOTHESIS/UNKNOWN), "
                 "confidence, confidence_label (High/Medium/Low), evidence_refs, provenance, explanation, limitations. "
@@ -2678,6 +3072,7 @@ class AIGateway:
                 "Preserve FACT/INFERENCE/HYPOTHESIS/UNKNOWN. Never invent timestamps — use 'Timestamp unavailable'. "
                 "Return ONLY single JSON FindingResult with relationships array of PERSON→PERSON objects: "
                 "{source_person,target_person,relationship_type,classification,confidence,evidence_refs,provenance,explanation,limitations}. "
+                "Also return direct_answer, evidence_explanation, investigator_interpretation, establishes, does_not_establish, missing_evidence, claims[], and evidence_support. "
                 "Explanation must be clear: WHO, WHAT evidence, WHEN, HOW strong, FACT vs INFERENCE, WHAT IS NOT KNOWN. "
                 "Prefer 3 highly supported over 30 weak. If insufficient: 'No reliable person-to-person connection was established'. "
                 "Keep concise, grounded, professional.\n\n"
@@ -2865,6 +3260,61 @@ class AIGateway:
                     clean_refs.append(ref)
             data["evidence_refs"] = clean_refs
 
+        if isinstance(data.get("claims"), list):
+            clean_claims = []
+            for item in data["claims"]:
+                if isinstance(item, str):
+                    clean_claims.append({
+                        "claim": item,
+                        "evidence_refs": [],
+                        "evidence_level": "UNKNOWN",
+                        "support_level": "UNSUPPORTED",
+                    })
+                elif isinstance(item, dict) and item.get("claim"):
+                    refs = item.get("evidence_refs", [])
+                    if isinstance(refs, str):
+                        refs = [refs]
+                    if isinstance(refs, list):
+                        refs = [
+                            (ref.get("doc_id") or ref.get("ref")) if isinstance(ref, dict) else str(ref)
+                            for ref in refs
+                        ]
+                        refs = [ref for ref in refs if ref]
+                    item["evidence_refs"] = refs if isinstance(refs, list) else []
+                    if item.get("evidence_level") not in ("FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"):
+                        item["evidence_level"] = "UNKNOWN"
+                    if item.get("support_level") not in ("DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"):
+                        item["support_level"] = "UNSUPPORTED"
+                    clean_claims.append(item)
+            data["claims"] = clean_claims
+
+        # Claim-level citations are authoritative input to the envelope too.
+        # Normalize them into the legacy top-level evidence_refs field so older
+        # clients and the existing FACT validator remain compatible.
+        if not data.get("evidence_refs"):
+            derived_refs: list[dict[str, str]] = []
+            for item in data.get("claims", []):
+                for ref in item.get("evidence_refs", []):
+                    if ref and not any(existing["doc_id"] == str(ref) for existing in derived_refs):
+                        derived_refs.append({"doc_id": str(ref), "ref_type": "DOCUMENT"})
+            for item in data.get("reasoning_steps", []):
+                if isinstance(item, dict):
+                    for ref in item.get("evidence_refs", []) or []:
+                        if ref and not any(existing["doc_id"] == str(ref) for existing in derived_refs):
+                            derived_refs.append({"doc_id": str(ref), "ref_type": "DOCUMENT"})
+            if derived_refs:
+                data["evidence_refs"] = derived_refs
+
+        for list_field in ("establishes", "does_not_establish", "missing_evidence"):
+            if not isinstance(data.get(list_field), list):
+                data[list_field] = []
+            data[list_field] = [str(item) for item in data[list_field] if item]
+        for text_field in ("direct_answer", "evidence_explanation", "investigator_interpretation"):
+            if data.get(text_field) is not None and not isinstance(data.get(text_field), str):
+                data[text_field] = str(data[text_field])
+        if data.get("evidence_support") not in ("DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"):
+            data["evidence_support"] = "UNSUPPORTED"
+
         if not isinstance(data.get("recommended_review"), bool):
             rec = str(data.get("recommended_review", "")).strip().lower()
             data["recommended_review"] = rec in ("true", "1", "yes") if rec in ("true", "false", "1", "0", "yes", "no") else True
@@ -3014,19 +3464,32 @@ def _hash(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
-def _retrieval_cache_key(case_id: str, query: str, filters: dict | None = None, graph_version: str = "v1", permission_scope: str | None = None) -> str:
-    """Retrieval cache hash(case_id+normalized_query+filters+graph_version+permission_scope) — safe deterministic only.
-    
-    Security boundary > performance optimization.
-    Cache identity is permission-aware: case_id + normalized_query + filters + graph_version + permission_scope
-    Prevents cached retrieval produced under one authorization scope from being reused under another.
+def _retrieval_cache_key(
+    case_id: str,
+    query: str,
+    filters: dict | None = None,
+    graph_version: str | None = None,
+    permission_scope: str | None = None,
+    conversation_id: str | None = None,
+) -> str:
+    """Build a permission- and case-isolated retrieval cache key.
+
+    The cache stores deterministic retrieval only, never model prose.  The
+    canonical internal case id, active graph version, conversation/session
+    scope, and permission scope are all part of the key.  An empty case id is
+    explicitly represented as ``__global__`` so a dataset-wide lookup cannot
+    collide with a case lookup.
     """
     import hashlib, json
-    normalized = query.lower().strip()
-    filt_str = json.dumps(filters or {}, sort_keys=True)
+
+    scope = str(case_id or "").strip() or "__global__"
+    normalized = " ".join((query or "").casefold().split())
+    filt_str = json.dumps(filters or {}, sort_keys=True, separators=(",", ":"), default=str)
     perm = permission_scope or "default"
-    raw = f"{case_id}|{normalized}|{filt_str}|{graph_version}|{perm}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+    graph = graph_version or f"v{_RETRIEVAL_CACHE_VERSION}"
+    conversation = conversation_id or "__no_conversation__"
+    raw = "|".join((scope, conversation, normalized, filt_str, graph, perm))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def _get_cached_retrieval(cache_key: str) -> dict | None:
@@ -3058,12 +3521,11 @@ def invalidate_retrieval_cache(case_id: str | None = None):
     """Invalidate cache on case/evidence/graph/permissions change."""
     global _RETRIEVAL_CACHE_VERSION
     _RETRIEVAL_CACHE_VERSION += 1
-    if case_id:
-        keys_to_del = [k for k in _RETRIEVAL_CACHE if case_id in k]
-        for k in keys_to_del:
-            _RETRIEVAL_CACHE.pop(k, None)
-    else:
-        _RETRIEVAL_CACHE.clear()
+    # Keys are intentionally opaque hashes, so do not attempt substring-based
+    # invalidation (it never reliably matched the case id). A mutation to one
+    # case invalidates all deterministic entries; correctness beats five-minute
+    # cache reuse.
+    _RETRIEVAL_CACHE.clear()
 
 
 

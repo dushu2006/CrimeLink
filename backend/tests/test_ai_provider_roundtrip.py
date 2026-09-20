@@ -263,7 +263,7 @@ def _seed_case_graph(container, case_id: str) -> None:
                 properties={
                     "name": f"Person {i}",
                     "case_ids": [case_id],
-                    "source_doc_id": "doc-ai",
+                    "source_doc_id": "doc-1",
                 },
             )
             for i in (1, 2)
@@ -275,7 +275,7 @@ def _seed_case_graph(container, case_id: str) -> None:
                 source_key="person:1",
                 target_key="person:2",
                 rel_type="ASSOCIATE_OF",
-                properties={"source_doc_id": "doc-ai", "case_ids": [case_id]},
+                properties={"source_doc_id": "doc-1", "case_ids": [case_id]},
                 discriminator="ai-fixture",
             )
         ]

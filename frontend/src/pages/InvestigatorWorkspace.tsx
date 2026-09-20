@@ -827,7 +827,7 @@ export default function InvestigatorWorkspace() {
                   CONNECTIONS ({selectedConnections.length})
                 </div>
                 {selectedConnections.length === 0 ? (
-                  <div className="sel-empty">No relationships for this entity.</div>
+                  <div className="sel-empty">No relationship records for this entity.</div>
                 ) : (
                   <ul className="sel-connection-list">
                     {selectedConnections.slice(0, 6).map((c) => (

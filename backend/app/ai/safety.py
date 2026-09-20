@@ -66,6 +66,32 @@ def validate_evidence_references(finding: FindingResult, allowed_evidence_ids: I
         for ref in step.evidence_refs:
             if ref not in allowed:
                 errors.append(f"Reasoning step references nonexistent evidence: {ref}")
+    for claim in finding.claims:
+        # UNKNOWN is the explicit insufficient-evidence path; requiring a
+        # citation for that boundary statement would turn honest uncertainty
+        # into a false validation failure. All stronger claim levels require
+        # at least one case-scoped reference.
+        if not claim.evidence_refs and claim.evidence_level != "UNKNOWN":
+            errors.append(f"Claim has no supporting evidence references: {claim.claim[:120]}")
+        for ref in claim.evidence_refs:
+            if ref not in allowed:
+                errors.append(f"Claim references nonexistent evidence: {ref}")
+    for index, relationship in enumerate(finding.relationships):
+        if not isinstance(relationship, dict):
+            continue
+        refs = relationship.get("evidence_refs") or relationship.get("evidence") or []
+        if isinstance(refs, str):
+            refs = [refs]
+        if not refs:
+            errors.append(f"Relationship[{index}] has no supporting evidence references.")
+            continue
+        for ref in refs:
+            if isinstance(ref, dict):
+                ref = ref.get("doc_id") or ref.get("ref")
+            if not ref:
+                errors.append(f"Relationship[{index}] contains an empty evidence reference.")
+            elif str(ref) not in allowed:
+                errors.append(f"Relationship[{index}] references nonexistent evidence: {ref}")
     if finding.evidence_level == "FACT" and not finding.evidence_refs:
         errors.append("FACT-level output must include evidence references.")
     return tuple(errors)
