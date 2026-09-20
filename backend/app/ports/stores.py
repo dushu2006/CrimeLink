@@ -109,7 +109,8 @@ class GraphStore(Protocol):
     def candidate_persons(self, case_id: str, exclude_key: str | None = None) -> list[Any]: ...
 
     def add_potential_alias(
-        self, source_key: str, target_key: str, queue_id: str, similarity: float
+        self, source_key: str, target_key: str, queue_id: str, similarity: float,
+        case_id: str | None = None,
     ) -> None: ...
 
     def tombstone_reject(self, source_key: str, target_key: str, resolved_by: str) -> None: ...

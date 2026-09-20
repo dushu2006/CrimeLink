@@ -463,7 +463,7 @@ def _persist_alias_proposals(
             session.add(item)
             session.flush()
             graph.add_potential_alias(
-                source, target, item.id, proposal["similarity_score"]
+                source, target, item.id, proposal["similarity_score"], case_id
             )
             log.info(
                 "pipeline.er_proposal",

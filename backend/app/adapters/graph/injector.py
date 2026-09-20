@@ -127,11 +127,38 @@ class GraphInjector:
                     "source_doc_id": doc_id,
                     "source_doc_ids": [doc_id],
                     "confidence": confidence,
+                    "case_ids": [case_id],
+                    "case_scope": [case_id],
                 },
             )
             for key in set(node_keys)
         ]
         return self.inject_edges(edges)
+
+    @staticmethod
+    def _case_scoped_edge(edge: GraphEdge, case_id: str) -> GraphEdge:
+        """Attach the document relationship to the case being ingested.
+
+        Pipeline extraction edges historically carried document provenance but
+        not edge-level case provenance.  Because canonical endpoint nodes are
+        shared across cases, that omission made an edge observable in every
+        case containing either endpoint.  Copying the edge preserves its key
+        and evidence while adding the hard case boundary.
+        """
+        properties = dict(edge.properties)
+        # Normal ingestion is a single-case workflow. Never carry an older or
+        # caller-supplied multi-case scope into this document's edge; an
+        # explicit multi-case workflow must use the dedicated analytics path.
+        properties["case_ids"] = [case_id]
+        properties["case_scope"] = [case_id]
+        return GraphEdge(
+            source_key=edge.source_key,
+            target_key=edge.target_key,
+            rel_type=edge.rel_type,
+            properties=properties,
+            discriminator=edge.discriminator,
+            key=edge.key,
+        )
 
     def inject(
         self,
@@ -164,10 +191,14 @@ class GraphInjector:
 
         accepted: list[GraphEdge] = []
         for edge in edges:
-            if edge.rel_type in UNEVIDENCED_META_REL_TYPES:
-                accepted.append(edge)
+            # Scope every edge from this document, including meta edges.  A
+            # canonical person may occur in many cases; endpoint membership is
+            # never a substitute for relationship provenance.
+            scoped_edge = self._case_scoped_edge(edge, case_id)
+            if scoped_edge.rel_type in UNEVIDENCED_META_REL_TYPES:
+                accepted.append(scoped_edge)
                 continue
-            if not edge.properties.get("source_doc_id"):
+            if not scoped_edge.properties.get("source_doc_id"):
                 result.edges_rejected += 1
                 result.rejected_reasons.append(
                     f"{edge.rel_type} without source_doc_id rejected"
@@ -179,7 +210,7 @@ class GraphInjector:
                     f"{edge.rel_type} with unresolved endpoint rejected"
                 )
                 continue
-            accepted.append(edge)
+            accepted.append(scoped_edge)
 
         result.edges_written = self.inject_edges(accepted)
         if link_case:

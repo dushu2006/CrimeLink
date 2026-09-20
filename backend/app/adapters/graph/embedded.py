@@ -259,6 +259,12 @@ class EmbeddedGraphStore:
                 if not self._graph.has_node(edge.target_key):
                     continue
                 data = _json_safe(edge.properties)
+                # Normalize the legacy singular spelling at the write boundary.
+                # It is explicit edge provenance, unlike inferring a scope from
+                # endpoint membership.
+                if not (data.get("case_ids") or data.get("case_scope")) and data.get("case_id"):
+                    data["case_ids"] = [str(data["case_id"])]
+                    data["case_scope"] = [str(data["case_id"])]
                 data[_REL] = edge.rel_type
                 data[_KEY] = edge.key
                 docs = data.pop("source_doc_ids", None) or []
@@ -548,6 +554,12 @@ class EmbeddedGraphStore:
                 if u not in nodes or v not in nodes:
                     continue
                 props = {key: val for key, val in data.items() if not key.startswith("_")}
+                # Canonical endpoints can be shared by many cases. Endpoint
+                # membership is not relationship provenance: the edge itself
+                # must explicitly name this case or it is not case evidence.
+                edge_cases = set(props.get("case_ids") or props.get("case_scope") or [])
+                if case_id not in edge_cases:
+                    continue
                 if not props.get("source_doc_id") and data.get(_REL) not in UNEVIDENCED_META_REL_TYPES:
                     continue
                 edges.append(
@@ -590,6 +602,15 @@ class EmbeddedGraphStore:
                 if u not in nodes or v not in nodes:
                     continue
                 props = {key: val for key, val in data.items() if not key.startswith("_")}
+                # Multi-case analytics may include an edge when its own
+                # provenance overlaps at least one requested case.
+                edge_cases = set(props.get("case_ids") or props.get("case_scope") or [])
+                # Multi-case/legacy graph views may contain older edges that
+                # predate edge-level case provenance.  Keep those for the
+                # explicitly global graph, while the single-case projection
+                # above remains fail-closed.
+                if edge_cases and wanted.isdisjoint(edge_cases):
+                    continue
                 if not props.get("source_doc_id") and data.get(_REL) not in UNEVIDENCED_META_REL_TYPES:
                     continue
                 edges.append(
@@ -893,7 +914,8 @@ class EmbeddedGraphStore:
             return out
 
     def add_potential_alias(
-        self, source_key: str, target_key: str, queue_id: str, similarity: float
+        self, source_key: str, target_key: str, queue_id: str, similarity: float,
+        case_id: str | None = None,
     ) -> None:
         # A review artifact is still evidence-backed: it points at the documents
         # that mention each side, so an investigator can open them from the edge.
@@ -906,6 +928,8 @@ class EmbeddedGraphStore:
                 "er_queue_id": queue_id,
                 "similarity": similarity,
                 "status": "PENDING",
+                "case_ids": [case_id] if case_id else [],
+                "case_scope": [case_id] if case_id else [],
                 "source_doc_id": doc_id,
                 "source_doc_ids": doc_ids,
             },

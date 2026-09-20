@@ -114,6 +114,8 @@ RETURN n
 CASE_EDGE_PROJECTION = """
 MATCH (a)-[r]->(b)
 WHERE a.provenance_key IN $keys AND b.provenance_key IN $keys
+  AND ($case_id IN coalesce(r.case_ids, [])
+       OR $case_id IN coalesce(r.case_scope, []))
 RETURN a.provenance_key AS source, b.provenance_key AS target,
        type(r) AS rel_type, properties(r) AS props
 """
@@ -126,6 +128,17 @@ WHERE ANY(cid IN $case_ids WHERE cid IN n.case_ids)
   AND ($include_inactive OR coalesce(n.is_active, true))
   AND NOT coalesce(n.staging, false)
 RETURN n
+"""
+
+MULTI_CASE_EDGE_PROJECTION = """
+MATCH (a)-[r]->(b)
+WHERE a.provenance_key IN $keys AND b.provenance_key IN $keys
+  AND ((size(coalesce(r.case_ids, [])) = 0
+        AND size(coalesce(r.case_scope, [])) = 0)
+       OR ANY(cid IN $case_ids WHERE cid IN coalesce(r.case_ids, []))
+       OR ANY(cid IN $case_ids WHERE cid IN coalesce(r.case_scope, [])))
+RETURN a.provenance_key AS source, b.provenance_key AS target,
+       type(r) AS rel_type, properties(r) AS props
 """
 
 # EXPAND_QUERY is no longer a static constant: Neo4j does not allow a
@@ -386,6 +399,9 @@ class Neo4jGraphStore:
             by_type: dict[str, list[dict[str, Any]]] = {}
             for edge in batch:
                 props = {k: _safe(v) for k, v in edge.properties.items()}
+                if not (props.get("case_ids") or props.get("case_scope")) and props.get("case_id"):
+                    props["case_ids"] = [str(props["case_id"])]
+                    props["case_scope"] = [str(props["case_id"])]
                 if props.get("source_doc_id"):
                     props["source_doc_ids"] = _union(
                         props.get("source_doc_ids"), props["source_doc_id"]
@@ -580,6 +596,9 @@ class Neo4jGraphStore:
             if src not in nodes or dst not in nodes:
                 continue
             data = {k: _unsafe(v) for k, v in props.items()}
+            edge_cases = set(data.get("case_ids") or data.get("case_scope") or [])
+            if case_id and case_id not in edge_cases:
+                continue
             if rel_type not in UNEVIDENCED_META_REL_TYPES and not data.get("source_doc_id"):
                 continue
             try:
@@ -612,7 +631,7 @@ class Neo4jGraphStore:
             keys = [props.get("provenance_key") for props, _ in nodes]
             edges = [
                 (r["source"], r["target"], r["rel_type"], r["props"])
-                for r in tx.run(CASE_EDGE_PROJECTION, keys=keys)
+                for r in tx.run(CASE_EDGE_PROJECTION, keys=keys, case_id=case_id)
             ]
             return nodes, edges
 
@@ -636,11 +655,13 @@ class Neo4jGraphStore:
             keys = [props.get("provenance_key") for props, _ in nodes]
             edges = [
                 (r["source"], r["target"], r["rel_type"], r["props"])
-                for r in tx.run(CASE_EDGE_PROJECTION, keys=keys)
+                for r in tx.run(MULTI_CASE_EDGE_PROJECTION, keys=keys, case_ids=list(case_ids))
             ]
             return nodes, edges
 
         nodes_raw, edges_raw = self._read(_apply)
+        # Multi-case rows were filtered by overlap in Cypher; the deserializer
+        # still validates each relationship's own provenance below.
         return self._snapshot_from_rows("", nodes_raw, edges_raw)
 
     def timeline(
@@ -937,7 +958,8 @@ class Neo4jGraphStore:
         return out
 
     def add_potential_alias(
-        self, source_key: str, target_key: str, queue_id: str, similarity: float
+        self, source_key: str, target_key: str, queue_id: str, similarity: float,
+        case_id: str | None = None,
     ) -> None:
         self.upsert_edges(
             [
@@ -949,6 +971,8 @@ class Neo4jGraphStore:
                         "er_queue_id": queue_id,
                         "similarity": similarity,
                         "status": "PENDING",
+                        "case_ids": [case_id] if case_id else [],
+                        "case_scope": [case_id] if case_id else [],
                     },
                 )
             ]
