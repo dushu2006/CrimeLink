@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  caseGraph,
   masterGraph,
   relationshipNetwork,
   type GraphNodeRow,
@@ -71,6 +72,7 @@ export default function InvestigatorWorkspace() {
   const [graphError, setGraphError] = useState<string | null>(null);
   const [entityLoading, setEntityLoading] = useState(false);
   const [showSupporting, setShowSupporting] = useState(false);
+  const [entityTypeFilter, setEntityTypeFilter] = useState<string>("ALL");
   const [selectedNode, setSelectedNode] = useState<GraphNodeRow | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdgeRow | null>(null);
   const [selectedNodes, setSelectedNodes] = useState<GraphNodeRow[]>([]);
@@ -133,7 +135,7 @@ export default function InvestigatorWorkspace() {
 
   /**
    * The supporting entity layer is loaded on demand, never on page load.
-   * Requirement: the person graph must not drag the full entity graph with it.
+   * Scoped to the current case when caseParam is present.
    */
   const loadSupportingEntities = useCallback(async () => {
     if (masterNodes.length > 0) {
@@ -142,7 +144,7 @@ export default function InvestigatorWorkspace() {
     }
     setEntityLoading(true);
     try {
-      const graph = await masterGraph();
+      const graph = caseParam ? await caseGraph(caseParam) : await masterGraph();
       setMasterNodes(graph.nodes || []);
       setMasterEdges(graph.edges || []);
       setShowSupporting(true);
@@ -151,7 +153,7 @@ export default function InvestigatorWorkspace() {
     } finally {
       setEntityLoading(false);
     }
-  }, [masterNodes.length]);
+  }, [caseParam, masterNodes.length]);
 
   const loadEnhancedTimeline = useCallback(async () => {
     if (!caseParam) return;
@@ -161,9 +163,6 @@ export default function InvestigatorWorkspace() {
       const res = await enhancedTimeline(caseParam);
       setEnhancedTimelineEvents(res.events);
     } catch (err) {
-      // A failed timeline request is not an empty timeline.  Clearing the
-      // events here made a backend error look like "this case has no dated
-      // activity", which is a false investigative conclusion.
       setTimelineError(err instanceof Error ? err.message : String(err));
     } finally {
       setTimelineLoading(false);
@@ -178,11 +177,29 @@ export default function InvestigatorWorkspace() {
   }, [caseParam, loadRelationshipGraph, loadEnhancedTimeline]);
 
   const graphData = useMemo(() => {
-    if (showSupporting) {
-      return { nodes: masterNodes, edges: masterEdges, isFocused: false };
+    const rawNodes = showSupporting ? masterNodes : personNodes;
+    const rawEdges = showSupporting ? masterEdges : personRelationships;
+
+    if (entityTypeFilter === "ALL") {
+      return { nodes: rawNodes, edges: rawEdges, isFocused: !showSupporting };
     }
-    return { nodes: personNodes, edges: personRelationships, isFocused: true };
-  }, [masterNodes, masterEdges, personNodes, personRelationships, showSupporting]);
+
+    const filteredNodes = rawNodes.filter((n) => {
+      const l = (n.label || "").toLowerCase().replace(/[^a-z]/g, "");
+      if (entityTypeFilter === "PERSON") return l === "person" || l === "people";
+      if (entityTypeFilter === "PHONE") return l === "phone" || l === "phonenumber";
+      if (entityTypeFilter === "BANK_ACCOUNT") return l === "bankaccount" || l === "account";
+      if (entityTypeFilter === "VEHICLE") return l === "vehicle" || l === "car";
+      if (entityTypeFilter === "LOCATION") return l === "location" || l === "address";
+      if (entityTypeFilter === "ORGANIZATION") return l === "organization" || l === "org";
+      if (entityTypeFilter === "EVENT") return l === "event";
+      return true;
+    });
+
+    const keySet = new Set(filteredNodes.map((n) => n.provenance_key));
+    const filteredEdges = rawEdges.filter((e) => keySet.has(e.source) || keySet.has(e.target));
+    return { nodes: filteredNodes, edges: filteredEdges, isFocused: false };
+  }, [masterNodes, masterEdges, personNodes, personRelationships, showSupporting, entityTypeFilter]);
 
   const handleInvestigate = useCallback(async () => {
     if (!question.trim() || !caseParam) return;
@@ -552,6 +569,35 @@ export default function InvestigatorWorkspace() {
               The entity layer is loaded only when you ask for it.
             </div>
 
+            {/* Multi-Entity Filter Chips */}
+            <div className="graph-filter-chips">
+              <span style={{ fontSize: "11px", fontWeight: 700, fontFamily: "var(--cl-font-mono)", textTransform: "uppercase", color: "var(--cl-text-3)", marginRight: "4px" }}>Filter:</span>
+              {[
+                { id: "ALL", label: "All Entities" },
+                { id: "PERSON", label: "People" },
+                { id: "PHONE", label: "Phones" },
+                { id: "BANK_ACCOUNT", label: "Bank Accounts" },
+                { id: "VEHICLE", label: "Vehicles" },
+                { id: "LOCATION", label: "Locations" },
+                { id: "ORGANIZATION", label: "Organizations" },
+                { id: "EVENT", label: "Events" },
+              ].map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  className={`graph-filter-chip ${entityTypeFilter === chip.id ? "active" : ""}`}
+                  onClick={() => {
+                    setEntityTypeFilter(chip.id);
+                    if (chip.id !== "ALL" && chip.id !== "PERSON" && !showSupporting) {
+                      void loadSupportingEntities();
+                    }
+                  }}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+
             <ErrorBoundary>
               <div style={{ border: "1px solid var(--border-primary)", borderRadius: "8px", overflow: "hidden" }}>
                 <InvestigativeGraph
@@ -737,6 +783,42 @@ export default function InvestigatorWorkspace() {
                 </div>
                 <div className="sel-entity-id">{selectedNode.provenance_key}</div>
               </div>
+
+              {/* ENTITY PROPERTIES */}
+              {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 && (
+                <div className="sel-block">
+                  <div className="sel-block-label">
+                    <span className="material-symbols-outlined" style={{ fontSize: 12 }}>info</span>
+                    ENTITY PROPERTIES
+                  </div>
+                  <div className="entity-properties-grid">
+                    {Object.entries(selectedNode.properties)
+                      .filter(([k, v]) => v != null && v !== "" && typeof v !== "object" && k !== "description")
+                      .slice(0, 10)
+                      .map(([k, v]) => (
+                        <div key={k} className="entity-property-row">
+                          <span className="entity-property-key">{k.replace(/_/g, " ")}</span>
+                          <span className="entity-property-val">{String(v)}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* OPEN SOURCE FILE DIRECT ACTION */}
+              {selectedNode.source_doc_ids && selectedNode.source_doc_ids.length > 0 && (
+                <div className="sel-block">
+                  <button
+                    type="button"
+                    className="open-source-btn"
+                    style={{ width: "100%", justifyContent: "center" }}
+                    onClick={() => openDoc(selectedNode.source_doc_ids[0])}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 15 }}>description</span>
+                    Open Source File ({selectedNode.source_doc_ids[0]})
+                  </button>
+                </div>
+              )}
 
               {/* CONNECTIONS */}
               <div className="sel-block">
@@ -948,13 +1030,64 @@ export default function InvestigatorWorkspace() {
           </div>
 
           <div className="sidebar-section">
-            <h3>What next?</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              <button className="next-step-btn" onClick={() => navigate("/people")}>Review People</button>
-              <button className="next-step-btn" onClick={() => navigate("/relationships")}>Review Relationships</button>
-              <button className="next-step-btn" onClick={() => navigate("/evidence")}>View All Evidence</button>
-              <button className="next-step-btn" onClick={() => navigate("/timeline")}>Examine Timeline</button>
-              {caseParam && <button className="next-step-btn" onClick={() => navigate(`/cases/${caseParam}`)}>Open Case Overview</button>}
+            <h3 style={{ marginBottom: "12px" }}>What next?</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div className="what-next-item">
+                <div className="what-next-item-header">
+                  <span className="what-next-item-tag">PEOPLE</span>
+                </div>
+                <div className="what-next-item-title">Review Key Persons</div>
+                <div className="what-next-item-desc">Examine suspects, witnesses, and associates linked to this investigation.</div>
+                <button type="button" className="what-next-item-action" onClick={() => navigate("/people")}>
+                  Review People →
+                </button>
+              </div>
+
+              <div className="what-next-item">
+                <div className="what-next-item-header">
+                  <span className="what-next-item-tag">NETWORK</span>
+                </div>
+                <div className="what-next-item-title">Analyze Relationships</div>
+                <div className="what-next-item-desc">Audit multi-hop connections, co-occurrences, and communication patterns.</div>
+                <button type="button" className="what-next-item-action" onClick={() => navigate("/relationships")}>
+                  Review Relationships →
+                </button>
+              </div>
+
+              <div className="what-next-item">
+                <div className="what-next-item-header">
+                  <span className="what-next-item-tag">EVIDENCE</span>
+                </div>
+                <div className="what-next-item-title">Inspect Source Dossiers</div>
+                <div className="what-next-item-desc">Verify forensic files, CDR logs, surveillance feeds, and bank records.</div>
+                <button type="button" className="what-next-item-action" onClick={() => navigate("/evidence")}>
+                  View All Evidence →
+                </button>
+              </div>
+
+              <div className="what-next-item">
+                <div className="what-next-item-header">
+                  <span className="what-next-item-tag">TIMELINE</span>
+                </div>
+                <div className="what-next-item-title">Chronological Sequence</div>
+                <div className="what-next-item-desc">Step through timestamped events, movements, and transaction windows.</div>
+                <button type="button" className="what-next-item-action" onClick={() => navigate("/timeline")}>
+                  Examine Timeline →
+                </button>
+              </div>
+
+              {caseParam && (
+                <div className="what-next-item">
+                  <div className="what-next-item-header">
+                    <span className="what-next-item-tag">OVERVIEW</span>
+                  </div>
+                  <div className="what-next-item-title">Case Dossier</div>
+                  <div className="what-next-item-desc">Return to the primary intelligence dashboard for Case #{caseParam}.</div>
+                  <button type="button" className="what-next-item-action" onClick={() => navigate(`/cases/${caseParam}`)}>
+                    Open Case Overview →
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

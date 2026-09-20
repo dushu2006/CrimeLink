@@ -1,77 +1,63 @@
+import logoPng from "../logo/CrimeLink_Logo.png";
 
 export default function CrimeLinkLogo({
-  className = "h-9 w-auto",
+  className = "sidebar-logo-img",
   showSubtitle = true,
+  variant = "light",
 }: {
   className?: string;
   showSubtitle?: boolean;
+  variant?: "light" | "dark";
 }) {
+  const isLight = variant === "light";
+  const wordmarkColor = isLight ? "#FFFFFF" : "#0F172A";
+  const subtitleColor = isLight ? "#93C5FD" : "#475569";
+
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 240 60"
-      fill="none"
-      className={className}
+    <div
+      className={`crimelink-logo-container ${className}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: "10px" }}
     >
-      {/* Shield and Interconnected Network Nodes Symbol */}
-      <g transform="translate(10, 6)">
-        {/* Shield Outline in Law Enforcement Blue */}
-        <path
-          d="M24 4 L42 10 V24 C42 35 24 44 24 44 C24 44 6 35 6 24 V10 Z"
-          stroke="#1D4ED8"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill="#EFF6FF"
-        />
-        {/* Network Links */}
-        <line x1="24" y1="14" x2="15" y2="22" stroke="#2563EB" strokeWidth="1.5" />
-        <line x1="24" y1="14" x2="33" y2="22" stroke="#2563EB" strokeWidth="1.5" />
-        <line x1="15" y1="22" x2="24" y2="34" stroke="#1D4ED8" strokeWidth="1.5" />
-        <line x1="33" y1="22" x2="24" y2="34" stroke="#1D4ED8" strokeWidth="1.5" />
-        <line
-          x1="15"
-          y1="22"
-          x2="33"
-          y2="22"
-          stroke="#64748B"
-          strokeWidth="1.2"
-          strokeDasharray="2 2"
-        />
-        {/* Central Hub */}
-        <circle cx="24" cy="23" r="4.5" fill="#DBEAFE" stroke="#1D4ED8" strokeWidth="1.5" />
-        {/* Nodes */}
-        <circle cx="24" cy="14" r="2.8" fill="#1D4ED8" />
-        <circle cx="15" cy="22" r="3" fill="#2563EB" />
-        <circle cx="33" cy="22" r="3" fill="#2563EB" />
-        <circle cx="24" cy="34" r="3.2" fill="#1E40AF" />
-        <circle cx="24" cy="23" r="1.8" fill="#1D4ED8" />
-      </g>
-      {/* Brand Wordmark & Subtitle in Deep Navy */}
-      <text
-        x="64"
-        y="28"
-        fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-        fontWeight="800"
-        fontSize="20"
-        fill="#0F172A"
-        letterSpacing="1.2"
-      >
-        CRIMELINK
-      </text>
+      <img
+        src={logoPng}
+        alt="CrimeLink Logo"
+        style={{
+          height: "36px",
+          width: "36px",
+          objectFit: "contain",
+          borderRadius: "8px",
+          flexShrink: 0,
+        }}
+      />
       {showSubtitle && (
-        <text
-          x="64"
-          y="43"
-          fontFamily="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-          fontWeight="600"
-          fontSize="7.5"
-          fill="#475569"
-          letterSpacing="1.5"
-        >
-          INTELLIGENCE PLATFORM
-        </text>
+        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+          <span
+            style={{
+              fontFamily: "var(--cl-font-display, Inter, sans-serif)",
+              fontWeight: 800,
+              fontSize: "16px",
+              letterSpacing: "0.08em",
+              color: wordmarkColor,
+            }}
+          >
+            CRIMELINK
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--cl-font-mono, monospace)",
+              fontSize: "8.5px",
+              fontWeight: 700,
+              letterSpacing: "0.14em",
+              color: subtitleColor,
+              marginTop: "2px",
+              textTransform: "uppercase",
+            }}
+          >
+            Intelligence Platform
+          </span>
+        </div>
       )}
-    </svg>
+    </div>
   );
 }
+

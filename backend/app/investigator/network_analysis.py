@@ -831,15 +831,47 @@ async def analyze_network(
     ai_status = "COMPLETED"
     if not model_section.available:
         reason = model_section.reason or "unknown"
-        if "timeout" in reason.lower():
+        r_lower = reason.lower()
+        if "timeout" in r_lower:
             ai_status = "AI_TIMEOUT"
-            await _report("AI_TIMEOUT", 90, "Reasoning model timed out — deterministic analysis preserved")
-        elif "unavailable" in reason.lower() or "no_api_key" in reason.lower():
-            ai_status = "AI_UNAVAILABLE"
-            await _report("AI_UNAVAILABLE", 90, "Reasoning model unavailable — deterministic analysis preserved")
-        else:
+            await _report("AI_TIMEOUT", 95, "Reasoning model timed out — deterministic analysis preserved")
+        elif (
+            "unparseable" in r_lower
+            or "invalid_json" in r_lower
+            or "invalid_response" in r_lower
+            or (("json" in r_lower or "schema" in r_lower) and "invocation_failed" not in r_lower)
+        ):
             ai_status = "AI_INVALID_RESPONSE"
-            await _report("AI_INVALID_RESPONSE", 90, "Reasoning model invalid response — deterministic analysis preserved")
+            await _report("AI_INVALID_RESPONSE", 95, "Reasoning model response unparseable — deterministic analysis preserved")
+        else:
+            ai_status = "AI_UNAVAILABLE"
+            await _report("AI_UNAVAILABLE", 95, "Reasoning model offline/unavailable — deterministic analysis preserved")
+
+        # Synthesize honest, complete deterministic findings so the narrative is not empty
+        top_comm = (
+            f"{len(centrality.community_members)} community/communities detected."
+            if centrality.community_members
+            else "Single unified cluster."
+        )
+        model_section = ModelSection(
+            available=False,
+            role="investigation_reasoning",
+            reason=model_section.reason,
+            summary=(
+                f"Deterministic network analysis complete for {scope_label(inputs)}. "
+                f"Topology: {len(inputs.snapshot.nodes or {})} nodes, {len(inputs.snapshot.edges or [])} edges, "
+                f"{top_comm} "
+                f"Identified {len(live_patterns)} active pattern(s) and {len(hypotheses)} working hypothesis/hypotheses."
+            ),
+            observation=observation,
+            interpretation=interpretation,
+            assessment=assessment_text,
+            convergence_note=convergence.get("note", ""),
+            caveats=list(model_section.caveats) if model_section.caveats else [
+                "AI reasoning model offline or unavailable; graph metrics, centrality, and community detections are 100% mathematically preserved."
+            ],
+            suggested_next_actions=[s.action for s in steps[:3]],
+        )
     else:
         await _report("VALIDATING", 90, "Validating evidence references and canonical IDs")
 

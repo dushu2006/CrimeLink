@@ -191,12 +191,69 @@ export function RelationshipPanel({ relationship, onViewEvidence, onViewTimeline
       </div>
 
       <div className="next-steps">
-        <h4>Suggested investigation actions</h4>
+        <div className="next-steps-heading-group">
+          <div>
+            <h4 className="next-steps-title">
+              <span className="material-symbols-outlined" style={{ fontSize: "18px", color: "var(--cl-accent, #2563eb)" }}>
+                explore
+              </span>
+              Suggested investigation actions
+            </h4>
+            <div className="next-steps-subtitle">Actionable next steps for this connection</div>
+          </div>
+          <span className="next-steps-badge">ACTIONS</span>
+        </div>
         <ul>
-          <li><button className="next-step-btn" onClick={() => onViewEvidence?.(relationship.evidence_refs?.[0])}>Review {relationship.evidence_refs?.[0] || "E-042"}</button></li>
-          <li><button className="next-step-btn" onClick={onViewTimeline}>Examine {relationship.source_person} timeline</button></li>
-          {relationship.hop_count && relationship.hop_count > 1 && <li><button className="next-step-btn" onClick={() => onFocusPerson?.(relationship.source_real_key || "")}>Investigate {relationship.hop_count}-hop connection</button></li>}
-          <li><button className="next-step-btn" onClick={() => onViewEvidence?.()}>Review conflicting evidence</button></li>
+          <li>
+            <button
+              type="button"
+              className="next-step-btn"
+              onClick={() => onViewEvidence?.(relationship.evidence_refs?.[0])}
+            >
+              <span className="material-symbols-outlined next-step-btn-icon">description</span>
+              <div className="next-step-btn-body">
+                <span className="next-step-btn-title">Review {relationship.evidence_refs?.[0] || "Evidence"}</span>
+                <span className="next-step-btn-desc">Inspect primary supporting record</span>
+              </div>
+              <span className="next-step-btn-arrow">→</span>
+            </button>
+          </li>
+          <li>
+            <button type="button" className="next-step-btn" onClick={onViewTimeline}>
+              <span className="material-symbols-outlined next-step-btn-icon">schedule</span>
+              <div className="next-step-btn-body">
+                <span className="next-step-btn-title">Examine timeline</span>
+                <span className="next-step-btn-desc">{relationship.source_person} chronological history</span>
+              </div>
+              <span className="next-step-btn-arrow">→</span>
+            </button>
+          </li>
+          {relationship.hop_count && relationship.hop_count > 1 && (
+            <li>
+              <button
+                type="button"
+                className="next-step-btn"
+                onClick={() => onFocusPerson?.(relationship.source_real_key || "")}
+              >
+                <span className="material-symbols-outlined next-step-btn-icon">hub</span>
+                <div className="next-step-btn-body">
+                  <span className="next-step-btn-title">Investigate multi-hop</span>
+                  <span className="next-step-btn-desc">{relationship.hop_count}-hop connection pathway</span>
+                </div>
+                <span className="next-step-btn-arrow">→</span>
+              </button>
+            </li>
+          )}
+          <li>
+            <button type="button" className="next-step-btn" onClick={() => onViewEvidence?.()}>
+              <span className="material-symbols-outlined next-step-btn-icon">rule</span>
+              <div className="next-step-btn-body">
+                <span className="next-step-btn-title">Review conflicting evidence</span>
+                <span className="next-step-btn-desc">Audit discrepancies and data limitations</span>
+              </div>
+              <span className="next-step-btn-arrow">→</span>
+            </button>
+          </li>
         </ul>
       </div>
     </div>

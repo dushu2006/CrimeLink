@@ -62,35 +62,45 @@ def _pace() -> None:
 
 
 def call(path: str, token: str | None = None) -> tuple[int, dict | list | None]:
-    _pace()
-    req = urllib.request.Request(
-        BASE + path, headers={"Authorization": f"Bearer {token or TOKEN}"}
-    )
-    try:
-        with urllib.request.urlopen(req) as r:
-            body = r.read()
-            try:
-                return r.status, json.loads(body or b"{}")
-            except json.JSONDecodeError:
-                return r.status, {"_raw": body}
-    except urllib.error.HTTPError as e:
-        body = e.read()
+    for attempt in range(4):
+        _pace()
+        req = urllib.request.Request(
+            BASE + path, headers={"Authorization": f"Bearer {token or TOKEN}"}
+        )
         try:
-            return e.code, json.loads(body or b"{}")
-        except json.JSONDecodeError:
-            return e.code, {"_raw": body}
+            with urllib.request.urlopen(req) as r:
+                body = r.read()
+                try:
+                    return r.status, json.loads(body or b"{}")
+                except json.JSONDecodeError:
+                    return r.status, {"_raw": body}
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 3:
+                time.sleep(1.5)
+                continue
+            body = e.read()
+            try:
+                return e.code, json.loads(body or b"{}")
+            except json.JSONDecodeError:
+                return e.code, {"_raw": body}
+    return 500, {}
 
 
 def raw(path: str, token: str | None = None) -> tuple[int, str, bytes]:
-    _pace()
-    req = urllib.request.Request(
-        BASE + path, headers={"Authorization": f"Bearer {token or TOKEN}"}
-    )
-    try:
-        with urllib.request.urlopen(req) as r:
-            return r.status, r.headers.get("content-type", ""), r.read()
-    except urllib.error.HTTPError as e:
-        return e.code, "", e.read()
+    for attempt in range(4):
+        _pace()
+        req = urllib.request.Request(
+            BASE + path, headers={"Authorization": f"Bearer {token or TOKEN}"}
+        )
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.headers.get("content-type", ""), r.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 3:
+                time.sleep(1.5)
+                continue
+            return e.code, "", e.read()
+    return 500, "", b""
 
 
 def q(path: str) -> str:

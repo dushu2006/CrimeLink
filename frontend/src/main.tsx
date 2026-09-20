@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./styles.css";
+import "@fontsource/material-symbols-outlined/latin.css";
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>

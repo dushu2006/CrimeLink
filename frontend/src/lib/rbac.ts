@@ -137,8 +137,7 @@ export function canAccessRoute(role: Role | null | undefined, path: string): boo
   // Investigator-only routes
   if (lower.startsWith("/investigate")) return perms.investigateRelationship;
   if (lower.startsWith("/patterns")) return perms.viewPatterns;
-  if (lower.startsWith("/attention")) return perms.viewAttention;
-  if (lower.startsWith("/review")) return perms.canReview || perms.viewAttention;
+  if (lower.startsWith("/review")) return perms.canReview;
   if (lower.startsWith("/admin")) return perms.adminAccess;
 
   // Investigator Activity — both Viewer (read-only) and Investigator (full)

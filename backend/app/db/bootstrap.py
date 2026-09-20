@@ -456,7 +456,7 @@ def check_demo_dataset_status(settings: Settings | None = None) -> Tuple[str, st
         graph_backend = settings.effective_graph_backend
         if graph_backend == "embedded":
             from app.adapters.graph.embedded import EmbeddedGraphStore
-            store = EmbeddedGraphStore(settings)
+            store = EmbeddedGraphStore(settings, persist=False)
             try:
                 node_count = store._graph.number_of_nodes()
                 if node_count < 50:

@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Cases from "./pages/Cases";
 import { setUnauthorizedHandler } from "./api/client";
 import { useAuth } from "./store/auth";
+import LogoIntro from "./components/LogoIntro";
 
 const CaseWorkspace = lazy(() => import("./pages/CaseWorkspace"));
 const PeoplePage = lazy(() => import("./pages/PeoplePage"));
@@ -47,10 +48,19 @@ function PageSkeleton() {
     </div>
   );
 }
-
 export default function App() {
   const session = useAuth((state) => state.session);
   const [datasetVersion, setDatasetVersion] = useState(0);
+  // Track whether the logo intro animation has finished for this authenticated session/load
+  const [introFinished, setIntroFinished] = useState(false);
+
+  // When session becomes active (e.g. login), ensure intro runs
+  useEffect(() => {
+    if (!session) {
+      setIntroFinished(false);
+    }
+  }, [session]);
+
   useEffect(() => {
     function onDatasetChanged() {
       setDatasetVersion((v) => v + 1);
@@ -68,49 +78,53 @@ export default function App() {
   }
 
   return (
-    <ErrorBoundary>
-      <Routes key={datasetVersion}>
-        <Route element={<Layout />}>
-          <Route index element={<Navigate to="/cases" replace />} />
-          <Route path="/cases" element={<Cases />} />
-          <Route path="/cases/dashboard" element={<Suspense fallback={<PageSkeleton />}><CaseDashboardPage /></Suspense>} />
-          <Route path="/cases/:caseId" element={<Suspense fallback={<PageSkeleton />}><CaseWorkspace /></Suspense>} />
-          <Route path="/cases/:caseId/graph" element={<Suspense fallback={<PageSkeleton />}><GraphPage /></Suspense>} />
+    <>
+      {!introFinished && (
+        <LogoIntro onComplete={() => setIntroFinished(true)} />
+      )}
+      <ErrorBoundary>
+        <Routes key={datasetVersion}>
+          <Route element={<Layout />}>
+            <Route index element={<Navigate to="/cases" replace />} />
+            <Route path="/cases" element={<Cases />} />
+            <Route path="/cases/dashboard" element={<Suspense fallback={<PageSkeleton />}><CaseDashboardPage /></Suspense>} />
+            <Route path="/cases/:caseId" element={<Suspense fallback={<PageSkeleton />}><CaseWorkspace /></Suspense>} />
+            <Route path="/cases/:caseId/graph" element={<Suspense fallback={<PageSkeleton />}><GraphPage /></Suspense>} />
 
-          {/* VIEW — both INVESTIGATOR and VIEWER */}
-          <Route path="/people" element={<Suspense fallback={<PageSkeleton />}><PeoplePage /></Suspense>} />
-          <Route path="/relationships" element={<Suspense fallback={<PageSkeleton />}><RelationshipsPage /></Suspense>} />
-          <Route path="/evidence" element={<Suspense fallback={<PageSkeleton />}><EvidencePage /></Suspense>} />
-          <Route path="/timeline" element={<Suspense fallback={<PageSkeleton />}><TimelinePage /></Suspense>} />
-          {/* Investigator Activity — both roles, Viewer read-only */}
-          <Route path="/activity" element={<Suspense fallback={<PageSkeleton />}><InvestigatorActivityPage /></Suspense>} />
+            {/* VIEW — both INVESTIGATOR and VIEWER */}
+            <Route path="/people" element={<Suspense fallback={<PageSkeleton />}><PeoplePage /></Suspense>} />
+            <Route path="/relationships" element={<Suspense fallback={<PageSkeleton />}><RelationshipsPage /></Suspense>} />
+            <Route path="/evidence" element={<Suspense fallback={<PageSkeleton />}><EvidencePage /></Suspense>} />
+            <Route path="/timeline" element={<Suspense fallback={<PageSkeleton />}><TimelinePage /></Suspense>} />
+            {/* Investigator Activity — both roles, Viewer read-only */}
+            <Route path="/activity" element={<Suspense fallback={<PageSkeleton />}><InvestigatorActivityPage /></Suspense>} />
 
-          {/* SEARCH — Investigator only after audit */}
-          <Route path="/search" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><GlobalSearchPage /></Suspense></ProtectedRoute>} />
+            {/* SEARCH — Investigator only after audit */}
+            <Route path="/search" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><GlobalSearchPage /></Suspense></ProtectedRoute>} />
 
-          {/* INVESTIGATE — INVESTIGATOR only */}
-          <Route path="/investigate" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><InvestigatorWorkspace /></Suspense></ProtectedRoute>} />
+            {/* INVESTIGATE — INVESTIGATOR only */}
+            <Route path="/investigate" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><InvestigatorWorkspace /></Suspense></ProtectedRoute>} />
 
-          {/* Legacy compatibility — same as VIEW */}
-          <Route path="/entities" element={<Suspense fallback={<PageSkeleton />}><Entities /></Suspense>} />
-          <Route path="/entities/:entityKey" element={<Suspense fallback={<PageSkeleton />}><EntityDetail /></Suspense>} />
-          <Route path="/documents" element={<Suspense fallback={<PageSkeleton />}><Documents /></Suspense>} />
-          <Route path="/documents/:docId" element={<Suspense fallback={<PageSkeleton />}><DocumentDetail /></Suspense>} />
-          <Route path="/sources" element={<Suspense fallback={<PageSkeleton />}><SourceBrowser /></Suspense>} />
+            {/* Legacy compatibility — same as VIEW */}
+            <Route path="/entities" element={<Suspense fallback={<PageSkeleton />}><Entities /></Suspense>} />
+            <Route path="/entities/:entityKey" element={<Suspense fallback={<PageSkeleton />}><EntityDetail /></Suspense>} />
+            <Route path="/documents" element={<Suspense fallback={<PageSkeleton />}><Documents /></Suspense>} />
+            <Route path="/documents/:docId" element={<Suspense fallback={<PageSkeleton />}><DocumentDetail /></Suspense>} />
+            <Route path="/sources" element={<Suspense fallback={<PageSkeleton />}><SourceBrowser /></Suspense>} />
 
-          {/* INTELLIGENCE — INVESTIGATOR only */}
-          <Route path="/patterns" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
-          <Route path="/attention" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
-          <Route path="/review" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
+            {/* INTELLIGENCE — INVESTIGATOR only */}
+            <Route path="/patterns" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
+            <Route path="/review" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
 
-          {/* SYSTEM */}
-          <Route path="/audit" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "AUDITOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
-          <Route path="/admin" element={<ProtectedRoute requiredRoles={["ADMIN", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Admin /></Suspense></ProtectedRoute>} />
-          <Route path="/admin/:section" element={<ProtectedRoute requiredRoles={["ADMIN", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Admin /></Suspense></ProtectedRoute>} />
+            {/* SYSTEM */}
+            <Route path="/audit" element={<ProtectedRoute requiredRoles={["INVESTIGATOR", "ADMIN", "SUPERVISOR", "AUDITOR", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Review /></Suspense></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute requiredRoles={["ADMIN", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Admin /></Suspense></ProtectedRoute>} />
+            <Route path="/admin/:section" element={<ProtectedRoute requiredRoles={["ADMIN", "STATION_ADMIN", "DISTRICT_ADMIN", "SUPER_ADMIN"]}><Suspense fallback={<PageSkeleton />}><Admin /></Suspense></ProtectedRoute>} />
 
-          <Route path="*" element={<Navigate to="/cases" replace />} />
-        </Route>
-      </Routes>
-    </ErrorBoundary>
+            <Route path="*" element={<Navigate to="/cases" replace />} />
+          </Route>
+        </Routes>
+      </ErrorBoundary>
+    </>
   );
 }

@@ -263,30 +263,32 @@ export function EvidenceDrawer({ data, evidence, open, onClose, onViewGraph, onO
 
           {payload && doc && (
             <>
-              <div className="evidence-drawer-field">
-                <span className="evidence-drawer-label">File</span>
-                <span className="evidence-drawer-value evidence-drawer-mono">{doc.filename}</span>
-              </div>
+              <div className="evidence-drawer-grid">
+                <div className="evidence-drawer-field">
+                  <span className="evidence-drawer-label">File</span>
+                  <span className="evidence-drawer-value evidence-drawer-mono">{doc.filename}</span>
+                </div>
 
-              <div className="evidence-drawer-field">
-                <span className="evidence-drawer-label">Type</span>
-                <span className="evidence-drawer-value">{humanType(doc.document_type)}</span>
-              </div>
+                <div className="evidence-drawer-field">
+                  <span className="evidence-drawer-label">Type</span>
+                  <span className="evidence-drawer-value">{humanType(doc.document_type)}</span>
+                </div>
 
-              <div className="evidence-drawer-field">
-                <span className="evidence-drawer-label">Date</span>
-                <span className="evidence-drawer-value">
-                  {doc.created_at
-                    ? new Date(doc.created_at).toLocaleString()
-                    : "Timestamp unavailable"}
-                </span>
-              </div>
+                <div className="evidence-drawer-field">
+                  <span className="evidence-drawer-label">Date</span>
+                  <span className="evidence-drawer-value">
+                    {doc.created_at
+                      ? new Date(doc.created_at).toLocaleString()
+                      : "Timestamp unavailable"}
+                  </span>
+                </div>
 
-              <div className="evidence-drawer-field">
-                <span className="evidence-drawer-label">Size / media type</span>
-                <span className="evidence-drawer-value">
-                  {formatBytes(file?.size_bytes ?? doc.size_bytes)} · {doc.media_type ?? "unknown"}
-                </span>
+                <div className="evidence-drawer-field">
+                  <span className="evidence-drawer-label">Size / media type</span>
+                  <span className="evidence-drawer-value">
+                    {formatBytes(file?.size_bytes ?? doc.size_bytes)} · {doc.media_type ?? "unknown"}
+                  </span>
+                </div>
               </div>
 
               {/* CASE — real, from the resolved document */}

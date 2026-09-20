@@ -78,9 +78,9 @@ const JOB_STAGE_LABELS: Record<string, string> = {
   VALIDATING: "Validating evidence references & canonical IDs",
   GENERATING_EXPLANATION: "Generating investigator explanation",
   COMPLETED: "Completed",
-  AI_UNAVAILABLE: "AI unavailable — deterministic preserved",
-  AI_TIMEOUT: "AI timeout — deterministic preserved",
-  AI_INVALID_RESPONSE: "AI invalid response — deterministic preserved",
+  AI_UNAVAILABLE: "AI reasoning offline — deterministic analysis complete",
+  AI_TIMEOUT: "AI timed out — deterministic analysis complete",
+  AI_INVALID_RESPONSE: "AI response invalid — deterministic analysis complete",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
 };
@@ -266,12 +266,12 @@ export function NetworkAnalysisPanel({ initialCaseId }: NetworkAnalysisPanelProp
     (mode === "master" || (mode === "case" && Boolean(caseId)) || (mode === "person" && Boolean(personKey)));
 
   return (
-    <section className="panel inv-network-analysis" aria-labelledby="na-title">
-      <div className="inv-objective-head">
-        <h2 id="na-title">Network analysis — three scopes</h2>
-        <span className="badge badge-navy">{mode} scope</span>
+    <section className="panel inv-network-analysis" aria-labelledby="na-title" style={{ scrollMarginTop: "80px", paddingTop: "20px" }}>
+      <div className="inv-objective-head" style={{ marginBottom: "6px" }}>
+        <h2 id="na-title" style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>Network analysis — three scopes</h2>
+        <span className="badge badge-navy" style={{ textTransform: "uppercase" }}>{mode} scope</span>
       </div>
-      <p className="muted">
+      <p className="muted" style={{ marginBottom: "16px", lineHeight: "1.5" }}>
         Three distinct, non-interchangeable graphs over one active dataset. Nothing runs on its
         own — pick a scope, then RUN NETWORK ANALYSIS. Metrics are structural (degree, weighted
         degree, betweenness, PageRank, community, cross-case); none of them is a criminality score.
@@ -337,24 +337,68 @@ export function NetworkAnalysisPanel({ initialCaseId }: NetworkAnalysisPanelProp
 
       {/* ---- honest progress ------------------------------------------- */}
       {job && (
-        <div className="inv-progress" style={{ marginTop: "var(--space-3)" }}>
-          <h4>Network analysis job — honest progress</h4>
-          <p className="muted">
+        <div
+          className="inv-progress"
+          style={{
+            marginTop: "var(--space-3)",
+            padding: "16px 18px",
+            background: "var(--cl-bg-elevated, #f8fafc)",
+            borderRadius: "var(--cl-r-lg, 12px)",
+            border: "1px solid var(--cl-border, #e2e8f0)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+            <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: "var(--cl-ink, #0f172a)" }}>
+              Network analysis job — honest progress
+            </h4>
+            {job.terminal && (
+              <span
+                style={{
+                  background:
+                    job.status === "COMPLETED" || Boolean(result) || job.status.startsWith("AI_")
+                      ? "#dcfce7"
+                      : "#fee2e2",
+                  color:
+                    job.status === "COMPLETED" || Boolean(result) || job.status.startsWith("AI_")
+                      ? "#15803d"
+                      : "#b91c1c",
+                  fontWeight: 600,
+                  fontSize: "11.5px",
+                  padding: "3px 10px",
+                  borderRadius: "999px",
+                  border: `1px solid ${
+                    job.status === "COMPLETED" || Boolean(result) || job.status.startsWith("AI_")
+                      ? "#bbf7d0"
+                      : "#fecaca"
+                  }`,
+                }}
+              >
+                {job.status === "COMPLETED"
+                  ? "Analysis Complete"
+                  : job.status.startsWith("AI_")
+                  ? "Deterministic Analysis Preserved"
+                  : job.status}
+              </span>
+            )}
+          </div>
+          <p className="muted" style={{ marginTop: "6px", marginBottom: "8px", fontSize: "12.5px" }}>
             Job {job.id.slice(0, 8)} · {JOB_STAGE_LABELS[job.stage] ?? job.stage} ·{" "}
             {job.progress_pct}% · {job.message}
           </p>
-          <div style={{ background: "#eee", height: 8, borderRadius: 4, overflow: "hidden", margin: "8px 0" }}>
+          <div style={{ background: "#e2e8f0", height: 8, borderRadius: 4, overflow: "hidden", margin: "8px 0" }}>
             <div
               style={{
                 width: `${job.progress_pct}%`,
-                background: job.terminal ? (job.status === "COMPLETED" ? "#2a7" : "#c77") : "#4a8",
+                background: job.terminal
+                  ? (job.status === "COMPLETED" || Boolean(result) || job.status.startsWith("AI_") ? "#10b981" : "#ef4444")
+                  : "#3b82f6",
                 height: "100%",
-                transition: "width 0.5s",
+                transition: "width 0.4s ease-in-out",
               }}
             />
           </div>
           {job.steps && job.steps.length > 0 && (
-            <ul className="kv" style={{ fontSize: "var(--text-xs)" }}>
+            <ul className="kv" style={{ fontSize: "var(--text-xs)", marginTop: "8px" }}>
               {job.steps.slice(-8).map((s, i) => (
                 <li key={i}>
                   <dt>{JOB_STAGE_LABELS[s.stage] ?? s.stage}</dt>

@@ -788,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
 
     info("Starting CrimeLink backend …")
     api = subprocess.Popen(
-        [str(py), "-m", "uvicorn", "app.main:create_app", "--factory", "--app-dir", str(BACKEND), "--host", "0.0.0.0", "--port", "8000"],
+        [str(py), "-m", "uvicorn", "app.main:create_app", "--factory", "--app-dir", str(BACKEND), "--host", "0.0.0.0", "--port", "8000", "--reload"],
         cwd=ROOT,
         env=env,
     )

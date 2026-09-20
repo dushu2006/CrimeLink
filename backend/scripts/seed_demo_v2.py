@@ -376,19 +376,21 @@ def gen_person(idx: int) -> dict[str, Any]:
     full_name = f"{first} {last}"
     pid = person_id(idx)
     dob = fake.date_of_birth(minimum_age=20, maximum_age=65)
-    roles = ["SUSPECT", "PERSON_OF_INTEREST", "WITNESS", "VICTIM", "ASSOCIATE", "INFORMANT"]
+    roles = ["SUSPECT", "PERSON_OF_INTEREST", "WITNESS", "VICTIM", "ASSOCIATE", "INFORMANT", "ACCUSED", "CONVICTED"]
     role_idx = (idx * 7 + 3) % len(roles)
     # Hero: PERSON-001 is suspect in hero case (index 0)
     if idx == 0:
-        role = "SUSPECT"
+        role = "ACCUSED"
     elif idx in (1, 2):
         role = "ACCOMPLICE"
     elif idx in (3, 4):
         role = "VICTIM"
     elif idx < 15:
         role = "PERSON_OF_INTEREST"
+    elif idx % 6 == 0 and idx < 95:
+        role = "ACCUSED"
     else:
-        role = roles[role_idx] if roles[role_idx] not in ("SUSPECT",) else "ASSOCIATE"
+        role = roles[role_idx] if roles[role_idx] not in ("SUSPECT", "ACCUSED", "CONVICTED") else "ASSOCIATE"
 
     # Aliases
     alias_count = (idx % 3)
@@ -2071,6 +2073,10 @@ CONFIRMED_CRIMINAL_STATUSES = {"CONFIRMED", "CONVICTED", "ACCUSED", "CHARGESHEET
 #: must never earn a ★.
 CRIMINAL_STATUS_BY_ROLE: dict[str, str] = {
     "ACCOMPLICE": "CONFIRMED",
+    "ACCUSED": "ACCUSED",
+    "CONVICTED": "CONVICTED",
+    "CHARGESHEETED": "CHARGESHEETED",
+    "PERPETRATOR": "CONFIRMED",
 }
 
 

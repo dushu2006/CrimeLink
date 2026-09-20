@@ -40,8 +40,8 @@ export function CaseHeader({ caseId, status, peopleCount, relationshipsCount, ev
           <span className="case-stat-value">{evidenceCount}</span>
           <span className="case-stat-label">Evidence</span>
         </div>
-        <div className="case-stat">
-          <span className="case-stat-value">{lastActivity}</span>
+        <div className="case-stat case-stat-wide">
+          <span className="case-stat-value-sm" title={lastActivity}>{lastActivity}</span>
           <span className="case-stat-label">Last activity</span>
         </div>
       </div>

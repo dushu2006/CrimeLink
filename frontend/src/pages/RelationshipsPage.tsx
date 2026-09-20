@@ -246,13 +246,15 @@ export default function RelationshipsPage() {
               )}
             </div>
 
-            <div className="classification-legend" style={{ marginTop: "16px", padding: "12px", background: "var(--surface-secondary)", borderRadius: "8px", border: "1px solid var(--border-secondary)" }}>
-              <h4 style={{ fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>Classification <span title="What records directly establish vs inference">ⓘ</span></h4>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "11px" }}>
-                <div><ClassificationBadge classification="FACT" /> What records directly establish.</div>
-                <div><ClassificationBadge classification="INFERENCE" /> What follows reasonably from evidence.</div>
-                <div><ClassificationBadge classification="HYPOTHESIS" /> What may warrant further investigation.</div>
-                <div><ClassificationBadge classification="UNKNOWN" /> What current evidence cannot establish.</div>
+            <div className="classification-legend" style={{ marginTop: "16px", padding: "14px", background: "var(--cl-surface, #ffffff)", borderRadius: "var(--cl-r-lg, 12px)", border: "1px solid var(--cl-border, #e2e8f0)", boxShadow: "0 2px 8px -2px rgba(15, 23, 42, 0.04)" }}>
+              <h4 style={{ fontSize: "13px", fontWeight: 700, color: "var(--cl-ink, #0f172a)", marginBottom: "10px", display: "flex", alignItems: "center", gap: "6px" }}>
+                Classification <span title="What records directly establish vs inference" style={{ cursor: "help", color: "var(--cl-text-3, #94a3b8)", fontSize: "13px" }}>ⓘ</span>
+              </h4>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "12px", color: "var(--cl-text-2, #334155)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}><ClassificationBadge classification="FACT" /> <span>What records directly establish.</span></div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}><ClassificationBadge classification="INFERENCE" /> <span>What follows reasonably from evidence.</span></div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}><ClassificationBadge classification="HYPOTHESIS" /> <span>What may warrant further investigation.</span></div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}><ClassificationBadge classification="UNKNOWN" /> <span>What current evidence cannot establish.</span></div>
               </div>
             </div>
 
@@ -282,20 +284,101 @@ export default function RelationshipsPage() {
               </div>
             )}
 
-            <div className="next-steps" style={{ marginTop: "16px", padding: "12px", background: "var(--surface-secondary)", borderRadius: "8px" }}>
-              <h4 style={{ fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>What can you do next?</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div className="next-steps" style={{ marginTop: "16px" }}>
+              <div className="next-steps-heading-group">
+                <div>
+                  <h4 className="next-steps-title">
+                    <span className="material-symbols-outlined" style={{ fontSize: "18px", color: "var(--cl-accent, #2563eb)" }}>
+                      explore
+                    </span>
+                    What can you do next?
+                  </h4>
+                  <div className="next-steps-subtitle">Recommended investigative actions</div>
+                </div>
+                <span className="next-steps-badge">ACTIONS</span>
+              </div>
+              <ul>
                 {selected?.evidence_refs?.[0] && (
-                  <li><button className="next-step-btn" onClick={() => { setEvidenceData({ id: selected.evidence_refs[0], title: selected.evidence_refs[0] }); setShowEvidence(true); }}>→ Review {selected.evidence_refs[0]} — Evidence supporting</button></li>
+                  <li>
+                    <button
+                      type="button"
+                      className="next-step-btn"
+                      onClick={() => {
+                        setEvidenceData({ id: selected.evidence_refs[0], title: selected.evidence_refs[0] });
+                        setShowEvidence(true);
+                      }}
+                    >
+                      <span className="material-symbols-outlined next-step-btn-icon">description</span>
+                      <div className="next-step-btn-body">
+                        <span className="next-step-btn-title">Review {selected.evidence_refs[0]}</span>
+                        <span className="next-step-btn-desc">Supporting evidence & source documentation</span>
+                      </div>
+                      <span className="next-step-btn-arrow">→</span>
+                    </button>
+                  </li>
                 )}
-                <li><button className="next-step-btn" onClick={() => navigate(`/timeline?case=${caseParam || ""}`)}>→ Examine timeline — When?</button></li>
-                {investigator && <li><button className="next-step-btn" onClick={() => setShowContradiction(!showContradiction)}>→ Review supporting records — Limitations</button></li>}
-                <li><button className="next-step-btn" onClick={() => navigate(`/evidence?case=${caseParam || ""}`)}>→ Open source record — Provenance</button></li>
-                <li><button className="next-step-btn" onClick={() => navigate(`/people?case=${caseParam || ""}`)}>← Back to People — Who is involved?</button></li>
+                <li>
+                  <button
+                    type="button"
+                    className="next-step-btn"
+                    onClick={() => navigate(`/timeline?case=${caseParam || ""}`)}
+                  >
+                    <span className="material-symbols-outlined next-step-btn-icon">schedule</span>
+                    <div className="next-step-btn-body">
+                      <span className="next-step-btn-title">Examine timeline</span>
+                      <span className="next-step-btn-desc">Chronological sequence · When?</span>
+                    </div>
+                    <span className="next-step-btn-arrow">→</span>
+                  </button>
+                </li>
+                {investigator && (
+                  <li>
+                    <button
+                      type="button"
+                      className="next-step-btn"
+                      onClick={() => setShowContradiction(!showContradiction)}
+                    >
+                      <span className="material-symbols-outlined next-step-btn-icon">rule</span>
+                      <div className="next-step-btn-body">
+                        <span className="next-step-btn-title">Review supporting records</span>
+                        <span className="next-step-btn-desc">Evidentiary limitations & contradictions</span>
+                      </div>
+                      <span className="next-step-btn-arrow">{showContradiction ? "▲" : "→"}</span>
+                    </button>
+                  </li>
+                )}
+                <li>
+                  <button
+                    type="button"
+                    className="next-step-btn"
+                    onClick={() => navigate(`/evidence?case=${caseParam || ""}`)}
+                  >
+                    <span className="material-symbols-outlined next-step-btn-icon">folder_open</span>
+                    <div className="next-step-btn-body">
+                      <span className="next-step-btn-title">Open source record</span>
+                      <span className="next-step-btn-desc">Original evidence dossier & provenance</span>
+                    </div>
+                    <span className="next-step-btn-arrow">→</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    className="next-step-btn"
+                    onClick={() => navigate(`/people?case=${caseParam || ""}`)}
+                  >
+                    <span className="material-symbols-outlined next-step-btn-icon">group</span>
+                    <div className="next-step-btn-body">
+                      <span className="next-step-btn-title">Back to People</span>
+                      <span className="next-step-btn-desc">Person directory · Who is involved?</span>
+                    </div>
+                    <span className="next-step-btn-arrow">←</span>
+                  </button>
+                </li>
               </ul>
             </div>
 
-            <div className="ai-explanation-footer" style={{ marginTop: "12px", padding: "8px", background: "#f8fafc", borderRadius: "6px", fontSize: "10px", fontFamily: "var(--font-mono)", color: "var(--muted)" }}>
+            <div className="ai-explanation-footer" style={{ marginTop: "14px", padding: "10px 14px", background: "#f8fafc", borderRadius: "var(--cl-r-md, 8px)", border: "1px solid #e2e8f0", fontSize: "11px", color: "var(--cl-text-3, #64748b)", lineHeight: "1.5" }}>
               Based only on evidence shown above. Unsupported claims excluded by grounding validation. {investigator ? "" : "Read-only viewer — investigation actions require Investigator role."}
             </div>
           </div>

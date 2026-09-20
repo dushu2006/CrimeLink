@@ -13,6 +13,7 @@
     "smoke": "npm run build && node smoke.mjs"
   },
   "dependencies": {
+    "@fontsource/material-symbols-outlined": "^5.3.6",
     "cytoscape": "^3.34.3",
     "cytoscape-fcose": "2.2.0",
     "react": "18.3.1",

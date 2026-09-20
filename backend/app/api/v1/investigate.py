@@ -152,14 +152,19 @@ async def start_network_analysis(
             )
             status = str(result.get("status", "COMPLETED"))
             terminal_status = status if status in TERMINAL_STATUSES else "COMPLETED"
+            is_done = terminal_status in ("COMPLETED", "AI_UNAVAILABLE", "AI_TIMEOUT", "AI_INVALID_RESPONSE")
             await reporter.update(
                 status=terminal_status,
                 stage="COMPLETED" if terminal_status == "COMPLETED" else status,
-                progress_pct=100 if terminal_status == "COMPLETED" else 90,
+                progress_pct=100 if is_done else 90,
                 message=(
                     "Network analysis completed"
                     if terminal_status == "COMPLETED"
-                    else f"Deterministic network analysis preserved ({terminal_status})"
+                    else (
+                        "Deterministic network analysis completed (AI offline)"
+                        if terminal_status == "AI_UNAVAILABLE"
+                        else f"Deterministic network analysis preserved ({terminal_status})"
+                    )
                 ),
                 result=result,
             )

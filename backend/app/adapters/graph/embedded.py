@@ -142,7 +142,7 @@ class EmbeddedGraphStore:
         if self.persist:
             self.settings.ensure_directories()
             self._lock_file = _acquire_process_lock(self.snapshot_path)
-            self._load()
+        self._load()
 
     # ------------------------------------------------------------------ io
     @property

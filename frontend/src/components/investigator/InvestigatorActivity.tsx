@@ -76,86 +76,186 @@ export function InvestigatorActivity({ activities, onViewEvidence, onViewTimelin
         </div>
       </div>
 
-      <div className="activity-list" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div className="activity-list" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
         {activities.map((activity) => (
-          <div key={activity.id} className="activity-card" style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px" }}>
-            <div className="activity-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-              <div>
-                <div style={{ fontFamily: "var(--font-mono)", fontSize: "11px", fontWeight: 600 }}>Investigation: {activity.id}</div>
-                <div style={{ fontSize: "12px", color: "var(--muted)" }}>Investigator: {activity.investigatorName || activity.investigator} ({activity.investigator})</div>
-                <div style={{ fontSize: "12px", color: "var(--muted)" }}>Case: {activity.caseNumber || activity.caseId}</div>
+          <div key={activity.id} className="activity-card-executive">
+            {/* Header: Investigation ID, Investigator & Case info + Status Badges */}
+            <div className="activity-exec-header">
+              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: "var(--cl-font-mono)", fontSize: "12px", fontWeight: 800, color: "var(--cl-accent)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                    Investigation {activity.id}
+                  </span>
+                  <span style={{ fontSize: "11px", color: "var(--cl-text-3)" }}>•</span>
+                  <span style={{ fontFamily: "var(--cl-font-mono)", fontSize: "12px", fontWeight: 700, color: "var(--cl-ink)" }}>
+                    Case: {activity.caseNumber || activity.caseId}
+                  </span>
+                </div>
+                <div style={{ fontSize: "12.5px", color: "var(--cl-text-2)", marginTop: "2px" }}>
+                  <strong>Investigator:</strong> {activity.investigatorName || activity.investigator}
+                  <span style={{ color: "var(--cl-text-3)", marginLeft: "4px" }}>({activity.investigator})</span>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <span className={`badge badge-${activity.evidenceStrength === "HIGH" ? "success" : activity.evidenceStrength === "MODERATE" ? "info" : "warn"}`}>{activity.evidenceStrength}</span>
-                <span className={`badge badge-${activity.classification === "FACT" ? "success" : "info"}`}>{activity.classification}</span>
+
+              <div className="activity-exec-badges">
+                {activity.confidence !== undefined && (
+                  <span className="cl-badge cl-badge-info" style={{ fontFamily: "var(--cl-font-mono)", fontWeight: 700 }}>
+                    {(activity.confidence * 100).toFixed(0)}% Confidence
+                  </span>
+                )}
+                <span className={`cl-badge ${activity.evidenceStrength === "HIGH" ? "cl-badge-success" : activity.evidenceStrength === "MODERATE" ? "cl-badge-info" : "cl-badge-warning"}`}>
+                  Strength: {activity.evidenceStrength}
+                </span>
+                <span className={`cl-badge ${activity.classification === "FACT" ? "cl-badge-success" : "cl-badge-accent"}`}>
+                  {activity.classification}
+                </span>
               </div>
             </div>
 
-            <div className="activity-body" style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "12px" }}>
-              <div><strong>Subject:</strong> {activity.subject}</div>
-              <div><strong>Finding:</strong> {activity.finding}</div>
-              {activity.narrative && <div><strong>Narrative:</strong> {activity.narrative}</div>}
-              {activity.reason && <div><strong>Reason:</strong> {activity.reason}</div>}
-              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
-                <strong>Evidence:</strong>
-                {activity.evidence.length > 0 ? activity.evidence.map((ev) => (
-                  <button key={ev} className="evidence-chip clickable" onClick={() => onViewEvidence?.(ev)}>{ev} ↗</button>
-                )) : <span style={{ color: "#94a3b8" }}>No evidence refs</span>}
+            {/* Finding Banner */}
+            <div className="activity-summary-banner">
+              <div className="activity-finding-heading">
+                <span className="material-symbols-outlined" style={{ fontSize: 18, color: "var(--cl-accent)" }}>verified</span>
+                Finding: {activity.finding}
               </div>
-              <div><strong>Evidence Strength:</strong> {activity.evidenceStrength} — {activity.evidence.length} independently sourced record(s)</div>
-              <div><strong>Classification:</strong> {activity.classification} — {activity.classification === "FACT" ? "What records directly establish" : "What follows reasonably from evidence"}</div>
-              {activity.confidence !== undefined && <div><strong>Confidence:</strong> {(activity.confidence * 100).toFixed(0)}% ({activity.confidenceBand})</div>}
-              <div><strong>Completed:</strong> {activity.completedAt}</div>
-              {activity.connectionPath && activity.connectionPath.length > 0 && (
-                <div><strong>Connection Path:</strong> {activity.connectionPath.join(" → ")}</div>
+              {activity.narrative && (
+                <div style={{ fontSize: "13px", color: "var(--cl-text)", lineHeight: 1.55 }}>
+                  {activity.narrative}
+                </div>
               )}
+            </div>
+
+            {/* Metrics & Metadata Grid */}
+            <div className="activity-metrics-grid">
+              <div className="activity-metric-box">
+                <span className="activity-metric-label">Subject ID</span>
+                <span className="activity-metric-value" style={{ fontFamily: "var(--cl-font-mono)", fontSize: "11.5px", wordBreak: "break-all" }}>
+                  {activity.subject}
+                </span>
+              </div>
+
+              <div className="activity-metric-box">
+                <span className="activity-metric-label">Classification Basis</span>
+                <span className="activity-metric-value" style={{ fontSize: "12px" }}>
+                  {activity.classification === "FACT" ? "Directly established by records" : "Reasonable inference from evidence"}
+                </span>
+              </div>
+
+              <div className="activity-metric-box">
+                <span className="activity-metric-label">Evidence Grounding</span>
+                <span className="activity-metric-value">
+                  {activity.evidence.length} record(s) · {activity.evidenceStrength}
+                </span>
+              </div>
+
+              <div className="activity-metric-box">
+                <span className="activity-metric-label">Completed Timestamp</span>
+                <span className="activity-metric-value" style={{ fontFamily: "var(--cl-font-mono)", fontSize: "11.5px" }}>
+                  {activity.completedAt ? new Date(activity.completedAt).toLocaleString() : "—"}
+                </span>
+              </div>
+            </div>
+
+            {/* Evidence & Path Section */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div className="activity-section-block">
+                <span className="activity-section-heading">
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+                  Supporting Evidence Sources ({activity.evidence.length})
+                </span>
+                <div className="activity-evidence-wrap">
+                  {activity.evidence.length > 0 ? (
+                    activity.evidence.map((ev) => (
+                      <button key={ev} className="activity-evidence-chip" onClick={() => onViewEvidence?.(ev)} title={`Open evidence document ${ev}`}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 12 }}>attachment</span>
+                        {ev}
+                      </button>
+                    ))
+                  ) : (
+                    <span style={{ color: "var(--cl-text-3)", fontSize: "12px" }}>No evidence references recorded</span>
+                  )}
+                </div>
+              </div>
+
+              {activity.connectionPath && activity.connectionPath.length > 0 && (
+                <div className="activity-section-block">
+                  <span className="activity-section-heading">
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>timeline</span>
+                    Connection Path
+                  </span>
+                  <div style={{ fontFamily: "var(--cl-font-mono)", fontSize: "12px", background: "var(--cl-surface-2)", padding: "8px 12px", borderRadius: "var(--cl-r-md)", border: "1px solid var(--cl-border)", wordBreak: "break-all" }}>
+                    {activity.connectionPath.join(" → ")}
+                  </div>
+                </div>
+              )}
+
               {activity.limitations && activity.limitations.length > 0 && (
-                <div>
-                  <strong>Limitations — What does NOT establish:</strong>
-                  <ul style={{ margin: "4px 0 0 16px", padding: 0, fontSize: "11px", color: "#475569" }}>
+                <div className="activity-section-block">
+                  <span className="activity-section-heading" style={{ color: "var(--cl-warning)" }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>warning</span>
+                    Investigation Boundaries & Limitations
+                  </span>
+                  <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", color: "var(--cl-text-2)", display: "flex", flexDirection: "column", gap: "4px" }}>
                     {activity.limitations.map((lim, idx) => (
-                      <li key={idx}>⚠ {lim}</li>
+                      <li key={idx}>{lim}</li>
                     ))}
                   </ul>
                 </div>
               )}
+
               {activity.provenance && (
-                <div>
-                  <strong>Provenance:</strong> {activity.provenance}
+                <div className="activity-section-block">
+                  <span className="activity-section-heading">
+                    <span className="material-symbols-outlined" style={{ fontSize: 14 }}>history_edu</span>
+                    Provenance & Reason
+                  </span>
+                  <div style={{ fontSize: "12.5px", color: "var(--cl-text-2)" }}>
+                    {activity.provenance}
+                  </div>
                 </div>
               )}
-              {/* The ticks used to be literals printed next to every finding.
-                  They are now the backend's computed checks, with the reason
-                  shown when a check fails. */}
+
+              {/* Provenance Verifications */}
               {activity.provenanceChecks && (
                 <div className="provenance-checks" title={activity.provenanceChecks.detail}>
-                  <span
-                    className={`provenance-check ${activity.provenanceChecks.evidence_verified ? "verified" : "unverified"}`}
-                  >
-                    {activity.provenanceChecks.evidence_verified ? "✓" : "✗"} Evidence verified
-                  </span>
-                  <span
-                    className={`provenance-check ${activity.provenanceChecks.source_traceable ? "verified" : "unverified"}`}
-                  >
-                    {activity.provenanceChecks.source_traceable ? "✓" : "✗"} Source traceable
-                  </span>
-                  {!activity.provenanceChecks.evidence_verified ||
-                  !activity.provenanceChecks.source_traceable ? (
-                    <span className="muted">{activity.provenanceChecks.detail}</span>
-                  ) : null}
+                  <div className="activity-provenance-row">
+                    <span className={`provenance-check ${activity.provenanceChecks.evidence_verified ? "verified" : "unverified"}`}>
+                      {activity.provenanceChecks.evidence_verified ? "✓" : "✗"} Evidence verified
+                    </span>
+                    <span className={`provenance-check ${activity.provenanceChecks.source_traceable ? "verified" : "unverified"}`}>
+                      {activity.provenanceChecks.source_traceable ? "✓" : "✗"} Source traceable
+                    </span>
+                    {(!activity.provenanceChecks.evidence_verified || !activity.provenanceChecks.source_traceable) && (
+                      <span className="muted">{activity.provenanceChecks.detail}</span>
+                    )}
+                  </div>
                 </div>
               )}
-              {activity.status && <div><strong>Status:</strong> {activity.status} | <strong>Method:</strong> {activity.method}</div>}
             </div>
 
-            <div className="activity-actions" style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button className="cl-btn cl-btn-sm" onClick={() => onViewRelationship?.(activity.subject)}>View Relationship — What connects them?</button>
-              <button className="cl-btn cl-btn-sm" onClick={() => activity.evidence[0] && onViewEvidence?.(activity.evidence[0])}>View Evidence — What supports?</button>
-              <button className="cl-btn cl-btn-sm" onClick={() => onViewTimeline?.()}>View Timeline — When?</button>
+            {/* Direct Action Links */}
+            <div className="activity-exec-actions">
+              <button className="cl-btn cl-btn-sm" onClick={() => onViewRelationship?.(activity.subject)}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>polyline</span>
+                Inspect Relationship Graph
+              </button>
+              <button className="cl-btn cl-btn-sm" onClick={() => activity.evidence[0] && onViewEvidence?.(activity.evidence[0])}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
+                Inspect Source Evidence
+              </button>
+              <button className="cl-btn cl-btn-sm" onClick={() => onViewTimeline?.()}>
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>schedule</span>
+                Inspect Case Timeline
+              </button>
             </div>
 
-            <div style={{ marginTop: "12px", fontSize: "10px", fontFamily: "var(--font-mono)", color: "#94a3b8", borderTop: "1px solid #f1f5f9", paddingTop: "8px" }}>
-              Read-only — Viewer cannot rerun, modify, delete, approve/change, or create another investigation. Based only on evidence shown.
+            <div style={{ fontSize: "11px", color: "var(--cl-text-3)", borderTop: "1px solid var(--cl-divider)", paddingTop: "8px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
+              <span>Read-only record — Authenticated inspection for supervisory & authority review.</span>
+              {activity.status && (
+                <span style={{ fontFamily: "var(--cl-font-mono)", fontSize: "10.5px" }}>
+                  Status: <strong>{activity.status}</strong> · Method: <strong>{activity.method}</strong>
+                </span>
+              )}
             </div>
           </div>
         ))}

@@ -52,7 +52,6 @@ export default function Layout() {
     if (path.startsWith("/timeline")) return { section: "Timeline", detail: "Evidence-Oriented", badge: "Timestamp Verified" };
     if (path.startsWith("/activity")) return { section: "Investigator Activity", detail: "Completed Findings — Read-Only", badge: "Trust" };
     if (path.startsWith("/patterns")) return { section: "Patterns", detail: "Intelligence", badge: "Secondary" };
-    if (path.startsWith("/attention")) return { section: "Attention", detail: "Action Required", badge: "Review" };
     if (path.startsWith("/audit")) return { section: "Audit", detail: "Activity & Provenance", badge: "Trust" };
     if (path.startsWith("/admin")) return { section: "System", detail: "Configuration", badge: "Admin" };
     if (path.startsWith("/entities")) return { section: "People", detail: "Directory", badge: "Person-Centric" };
@@ -80,6 +79,47 @@ export default function Layout() {
     if (searchQuery.trim()) navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
   };
 
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem("crimelink_sidebar_width");
+    return saved ? Math.max(200, Math.min(500, parseInt(saved, 10))) : 270;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem("crimelink_sidebar_collapsed") === "true";
+  });
+
+  const isResizingRef = useRef(false);
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const newWidth = Math.max(200, Math.min(500, moveEvent.clientX));
+      setSidebarWidth(newWidth);
+      localStorage.setItem("crimelink_sidebar_width", String(newWidth));
+    };
+
+    const onMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  const toggleSidebar = () => {
+    const next = !sidebarCollapsed;
+    setSidebarCollapsed(next);
+    localStorage.setItem("crimelink_sidebar_collapsed", String(next));
+  };
+
   const userInitials = useMemo(() => {
     if (!session?.full_name) return "OF";
     const parts = session.full_name.trim().split(/\/\s+/);
@@ -93,67 +133,89 @@ export default function Layout() {
   const isActive = (prefix: string) => path.startsWith(prefix);
 
   return (
-    <div className="stitch-shell">
-      <aside className="stitch-sidebar">
+    <div
+      className="stitch-shell"
+      style={{ "--cl-sidebar-w": `${sidebarCollapsed ? 68 : sidebarWidth}px` } as React.CSSProperties}
+    >
+      <aside className={`stitch-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-brand">
-          <CrimeLinkLogo className="sidebar-logo-svg" showSubtitle={true} />
-          <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
+          <div className="sidebar-brand-inner">
+            <CrimeLinkLogo className="sidebar-logo-svg" showSubtitle={!sidebarCollapsed} variant="light" />
           </div>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            onClick={toggleSidebar}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <span className="material-symbols-outlined">
+              {sidebarCollapsed ? "chevron_right" : "menu_open"}
+            </span>
+          </button>
         </div>
 
         <div className="sidebar-nav-scroll">
           {/* CASE — both roles */}
           <div className="nav-section">
-            <div className="nav-section-title">CASE</div>
+            <div className="nav-section-title">{t("nav.sectionCase", lang)}</div>
             <nav className="nav-links-col">
-              <Link to="/cases" className={`sidebar-link ${path === "/cases" ? "active" : ""}`}>
+              <Link to="/cases" className={`sidebar-link ${path === "/cases" ? "active" : ""}`} title={t("nav.cases", lang)}>
                 <span className="material-symbols-outlined nav-icon">folder_open</span>
-                <span className="nav-label">Cases</span>
+                <span className="nav-label">{t("nav.cases", lang)}</span>
               </Link>
-              <Link to="/cases/dashboard" className={`sidebar-link ${isActive("/cases/dashboard") ? "active" : ""}`}>
+              <Link to="/cases/dashboard" className={`sidebar-link ${isActive("/cases/dashboard") ? "active" : ""}`} title={t("nav.overview", lang)}>
                 <span className="material-symbols-outlined nav-icon">dashboard</span>
-                <span className="nav-label">Overview</span>
+                <span className="nav-label">{t("nav.overview", lang)}</span>
               </Link>
             </nav>
           </div>
 
+
           {/* INVESTIGATE — Investigator only */}
           {investigator && (
             <div className="nav-section nav-section-primary">
-              <div className="nav-section-title">INVESTIGATE</div>
+              <div className="nav-section-title">{t("nav.sectionInvestigate", lang)}</div>
               <nav className="nav-links-col">
                 <Link to="/search" className={`sidebar-link ${isActive("/search") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">search</span>
-                  <span className="nav-label">Search</span>
+                  <span className="nav-label">{t("nav.search", lang)}</span>
                   <span className="nav-pill nav-pill-primary">⌘K</span>
                 </Link>
                 <Link to="/people" className={`sidebar-link ${isActive("/people") || isActive("/entities") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">person_search</span>
-                  <span className="nav-label">People</span>
+                  <span className="nav-label">{t("nav.people", lang)}</span>
                   <span className="nav-pill">Priority</span>
                 </Link>
                 <Link to="/relationships" className={`sidebar-link ${isActive("/relationships") ? "active" : ""}`} title="Relationships — Person → Person">
                   <span className="material-symbols-outlined nav-icon">polyline</span>
-                  <span className="nav-label">Relationships</span>
+                  <span className="nav-label">{t("nav.relationships", lang)}</span>
                   <span className="nav-pill">Person → Person</span>
                 </Link>
                 <Link to="/evidence" className={`sidebar-link ${isActive("/evidence") || isActive("/documents") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">description</span>
-                  <span className="nav-label">Evidence</span>
+                  <span className="nav-label">{t("nav.evidence", lang)}</span>
                 </Link>
                 <Link to="/timeline" className={`sidebar-link ${isActive("/timeline") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">timeline</span>
-                  <span className="nav-label">Timeline</span>
+                  <span className="nav-label">{t("nav.timeline", lang)}</span>
                 </Link>
                 <Link to="/investigate" className={`sidebar-link ${isActive("/investigate") ? "active" : ""} sidebar-link-accent`} title="Investigate Relationship">
                   <span className="material-symbols-outlined nav-icon">fact_check</span>
-                  <span className="nav-label">Investigate Relationship</span>
+                  <span className="nav-label">{t("nav.investigateRelationship", lang)}</span>
                 </Link>
                 <Link to="/activity" className={`sidebar-link ${isActive("/activity") ? "active" : ""}`} title="Investigator Activity (INV-0042)">
                   <span className="material-symbols-outlined nav-icon">assignment</span>
-                  <span className="nav-label">Investigator Activity</span>
+                  <span className="nav-label">{t("nav.investigatorActivity", lang)}</span>
                   <span className="nav-pill">INV-0042</span>
                 </Link>
+                {permissions.viewPatterns && (
+                  <Link to="/patterns" className={`sidebar-link ${isActive("/patterns") ? "active" : ""}`}>
+                    <span className="material-symbols-outlined nav-icon">pattern</span>
+                    <span className="nav-label">{t("nav.patterns", lang)}</span>
+                    <span className="nav-pill">Secondary</span>
+                  </Link>
+                )}
               </nav>
             </div>
           )}
@@ -165,43 +227,24 @@ export default function Layout() {
               <nav className="nav-links-col">
                 <Link to="/people" className={`sidebar-link ${isActive("/people") || isActive("/entities") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">person_search</span>
-                  <span className="nav-label">People</span>
+                  <span className="nav-label">{t("nav.people", lang)}</span>
                 </Link>
                 <Link to="/relationships" className={`sidebar-link ${isActive("/relationships") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">polyline</span>
-                  <span className="nav-label">Relationships</span>
+                  <span className="nav-label">{t("nav.relationships", lang)}</span>
                 </Link>
                 <Link to="/evidence" className={`sidebar-link ${isActive("/evidence") || isActive("/documents") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">description</span>
-                  <span className="nav-label">Evidence</span>
+                  <span className="nav-label">{t("nav.evidence", lang)}</span>
                 </Link>
                 <Link to="/timeline" className={`sidebar-link ${isActive("/timeline") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">timeline</span>
-                  <span className="nav-label">Timeline</span>
+                  <span className="nav-label">{t("nav.timeline", lang)}</span>
                 </Link>
                 <Link to="/activity" className={`sidebar-link ${isActive("/activity") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">assignment</span>
-                  <span className="nav-label">Investigator Activity</span>
+                  <span className="nav-label">{t("nav.investigatorActivity", lang)}</span>
                   <span className="nav-pill nav-pill-info">INV-0042</span>
-                </Link>
-              </nav>
-            </div>
-          )}
-
-          {/* INTELLIGENCE — Investigator only */}
-          {investigator && permissions.viewPatterns && (
-            <div className="nav-section">
-              <div className="nav-section-title">INTELLIGENCE</div>
-              <nav className="nav-links-col">
-                <Link to="/patterns" className={`sidebar-link ${isActive("/patterns") ? "active" : ""}`}>
-                  <span className="material-symbols-outlined nav-icon">pattern</span>
-                  <span className="nav-label">Patterns</span>
-                  <span className="nav-pill">Secondary</span>
-                </Link>
-                <Link to="/attention" className={`sidebar-link ${isActive("/attention") ? "active" : ""}`}>
-                  <span className="material-symbols-outlined nav-icon">notification_important</span>
-                  <span className="nav-label">Attention</span>
-                  <span className="nav-pill nav-pill-amber">Action</span>
                 </Link>
               </nav>
             </div>
@@ -209,12 +252,12 @@ export default function Layout() {
 
           {/* SYSTEM — role aware */}
           <div className="nav-section">
-            <div className="nav-section-title">SYSTEM</div>
+            <div className="nav-section-title">{t("nav.sectionSystem", lang)}</div>
             <nav className="nav-links-col">
               {investigator && permissions.viewAudit && (
                 <Link to="/audit" className={`sidebar-link ${isActive("/audit") ? "active" : ""}`}>
                   <span className="material-symbols-outlined nav-icon">receipt_long</span>
-                  <span className="nav-label">Audit / Activity</span>
+                  <span className="nav-label">{t("nav.audit", lang)}</span>
                 </Link>
               )}
               {permissions.adminAccess && (
@@ -235,11 +278,31 @@ export default function Layout() {
           </div>
           <p className="session-jurisdiction-label">{session?.jurisdiction_id || "Investigation Workstation"} · {roleBadge.label}</p>
         </div>
+        <div
+          className="sidebar-resizer"
+          onMouseDown={handleResizeStart}
+          onDoubleClick={() => {
+            setSidebarWidth(270);
+            localStorage.setItem("crimelink_sidebar_width", "270");
+          }}
+          title="Drag to resize sidebar (Double-click to reset)"
+        />
       </aside>
 
       <div className="stitch-main-wrap">
         <header className="stitch-executive-header">
           <div className="header-context-crumbs">
+            <button
+              type="button"
+              className="header-sidebar-toggle-btn"
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
+              aria-label="Toggle sidebar"
+            >
+              <span className="material-symbols-outlined">
+                {sidebarCollapsed ? "menu" : "menu_open"}
+              </span>
+            </button>
             <span className="crumb-section-text">{contextInfo.section}</span>
             <span className="material-symbols-outlined crumb-chevron">chevron_right</span>
             <span className="crumb-detail-text">{contextInfo.detail}</span>

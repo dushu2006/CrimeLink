@@ -6,7 +6,6 @@
  */
 
 import { GlobalSearch } from "../components/investigator/GlobalSearch";
-import { AttentionCenterPanel } from "../components/investigator/AttentionCenter";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 export default function GlobalSearchPage() {
@@ -34,13 +33,6 @@ export default function GlobalSearchPage() {
         onOpenEvidence={(docId) => navigate(`/documents/${docId}`)}
         onFocusPattern={(patternId, caseId) => navigate(`/cases/${caseId}`)}
       />
-
-      <div style={{ marginTop: "24px" }}>
-        <AttentionCenterPanel
-          onFocusEntity={(key) => navigate(`/investigate?focus=${encodeURIComponent(key)}`)}
-          onOpenEvidence={(docId) => navigate(`/documents/${docId}`)}
-        />
-      </div>
     </div>
   );
 }

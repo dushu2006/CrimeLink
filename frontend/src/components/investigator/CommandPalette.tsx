@@ -27,19 +27,19 @@ export function CommandPalette({ open, onClose }: Props) {
   const navigate = useNavigate();
 
   const recentItems: CommandItem[] = [
-    { id: "recent-1", label: "Person A", type: "recent", description: "12 relationships · 3 cases" },
-    { id: "recent-2", label: "Case CR-1024", type: "recent", description: "Active investigation" },
-    { id: "recent-3", label: "Evidence E-042", type: "recent", description: "Communication record" },
+    { id: "recent-1", label: "Rajesh Kumar", type: "person", description: "12 relationships · 3 cases", action: () => navigate("/people?focus=P0001") },
+    { id: "recent-2", label: "Case CR-2001", type: "case", description: "Active criminal conspiracy", action: () => navigate("/cases/CR-2001") },
+    { id: "recent-3", label: "Evidence DOC-0001", type: "evidence", description: "First Information Report", action: () => navigate("/evidence") },
   ];
 
   const allCommands: CommandItem[] = [
-    { id: "search", label: "Search cases, people, evidence...", type: "action", description: "Global search", action: () => navigate("/search") },
-    { id: "people", label: "Go to People", type: "action", description: "Person-centric investigation", action: () => navigate("/people") },
-    { id: "relationships", label: "Go to Relationships", type: "action", description: "Person → Person only", action: () => navigate("/relationships") },
-    { id: "evidence", label: "Go to Evidence", type: "action", description: "Source records", action: () => navigate("/evidence") },
-    { id: "timeline", label: "Go to Timeline", type: "action", description: "Evidence-oriented", action: () => navigate("/timeline") },
-    { id: "investigate", label: "Investigate Relationship", type: "action", description: "People → Relationships → Evidence → Explanation", action: () => navigate("/investigate") },
-    { id: "cases", label: "Go to Cases", type: "action", description: "Investigation registry", action: () => navigate("/cases") },
+    { id: "search", label: "Search cases, people, evidence...", type: "action", description: "Open full global search", action: () => navigate("/search") },
+    { id: "people", label: "Go to People", type: "person", description: "Person-centric investigation", action: () => navigate("/people") },
+    { id: "relationships", label: "Go to Relationships", type: "action", description: "Person → Person only evidence graph", action: () => navigate("/relationships") },
+    { id: "evidence", label: "Go to Evidence", type: "evidence", description: "Source records & chain of custody", action: () => navigate("/evidence") },
+    { id: "timeline", label: "Go to Timeline", type: "action", description: "Chronological event reconstruction", action: () => navigate("/timeline") },
+    { id: "investigate", label: "Investigate Relationship", type: "action", description: "People → Relationships → Evidence → Action", action: () => navigate("/investigate") },
+    { id: "cases", label: "Go to Cases", type: "case", description: "Investigation registry of all cases", action: () => navigate("/cases") },
   ];
 
   const handleSearch = useCallback((q: string) => {
@@ -62,10 +62,10 @@ export function CommandPalette({ open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <div className="command-palette-overlay" onClick={onClose}>
-      <div className="command-palette" onClick={(e) => e.stopPropagation()}>
+    <div className="command-palette-overlay" onClick={onClose} role="presentation">
+      <div className="command-palette" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Search and commands">
         <div className="command-palette-header">
-          <span className="material-symbols-outlined">search</span>
+          <span className="material-symbols-outlined command-search-icon">search</span>
           <input
             autoFocus
             type="text"
@@ -80,24 +80,39 @@ export function CommandPalette({ open, onClose }: Props) {
         <div className="command-palette-body">
           {!query && (
             <div className="command-section">
-              <div className="command-section-title">Recent</div>
+              <div className="command-section-title">Recent Activity</div>
               {recentItems.map((item) => (
-                <button key={item.id} className="command-item" onClick={() => { onClose(); navigate(`/${item.type === "recent" ? "people" : item.type}`); }}>
-                  <span className="command-item-icon">{item.type === "recent" ? "🕒" : "📁"}</span>
+                <button
+                  key={item.id}
+                  type="button"
+                  className="command-item"
+                  onClick={() => {
+                    onClose();
+                    if (item.action) item.action();
+                    else navigate(`/${item.type === "recent" ? "people" : item.type}`);
+                  }}
+                >
+                  <span className="command-item-icon">
+                    <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>
+                      {item.type === "person" ? "person" : item.type === "case" ? "folder" : item.type === "evidence" ? "description" : "history"}
+                    </span>
+                  </span>
                   <div className="command-item-content">
                     <span className="command-item-label">{item.label}</span>
-                    <span className="command-item-desc">{item.description}</span>
+                    {item.description && <span className="command-item-desc">{item.description}</span>}
                   </div>
+                  <span className="command-item-type">recent</span>
                 </button>
               ))}
             </div>
           )}
 
           <div className="command-section">
-            <div className="command-section-title">{query ? "Results" : "Commands"}</div>
+            <div className="command-section-title">{query ? "Matching Results" : "Navigation & Commands"}</div>
             {results.map((item) => (
               <button
                 key={item.id}
+                type="button"
                 className="command-item"
                 onClick={() => {
                   onClose();
@@ -105,7 +120,9 @@ export function CommandPalette({ open, onClose }: Props) {
                 }}
               >
                 <span className="command-item-icon">
-                  {item.type === "person" ? "👤" : item.type === "case" ? "📁" : item.type === "evidence" ? "📄" : "⚡"}
+                  <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>
+                    {item.type === "person" ? "person" : item.type === "case" ? "folder" : item.type === "evidence" ? "description" : "bolt"}
+                  </span>
                 </span>
                 <div className="command-item-content">
                   <span className="command-item-label">{item.label}</span>
@@ -117,20 +134,20 @@ export function CommandPalette({ open, onClose }: Props) {
             {results.length === 0 && query && (
               <div className="command-empty">
                 <span>No results for "{query}"</span>
-                <span className="command-empty-desc">Try searching people, cases, or evidence</span>
+                <span className="command-empty-desc">Try searching by person name, case number, or document ID</span>
               </div>
             )}
           </div>
 
           <div className="command-section">
-            <div className="command-section-title">Investigate</div>
+            <div className="command-section-title">Investigation Methodology</div>
             <div className="command-hint">People → Relationships → Evidence → Explanation → Action</div>
           </div>
         </div>
 
         <div className="command-palette-footer">
           <span>Navigate with ↑↓, select with Enter, close with ESC</span>
-          <span>Case → People → Relationships → Evidence → Explanation → Action</span>
+          <span>Case → People → Relationships → Evidence</span>
         </div>
       </div>
     </div>

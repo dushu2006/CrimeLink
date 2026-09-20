@@ -4,6 +4,8 @@ import { setupStatus } from "../api/client";
 import { useAuth } from "../store/auth";
 import { currentLang, setLang, t } from "../i18n";
 
+import CrimeLinkLogo from "../components/CrimeLinkLogo";
+
 const DEMO_ACCOUNTS = [
   {
     id: "DEMO-ADMIN",
@@ -91,11 +93,11 @@ export default function Login() {
   return (
     <div className="login">
       <form className="login-card" onSubmit={setup ? submitSetup : submitLogin}>
-        <div className="login-brand">
-          <div className="login-mark" aria-hidden="true" />
+        <div className="login-brand" style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+          <CrimeLinkLogo variant="dark" showSubtitle={false} />
           <div>
-            <h1>{t("app.title", lang)}</h1>
-            <p>{t("app.subtitle", lang)}</p>
+            <h1 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "var(--cl-ink)" }}>{t("app.title", lang)}</h1>
+            <p style={{ margin: 0, fontSize: "12px", color: "var(--cl-text-3)" }}>{t("app.subtitle", lang)}</p>
           </div>
         </div>
 
@@ -184,27 +186,35 @@ export default function Login() {
             <p className="login-note">{setup ? t("setup.note", lang) : t("login.note", lang)}</p>
 
             {!setup && (
-              <div className="demo-access" style={{ marginTop: "24px", padding: "16px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <h3 style={{ fontSize: "14px", fontWeight: 600, margin: "0 0 8px 0" }}>Demo Access — Evaluator Ready</h3>
-                <p style={{ fontSize: "11px", color: "#64748b", margin: "0 0 12px 0" }}>
-                  Hosted instance contains complete demonstration dataset. No upload required. All three roles access same demo data scope with different permissions.
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div className="demo-access">
+                <div className="demo-access-header">
+                  <span className="demo-badge">QUICK DEMO ACCESS</span>
+                  <h3>Demo Access — Evaluator Ready</h3>
+                  <p>
+                    Hosted instance contains complete demonstration dataset. No upload required. All three roles access same demo data scope with different permissions.
+                  </p>
+                </div>
+                <div className="demo-accounts-list">
                   {DEMO_ACCOUNTS.map((account) => (
                     <button
                       key={account.id}
                       type="button"
-                      className="cl-btn cl-btn-secondary"
+                      className="demo-account-card"
                       onClick={() => handleDemoLogin(account)}
                       disabled={busy}
-                      style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", padding: "10px 12px", textAlign: "left" }}
                     >
-                      <span style={{ fontWeight: 600, fontSize: "12px" }}>Login as {account.label} — {account.role}</span>
-                      <span style={{ fontSize: "10px", color: "#64748b", fontFamily: "var(--font-mono)" }}>{account.badge} · {account.description}</span>
+                      <div className="demo-account-top">
+                        <span className="demo-account-title">Login as {account.label}</span>
+                        <span className={`demo-role-tag role-${account.role.toLowerCase()}`}>{account.role}</span>
+                      </div>
+                      <div className="demo-account-meta">
+                        <span className="demo-badge-id">{account.badge}</span>
+                        <span className="demo-desc">{account.description}</span>
+                      </div>
                     </button>
                   ))}
                 </div>
-                <div style={{ marginTop: "12px", fontSize: "10px", fontFamily: "var(--font-mono)", color: "#94a3b8" }}>
+                <div className="demo-access-footer">
                   Demo accounts: DEMO-ADMIN / DEMO-INVESTIGATOR / DEMO-VIEWER — same data scope, different operation permissions. Backend authorization enforced.
                 </div>
               </div>
@@ -213,18 +223,21 @@ export default function Login() {
         )}
 
         <div className="lang-switch">
-          <button type="button" className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>
-            English
-          </button>
-          <button type="button" className={lang === "hi" ? "on" : ""} onClick={() => setLang("hi")}>
-            हिन्दी
-          </button>
-          <button type="button" className={lang === "te" ? "on" : ""} onClick={() => setLang("te")}>
-            తెలుగు
-          </button>
-          <button type="button" className={lang === "ta" ? "on" : ""} onClick={() => setLang("ta")}>
-            தமிழ்
-          </button>
+          {[
+            { code: "en", label: "English" },
+            { code: "hi", label: "हिन्दी" },
+            { code: "te", label: "తెలుగు" },
+            { code: "ta", label: "தமிழ்" },
+          ].map((l) => (
+            <button
+              key={l.code}
+              type="button"
+              className={`lang-btn ${lang === l.code ? "on" : ""}`}
+              onClick={() => setLang(l.code as "en" | "hi" | "te" | "ta")}
+            >
+              {l.label}
+            </button>
+          ))}
         </div>
       </form>
     </div>

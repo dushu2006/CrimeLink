@@ -233,14 +233,17 @@ export default function CaseWorkspace() {
         </div>
         {people.length > 0 ? (
           <div className="people-pills">
-            {people.slice(0, 6).map((p) => (
+            {people.slice(0, 12).map((p) => (
               <button
                 key={p.provenance_key}
-                className="person-pill"
+                type="button"
+                className={`person-pill ${p.is_criminal ? "person-pill-criminal" : ""}`}
                 onClick={() => navigate(`/people?case=${caseId}&focus=${p.provenance_key}`)}
+                title={`Focus ${p.name || p.provenance_key}`}
               >
                 <span className="person-pill-icon">{p.is_criminal ? "★" : "👤"}</span>
-                <span>{p.name || p.provenance_key.slice(0, 12)}</span>
+                <span className="person-pill-name">{p.name || p.provenance_key.slice(0, 12)}</span>
+                {p.is_criminal && <span className="person-pill-criminal-tag">Criminal</span>}
               </button>
             ))}
           </div>

@@ -134,6 +134,35 @@ async def list_documents(
     }
 
 
+async def _resolve_document(session: AsyncSession, doc_id: str) -> CaseDocument | None:
+    from sqlalchemy import select, String, cast
+    from app.db.models import CaseDocument as _CD
+
+    # 1. Exact ID match
+    doc = (await session.execute(select(_CD).where(_CD.id == doc_id))).scalar_one_or_none()
+    if doc is not None:
+        return doc
+
+    # 2. Match by evidence_id in source_metadata (case-insensitive substring/JSON check)
+    doc = (await session.execute(
+        select(_CD).where(cast(_CD.source_metadata, String).like(f'%"{doc_id}"%'))
+    )).scalars().first()
+    if doc is not None:
+        return doc
+
+    # 3. Match evidence numeric code (e.g. E-0199 or 0199 or EV0199 against id like doc-d2-0199)
+    clean_id = doc_id.strip()
+    digits = "".join(c for c in clean_id if c.isdigit())
+    if digits:
+        doc = (await session.execute(
+            select(_CD).where(_CD.id.like(f"%{digits}%"))
+        )).scalars().first()
+        if doc is not None:
+            return doc
+
+    return None
+
+
 @router.get("/documents/{doc_id}")
 async def get_document(
     doc_id: str,
@@ -141,13 +170,7 @@ async def get_document(
     session: AsyncSession = Depends(get_db_session),
     principal: Principal = Depends(get_principal),
 ) -> dict:
-    from sqlalchemy import select
-
-    from app.db.models import CaseDocument as _CD
-
-    document = (
-        await session.execute(select(_CD).where(_CD.id == doc_id))
-    ).scalar_one_or_none()
+    document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)
@@ -167,13 +190,7 @@ async def evidence(
     recorder: AuditRecorder = Depends(get_audit_recorder),
 ) -> dict:
     """Metadata + a 15-minute signed link + the highlighted source sentence."""
-    from sqlalchemy import select
-
-    from app.db.models import CaseDocument as _CD
-
-    document = (
-        await session.execute(select(_CD).where(_CD.id == doc_id))
-    ).scalar_one_or_none()
+    document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)
@@ -215,13 +232,7 @@ async def evidence_provenance(
     response is computed from stored data — a link that does not exist is
     reported as unresolved rather than rendered as a green tick.
     """
-    from sqlalchemy import select
-
-    from app.db.models import CaseDocument as _CD
-
-    document = (
-        await session.execute(select(_CD).where(_CD.id == doc_id))
-    ).scalar_one_or_none()
+    document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)
@@ -232,9 +243,9 @@ async def evidence_provenance(
     )
     recorder.record(
         "DOC_VIEW",
-        target_resource=f"provenance:{doc_id}",
+        target_resource=f"provenance:{document.id}",
         case_id=document.case_id,
-        details={"kind": "provenance"},
+        details={"kind": "provenance", "requested_id": doc_id},
     )
     await recorder.flush()
     return payload
@@ -248,13 +259,7 @@ async def verify_evidence(
     principal: Principal = Depends(get_principal),
 ) -> dict:
     """Re-compute the stored document's SHA-256 (court-preparation endpoint)."""
-    from sqlalchemy import select
-
-    from app.db.models import CaseDocument as _CD
-
-    document = (
-        await session.execute(select(_CD).where(_CD.id == doc_id))
-    ).scalar_one_or_none()
+    document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
     await case_service.require_case(session, scope, document.case_id)

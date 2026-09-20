@@ -141,14 +141,16 @@ export default function TimelinePage() {
   const roleBadge = getRoleBadge(session?.role as any);
   const caseParam = searchParams.get("case") || "";
   const [autoCaseId, setAutoCaseId] = useState<string>("");
+  const [availableCases, setAvailableCases] = useState<Array<{ id: string; case_number?: string; title?: string }>>([]);
   const effectiveCaseParam = caseParam || autoCaseId;
 
   useEffect(() => {
-    if (caseParam) return;
-    api<{ items: Array<{ id: string }> }>("/cases?limit=1")
+    api<{ items: Array<{ id: string; case_number?: string; title?: string }> }>("/cases?limit=100")
       .then((data) => {
-        const first = data.items?.[0]?.id;
-        if (first) {
+        const items = data.items || [];
+        setAvailableCases(items);
+        if (!caseParam && items.length > 0 && items[0]?.id) {
+          const first = items[0].id;
           setAutoCaseId(first);
           const merged = new URLSearchParams(searchParams);
           merged.set("case", first);
@@ -227,17 +229,26 @@ export default function TimelinePage() {
       <div className="timeline-toolbar">
         <div className="timeline-case-input">
           <label className="filter-label">Case</label>
-          <input
-            type="search"
+          <select
+            aria-label="Select case"
             value={effectiveCaseParam}
-            placeholder="Case id"
             onChange={(event) => {
               const merged = new URLSearchParams(searchParams);
               if (event.target.value) merged.set("case", event.target.value);
               else merged.delete("case");
               setSearchParams(merged);
             }}
-          />
+          >
+            <option value="">Choose a case…</option>
+            {availableCases.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.case_number ? `${c.case_number} — ${c.title || c.id}` : (c.title ? `${c.title} (${c.id})` : c.id)}
+              </option>
+            ))}
+            {effectiveCaseParam && !availableCases.some((c) => c.id === effectiveCaseParam) && (
+              <option value={effectiveCaseParam}>{effectiveCaseParam}</option>
+            )}
+          </select>
         </div>
 
         <div className="timeline-filter-group">

@@ -2112,14 +2112,19 @@ async def investigate_with_reporter(
         # Handle model unavailable / failure honestly
         if not model_section.available:
             reason = model_section.reason or "unknown"
+            r_lower = reason.lower()
             # Distinguish timeout vs unavailable vs invalid response
-            if "timeout" in reason.lower():
+            if "timeout" in r_lower:
                 await _report("AI_TIMEOUT", 90, f"Reasoning model timed out ({reason}) — deterministic analysis preserved", status="AI_TIMEOUT")
-                # Return deterministic partial result with honest note
-            elif "unavailable" in reason.lower() or "no_api_key" in reason.lower():
-                await _report("AI_UNAVAILABLE", 90, f"Reasoning model unavailable ({reason}) — deterministic analysis preserved", status="AI_UNAVAILABLE")
+            elif (
+                "unparseable" in r_lower
+                or "invalid_json" in r_lower
+                or "invalid_response" in r_lower
+                or (("json" in r_lower or "schema" in r_lower) and "invocation_failed" not in r_lower)
+            ):
+                await _report("AI_INVALID_RESPONSE", 90, f"Reasoning model response unparseable ({reason}) — deterministic analysis preserved", status="AI_INVALID_RESPONSE")
             else:
-                await _report("AI_INVALID_RESPONSE", 90, f"Reasoning model invalid response ({reason}) — deterministic analysis preserved", status="AI_INVALID_RESPONSE")
+                await _report("AI_UNAVAILABLE", 90, f"Reasoning model unavailable ({reason}) — deterministic analysis preserved", status="AI_UNAVAILABLE")
 
             # Still create thread if needed
             if thread is None:

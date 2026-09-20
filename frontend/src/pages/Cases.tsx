@@ -123,7 +123,6 @@ export default function Cases() {
               <th>Findings</th>
               <th>{t("cases.pending")}</th>
               <th>{t("cases.status")}</th>
-              <th>Dashboard</th>
               <th>Investigate</th>
             </tr>
           </thead>
@@ -151,12 +150,7 @@ export default function Cases() {
                   <Badge value={row.status} />
                 </td>
                 <td>
-                  <Link className="cl-btn" style={{ fontSize: "11px", padding: "2px 8px" }} to={`/cases/${row.id}/dashboard`}>
-                    Full Dashboard
-                  </Link>
-                </td>
-                <td>
-                  <Link className="cl-btn cl-btn-primary" style={{ fontSize: "11px", padding: "2px 8px" }} to={`/investigate?case=${row.id}`}>
+                  <Link className="cl-btn cl-btn-primary table-investigate-btn" to={`/investigate?case=${row.id}`}>
                     Investigate →
                   </Link>
                 </td>
