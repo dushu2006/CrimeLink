@@ -1,0 +1,452 @@
+"""Query Planner — understands the investigator's question.
+
+The planner classifies intent, extracts named entities (persons, phones,
+accounts, vehicles, locations), detects temporal constraints, requested
+evidence types, and the preferred response style. It is deterministic and
+does not require an LLM.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any, Iterable
+
+
+# ---------------------------------------------------------------------------
+# Intents — must drive both retrieval strategy and response style.
+# ---------------------------------------------------------------------------
+
+INTENT_CASE_OVERVIEW = "CASE_OVERVIEW"
+INTENT_PEOPLE = "PEOPLE"
+INTENT_EVIDENCE_INVENTORY = "EVIDENCE_INVENTORY"
+INTENT_RELATIONSHIP = "RELATIONSHIP"
+INTENT_TIMELINE = "TIMELINE"
+INTENT_CONTRADICTION = "CONTRADICTION"
+INTENT_FINANCIAL = "FINANCIAL"
+INTENT_COMMUNICATION = "COMMUNICATION"
+INTENT_LOCATION = "LOCATION"
+INTENT_SUMMARY = "SUMMARY"
+INTENT_ENTITY_LOOKUP = "ENTITY_LOOKUP"
+INTENT_GENERAL = "GENERAL"
+
+
+# The depth/detail the user is asking for.
+DETAIL_BRIEF = "brief"
+DETAIL_STANDARD = "standard"
+DETAIL_DETAILED = "detailed"
+
+
+# How the answer should be presented to the investigator.
+STYLE_NATURAL = "natural"          # conversational prose — the default
+STYLE_LIST = "list"                # bulleted list (e.g. file inventory)
+STYLE_TABLE = "table"              # structured rows (e.g. transaction table)
+STYLE_TIMELINE = "timeline"        # chronological
+STYLE_COMPARISON = "comparison"    # contradictions / pro-con
+
+
+@dataclass
+class QueryPlan:
+    """Structured understanding of an investigator question."""
+
+    original_question: str
+    intent: str = INTENT_GENERAL
+    detail: str = DETAIL_STANDARD
+    response_style: str = STYLE_NATURAL
+    entities: list[str] = field(default_factory=list)
+    entity_labels: list[dict[str, str]] = field(default_factory=list)
+    # name-like spans found in the question — used for exact entity matching
+    person_names: list[str] = field(default_factory=list)
+    keywords: set[str] = field(default_factory=set)
+    exact_terms: list[str] = field(default_factory=list)
+    temporal_constraint: dict[str, Any] | None = None
+    evidence_types: list[str] = field(default_factory=list)
+    entity_types: list[str] = field(default_factory=list)
+    relationship_types: list[str] = field(default_factory=list)
+    need_citations: bool = True
+    need_timeline: bool = False
+    need_graph_paths: bool = False
+    need_documents: bool = True
+    # Filled in later against known case entities
+    resolved_entity_keys: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+    # legacy compatibility fields
+    answer_mode: str = "CASE_SUMMARY"
+
+    @property
+    def legacy_intent(self) -> str:
+        """Backward-compatible retrieval intent string for older ranking code."""
+        return {
+            INTENT_RELATIONSHIP: "connection",
+            INTENT_TIMELINE: "timeline",
+            INTENT_EVIDENCE_INVENTORY: "evidence",
+            INTENT_SUMMARY: "summary",
+            INTENT_FINANCIAL: "financial",
+            INTENT_COMMUNICATION: "communication",
+            INTENT_LOCATION: "location",
+            INTENT_PEOPLE: "connection",
+            INTENT_CASE_OVERVIEW: "general",
+            INTENT_CONTRADICTION: "evidence",
+        }.get(self.intent, "general")
+
+
+# ---------------------------------------------------------------------------
+# Intent detection patterns — kept small and conservative.
+# ---------------------------------------------------------------------------
+
+_INTENT_RULES: list[tuple[str, re.Pattern[str], int]] = [
+    # Each rule is (intent, pattern, base_score).  Higher base_score wins ties.
+    # Contradictions — very specific phrasing
+    (INTENT_CONTRADICTION, re.compile(
+        r"\b(contradict(?:ions?|ory)?|conflict(?:ing|s)?|inconsisten|discrepan|don't\s+match|doesn't\s+match|"
+        r"clash|disagree|differences?\s+in\s+(?:the\s+)?(?:statements|accounts|evidence))\b", re.I), 40),
+    # Timeline / before / after / what happened
+    (INTENT_TIMELINE, re.compile(
+        r"\b(timeline|chronolog|sequence|order\s+of\s+events|what\s+happened\s+(?:before|after|during)|"
+        r"before\s+(?:the\s+)?incident|after\s+(?:the\s+)?incident|lead(?:ing)?\s+up\s+to|"
+        r"when\s+did|events?\s+(?:leading|prior))\b", re.I), 30),
+    # Connections / relationships between entities — beats generic "evidence"
+    (INTENT_RELATIONSHIP, re.compile(
+        r"\b(connect(?:s|ed|ion|ions)?|link(?:s|ed|age)?|relat(?:e|ed|ions?|ionship)s?|associat(?:e|ed|ion)|"
+        r"between|path|route|contact(?:s|ed)?\s+with|relationship\s+between)\b", re.I), 35),
+    # People / individuals
+    (INTENT_PEOPLE, re.compile(
+        r"\b(person|people|individuals?|suspects?|accused|witness(?:es)?|involved\s+parties|"
+        r"who\s+(?:is|are|was|were)|tell\s+me\s+about\s+(?:the\s+)?people|who\s+(?:all\s+)?(?:is|are)\s+involved)\b", re.I), 25),
+    # File / evidence inventory (only when asking to list files/records)
+    (INTENT_EVIDENCE_INVENTORY, re.compile(
+        r"\b(files?|documents?|inventory|list\s+(?:all\s+)?(?:files|documents|evidence|records)|"
+        r"what\s+(?:files|documents|records)\s*(?:do\s+we\s+have|are\s+(?:there|available))?|"
+        r"available\s+(?:files|documents|evidence|records))\b", re.I), 20),
+    # Financial
+    (INTENT_FINANCIAL, re.compile(
+        r"\b(financial\s+(?:evidence|records?|statements?)|money|transfers?|transactions?|bank\s+(?:records|statements?|accounts?)|"
+        r"payment|amount|funds?|ledger|balance|withdraw|deposit)\b", re.I), 20),
+    # Communication
+    (INTENT_COMMUNICATION, re.compile(
+        r"\b(calls?|calling?|phone\s+(?:records?|logs?)|mobile|sms|text|contact(?:ed|s)?\s+(?:records?|logs?)|"
+        r"communication|cdr|call\s+detail|spoke\s+(?:to|with))\b", re.I), 18),
+    # Location
+    (INTENT_LOCATION, re.compile(
+        r"\b(where|location|cctv|address|place|warehouse|spot|scene|tower\s+location|"
+        r"movement|travel|visited|went\s+to)\b", re.I), 15),
+    # Summary
+    (INTENT_SUMMARY, re.compile(
+        r"\b(summar[iy]z?e|brief|in\s+short|nutshell|tldr|recap)\b", re.I), 25),
+    # Case overview / details
+    (INTENT_CASE_OVERVIEW, re.compile(
+        r"\b(details\s+of\s+(?:this|the)\s+case|case\s+details|what\s+(?:is|are)\s+this\s+case|"
+        r"tell\s+me\s+about\s+(?:this|the)\s+case|case\s+overview|about\s+(?:this|the)\s+case|"
+        r"what\s+happened\s+in\s+this\s+case|what\s+is\s+this\s+(?:case|about)|overview|describe)\b", re.I), 10),
+]
+
+
+# Evidence type keywords — maps natural phrases to canonical evidence type codes.
+_EVIDENCE_TYPE_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("FIR", ["fir", "first information"]),
+    ("CHARGESHEET", ["chargesheet", "charge sheet"]),
+    ("CCTV", ["cctv", "camera", "footage", "video"]),
+    ("CALL_RECORD", ["call record", "cdr", "call detail", "call log", "phone record"]),
+    ("BANK_STATEMENT", ["bank statement", "account statement", "transaction record"]),
+    ("WITNESS_STATEMENT", ["witness statement", "statement of witness", "witness account", "161 statement"]),
+    ("FINANCIAL", ["financial record", "financial evidence", "ledger"]),
+    ("FIELD_REPORT", ["field report", "spot report", "seizure memo"]),
+    ("FORENSIC_REPORT", ["forensic report", "forensic"]),
+    ("PANAMA", ["panama"]),
+]
+
+
+def _classify_intent(question: str) -> tuple[str, float]:
+    q = question or ""
+    scores: dict[str, float] = {}
+    for intent, pattern, base in _INTENT_RULES:
+        matches = pattern.findall(q)
+        if matches:
+            scores[intent] = scores.get(intent, 0.0) + base + len(matches) * 2
+    if not scores:
+        # Fallback: "what happened" without further qualifiers → OVERVIEW
+        if re.search(r"\bwhat\s+happened\b", q, re.I):
+            return INTENT_CASE_OVERVIEW, 0.5
+        return INTENT_GENERAL, 0.3
+    intent = max(scores.items(), key=lambda x: x[1])[0]
+    return intent, min(1.0, 0.4 + scores[intent] / 50.0)
+
+
+def _extract_person_names(question: str, known_names: Iterable[str] = ()) -> list[str]:
+    """Extract likely person names.
+
+    First matches known names (if provided), then applies a conservative
+    two-capitalized-words heuristic for western/south-asian romanized names.
+    """
+    found: list[str] = []
+    q = question or ""
+    # Known names first — longest-match first to capture full names.
+    sorted_known = sorted((n.strip() for n in known_names if n and n.strip()),
+                          key=lambda s: -len(s))
+    lowered = q.lower()
+    for name in sorted_known:
+        if name.lower() in lowered and name not in found:
+            found.append(name)
+    if found:
+        return found
+    # Heuristic: two or more capitalized words that are not at sentence start
+    # only (e.g. "Anjali Hussain", "Dinesh Malhotra").
+    # Look for sequences of Capitalized Words after common phrasings.
+    name_match = re.findall(
+        r"(?<![A-Za-z])([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})(?![A-Za-z])",
+        q,
+    )
+    skip_words = {
+        "Case", "Case Intelligence", "The Case", "What Are", "Tell Me", "Show Me",
+        "Who Are", "Indian", "Case Details", "How Many", "Evidence Drawer",
+        "Direct Answer", "Why This", "Suggested Follow",
+    }
+    for candidate in name_match:
+        if candidate in skip_words:
+            continue
+        # Filter out sentence-initial "What files" / "The people" etc.
+        words = candidate.split()
+        if len(words) < 2:
+            continue
+        # Require at least two non-stopword words
+        if all(w.lower() in {"the", "a", "an", "what", "who", "this", "that", "these", "those"} for w in words):
+            continue
+        found.append(candidate)
+    return found[:5]
+
+
+def _extract_exact_terms(question: str) -> list[str]:
+    if not question:
+        return []
+    candidates = re.findall(
+        r"(?<![A-Za-z0-9])[A-Za-z]{2,}[-_/][A-Za-z0-9][A-Za-z0-9_-]*|"
+        r"(?<![A-Za-z0-9])\+?\d{10,13}(?![A-Za-z0-9])",
+        question,
+    )
+    stop = {"what", "when", "where", "which", "show", "tell", "case"}
+    return sorted({c for c in candidates if c.casefold() not in stop}, key=str.casefold)
+
+
+def _extract_keywords(question: str) -> set[str]:
+    if not question:
+        return set()
+    tokens = re.split(r"[^a-z0-9]+", question.lower())
+    stop = {
+        "what", "who", "when", "where", "why", "how", "which", "this", "that",
+        "these", "those", "the", "and", "or", "but", "with", "from", "about",
+        "into", "case", "tell", "show", "list", "give", "find", "are", "is",
+        "was", "were", "been", "have", "has", "had", "does", "did", "can",
+        "could", "would", "should", "will", "me", "you", "for", "are", "does",
+        "available", "involved", "details",
+    }
+    return {t for t in tokens if len(t) >= 3 and t not in stop}
+
+
+def _extract_temporal(question: str) -> dict[str, Any] | None:
+    if not question:
+        return None
+    # before / after the incident
+    before = bool(re.search(r"\bbefore\b", question, re.I))
+    after = bool(re.search(r"\bafter\b", question, re.I))
+    during = bool(re.search(r"\bduring\b", question, re.I))
+    # Month / date hints
+    date_match = re.search(
+        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b",
+        question, re.I,
+    )
+    if before or after or during or date_match:
+        return {
+            "before": before,
+            "after": after,
+            "during": during,
+            "date_text": date_match.group(0) if date_match else None,
+            "raw": question,
+        }
+    return None
+
+
+def _extract_evidence_types(question: str) -> list[str]:
+    found: list[str] = []
+    q = question.lower()
+    for canonical, keywords in _EVIDENCE_TYPE_KEYWORDS:
+        for kw in keywords:
+            if kw in q and canonical not in found:
+                found.append(canonical)
+                break
+    return found
+
+
+def _classify_response_style(intent: str, question: str) -> str:
+    q = (question or "").lower()
+    if intent in (INTENT_EVIDENCE_INVENTORY, INTENT_FINANCIAL):
+        if re.search(r"\b(list|inventory|table|all\s+files|all\s+documents)\b", q):
+            return STYLE_LIST
+    if intent == INTENT_TIMELINE:
+        return STYLE_TIMELINE
+    if intent == INTENT_CONTRADICTION:
+        return STYLE_COMPARISON
+    if intent == INTENT_RELATIONSHIP:
+        return STYLE_NATURAL
+    return STYLE_NATURAL
+
+
+def _classify_detail(question: str) -> str:
+    q = (question or "").lower()
+    if re.search(r"\b(brief|short|quick|summary|in\s+short|tldr)\b", q):
+        return DETAIL_BRIEF
+    if re.search(r"\b(detailed|thorough|deep|in\s+detail|comprehensive|full|everything)\b", q):
+        return DETAIL_DETAILED
+    return DETAIL_STANDARD
+
+
+def plan_query(
+    question: str,
+    *,
+    known_person_names: Iterable[str] = (),
+) -> QueryPlan:
+    """Deterministically parse an investigator question into a QueryPlan."""
+    intent, intent_conf = _classify_intent(question)
+    person_names = _extract_person_names(question, known_person_names)
+    exact_terms = _extract_exact_terms(question)
+    keywords = _extract_keywords(question)
+    temporal = _extract_temporal(question)
+    evidence_types = _extract_evidence_types(question)
+
+    entity_types: list[str] = []
+    relationship_types: list[str] = []
+    q_lower = (question or "").lower()
+    if re.search(r"\b(person|people|individual|who)\b", q_lower):
+        entity_types.append("PERSON")
+    if re.search(r"\b(phone|mobile|call|contact)\b", q_lower):
+        entity_types.append("PHONE")
+        relationship_types.append("CALL")
+    if re.search(r"\b(vehicle|car|plate|bike)\b", q_lower):
+        entity_types.append("VEHICLE")
+    if re.search(r"\b(account|bank|financial|transaction|money)\b", q_lower):
+        entity_types.append("BANKACCOUNT")
+        relationship_types.append("TRANSFER")
+
+    response_style = _classify_response_style(intent, question)
+    detail = _classify_detail(question)
+
+    need_timeline = (
+        intent == INTENT_TIMELINE
+        or temporal is not None
+        or intent in (INTENT_CASE_OVERVIEW, INTENT_SUMMARY)
+    )
+    need_graph_paths = intent in (INTENT_RELATIONSHIP, INTENT_PEOPLE)
+    need_documents = True
+    need_citations = True
+
+    # answer_mode maps to the legacy "answer_mode" expected elsewhere
+    answer_mode_map = {
+        INTENT_CASE_OVERVIEW: "CASE_OVERVIEW",
+        INTENT_PEOPLE: "PERSON_ANALYSIS",
+        INTENT_EVIDENCE_INVENTORY: "EVIDENCE_INVENTORY",
+        INTENT_RELATIONSHIP: "RELATIONSHIP_ANALYSIS",
+        INTENT_TIMELINE: "TIMELINE_ANALYSIS",
+        INTENT_CONTRADICTION: "CONTRADICTION_ANALYSIS",
+        INTENT_FINANCIAL: "FINANCIAL_ANALYSIS",
+        INTENT_COMMUNICATION: "COMMUNICATION_ANALYSIS",
+        INTENT_LOCATION: "LOCATION_ANALYSIS",
+        INTENT_SUMMARY: "CASE_SUMMARY",
+        INTENT_ENTITY_LOOKUP: "ENTITY_LOOKUP",
+        INTENT_GENERAL: "GENERAL",
+    }
+    answer_mode = answer_mode_map.get(intent, "GENERAL")
+
+    # Person-name spans become entity candidates
+    entity_labels = [{"label": "PERSON", "name": n} for n in person_names]
+
+    confidence = 0.5 + intent_conf * 0.2
+    if person_names:
+        confidence += 0.15
+    if evidence_types:
+        confidence += 0.1
+    if temporal:
+        confidence += 0.1
+    confidence = min(1.0, confidence)
+
+    return QueryPlan(
+        original_question=question,
+        intent=intent,
+        detail=detail,
+        response_style=response_style,
+        person_names=person_names,
+        entity_labels=entity_labels,
+        keywords=keywords,
+        exact_terms=exact_terms,
+        temporal_constraint=temporal,
+        evidence_types=evidence_types,
+        entity_types=entity_types,
+        relationship_types=relationship_types,
+        need_citations=need_citations,
+        need_timeline=need_timeline,
+        need_graph_paths=need_graph_paths,
+        need_documents=need_documents,
+        confidence=confidence,
+        answer_mode=answer_mode,
+    )
+
+
+def resolve_plan_entities(
+    plan: QueryPlan,
+    nodes: Iterable[dict[str, Any]],
+) -> QueryPlan:
+    """Resolve person names in the plan to provenance keys among known nodes.
+
+    This is deterministic string matching against case-scoped entity names.
+    Names that cannot be matched are left untouched (the retriever will still
+    attempt keyword search but will not invent entities).
+    """
+    # Build name → list of (key, label) index
+    name_index: dict[str, list[tuple[str, str]]] = {}
+    for n in nodes:
+        props = n.get("properties") or n or {}
+        label = str(n.get("label") or props.get("label") or "").upper()
+        pk = str(n.get("provenance_key") or n.get("id") or "")
+        candidates = [
+            props.get("name"), props.get("full_name"),
+            n.get("name"), n.get("full_name"),
+        ]
+        for cand in candidates:
+            if not cand:
+                continue
+            norm = str(cand).strip().lower()
+            if not norm:
+                continue
+            name_index.setdefault(norm, []).append((pk, label))
+
+    matched_keys: list[str] = []
+    matched_labels: list[dict[str, str]] = []
+    seen_keys: set[str] = set()
+
+    for name in list(plan.person_names) + list(plan.entities):
+        if not name:
+            continue
+        nlower = name.strip().lower()
+        # exact match first
+        matches = name_index.get(nlower, [])
+        if not matches:
+            # try substring match (e.g. "Anjali" matches "Anjali Hussain")
+            for candidate_name, entries in name_index.items():
+                if nlower in candidate_name or candidate_name in nlower:
+                    matches.extend(entries)
+                    if len(matches) >= 3:
+                        break
+        for key, label in matches:
+            if key and key not in seen_keys:
+                seen_keys.add(key)
+                matched_keys.append(key)
+                matched_labels.append({"label": label, "name": name, "key": key})
+
+    plan.resolved_entity_keys = matched_keys
+    # Preserve existing labels and add resolved ones
+    existing_names = {e.get("name") for e in plan.entity_labels}
+    for entry in matched_labels:
+        if entry.get("name") not in existing_names:
+            plan.entity_labels.append(entry)
+
+    # Update legacy entities field for ranking code compatibility
+    plan.entities = matched_keys
+    return plan

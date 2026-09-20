@@ -41,10 +41,24 @@ class SafetyReport:
         return not self.evidence_errors and not self.entity_errors
 
 
+#: What an instruction-like span inside a case record is replaced with.  The
+#: imperative text itself is *removed*, not merely labelled: a marker that still
+#: contains "ignore previous instructions" is still readable as an instruction
+#: by a model that does not respect the marker.  The marker preserves the fact
+#: that something was stripped, which is what an investigator needs to know —
+#: the original text remains unmodified in the evidence store.
+_UNTRUSTED_PLACEHOLDER = "[UNTRUSTED_TEXT: instruction-like content removed from evidence]"
+
+
 def sanitize_untrusted_evidence(text: str) -> str:
-    """Mark instruction-like text as data; never treat evidence as a prompt."""
+    """Neutralise instruction-like text inside retrieved evidence.
+
+    Retrieved documents are DATA.  Any span that reads like an instruction to
+    the model is replaced before the evidence is placed in a prompt, so the
+    content cannot be read as one — the marker alone is not relied upon.
+    """
     value = str(text or "")
-    return _PROMPT_INJECTION.sub(lambda match: f"[UNTRUSTED_TEXT:{match.group(0)}]", value)
+    return _PROMPT_INJECTION.sub(_UNTRUSTED_PLACEHOLDER, value)
 
 
 def validate_authoritative_action(action: str) -> None:

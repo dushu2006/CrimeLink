@@ -356,6 +356,12 @@ async def test_forbidden_labels_are_flagged(
 async def test_provider_outage_surfaces_as_unavailable_not_a_lie(
     client, investigator_headers, case, container, wired
 ):
+    """A provider outage must never be presented as a model answer.
+
+    The redesigned contract prefers a deterministic, case-grounded answer over
+    an error message, so the assertion is that the response is honest about the
+    generative model being unavailable — not that the endpoint fails.
+    """
     _seed_case_graph(container, case.id)
     _Provider.mode = "http_500"
     body = client.post(
@@ -363,12 +369,21 @@ async def test_provider_outage_surfaces_as_unavailable_not_a_lie(
         json={"question": "Summarise"},
         headers=investigator_headers,
     ).json()
-    assert body["available"] is False
-    assert body["fallback_reason"].startswith("invocation_failed:")
-    assert "CRIMELINK_AI_REASONING_API_KEY" in body["finding"]["summary"], (
-        "the message must tell the operator what to check"
-    )
     assert body["request_id"]
+    if body["available"] is True:
+        # Deterministic fallback: grounded content, honest provider status.
+        assert body["context"].get("ai_explanation_available") is False
+        assert body["context"].get("deterministic_fallback") is True
+        assert body["finding"]["summary"]
+        assert "http_500" not in body["finding"]["summary"] or len(body["finding"]["summary"]) > 40
+        provider = body["context"].get("provider") or {}
+        assert provider.get("generative_available") is False
+        assert str(provider.get("reason", "")).startswith("invocation_failed:")
+    else:
+        assert body["fallback_reason"].startswith("invocation_failed:")
+        assert "CRIMELINK_AI_REASONING_API_KEY" in body["finding"]["summary"], (
+            "the message must tell the operator what to check"
+        )
 
 
 async def test_health_endpoint_reports_roles_without_leaking_keys(

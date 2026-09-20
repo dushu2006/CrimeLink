@@ -179,64 +179,72 @@ def enrich_finding_contract(
     evidence_explanation = finding.evidence_explanation
     if not evidence_explanation:
         statements = [claim.claim for claim in safe_claims if claim.evidence_refs]
-        evidence_explanation = " ".join(statements) if statements else (
-            "No cited evidence-backed explanation was produced."
-        )
+        evidence_explanation = " ".join(statements) if statements else ""
 
     interpretation = finding.investigator_interpretation
+    # Always include a brief interpretation for relationship / communication /
+    # financial answers (these commonly carry inferential weight). Otherwise,
+    # only inject a cautionary interpretation when support is weak.
+    answer_mode_upper_local = (answer_mode or "").upper()
     if not interpretation:
-        if support in {"INFERRED", "UNSUPPORTED"}:
+        if answer_mode_upper_local in {
+            "RELATIONSHIP_ANALYSIS", "FINANCIAL_ANALYSIS", "COMMUNICATION_ANALYSIS",
+        }:
+            if support in {"INFERRED", "UNSUPPORTED"}:
+                interpretation = (
+                    "The available records support an analytical reading only; they do "
+                    "not by themselves establish intent, responsibility, or guilt."
+                )
+            else:
+                interpretation = (
+                    "The cited records describe documented activity. Their significance "
+                    "still requires investigator review."
+                )
+        elif support in {"INFERRED", "UNSUPPORTED"}:
             interpretation = (
                 "The available records support an analytical reading only; they do "
                 "not by themselves establish intent, responsibility, or guilt."
             )
-        else:
-            interpretation = (
-                "The cited records describe documented activity. Their significance "
-                "still requires investigator review."
-            )
 
     why_this_matters = finding.why_this_matters
-    if not why_this_matters:
-        if safe_claims:
-            why_this_matters = (
-                "This intelligence establishes documented connections and operational timelines "
-                "from verified platform evidence while isolating unproven investigative inferences."
-            )
-        else:
-            why_this_matters = (
-                "Authoritative case verification requires linking primary source records to "
-                "substantiate associations before formal investigative escalation."
-            )
+    # Leave why_this_matters empty unless the model (or caller) explicitly set
+    # it or there are no claims (a signal that the answer needs a scaffolding).
+    if not why_this_matters and not safe_claims:
+        why_this_matters = (
+            "Authoritative case verification requires linking primary source records to "
+            "substantiate associations before formal investigative escalation."
+        )
 
     establishes = list(finding.establishes)
-    if not establishes:
+    # Do not auto-populate "establishes" from individual claims — the model's
+    # summary already covers what is established in natural language. If the
+    # model explicitly provided establishes, keep them.
+    if not establishes and not (finding.direct_answer or finding.summary):
         establishes = [
             claim.claim
             for claim in safe_claims
             if claim.evidence_level == "FACT" and claim.evidence_refs
         ][:8]
-    if not establishes and safe_claims:
-        establishes = [c.claim for c in safe_claims if c.evidence_refs][:5]
 
     does_not_establish = list(finding.does_not_establish)
-    if not does_not_establish:
+    # Only inject generic does-not-establish cautions for relationship /
+    # conspiracy-adjacent answers, not for every single question.
+    answer_mode_upper = (answer_mode or "").upper()
+    if not does_not_establish and answer_mode_upper in {
+        "RELATIONSHIP_ANALYSIS", "FINANCIAL_ANALYSIS", "COMMUNICATION_ANALYSIS",
+    }:
         does_not_establish = [
             "The available records do not by themselves establish criminal intent or legal culpability.",
-            "Communications or financial associations do not automatically establish conspiracy without explicit corroboration.",
         ]
 
     limitations = list(finding.limitations)
     if not limitations:
         if finding.missing_evidence:
             limitations = [
-                f"Missing case evidence types: {', '.join(finding.missing_evidence[:4])}.",
-                "Conclusions are constrained strictly to currently indexed case records.",
+                f"Some evidence types are not yet on file for this case: {', '.join(finding.missing_evidence[:4])}.",
             ]
-        else:
-            limitations = [
-                "Conclusions are constrained strictly to currently indexed case records.",
-            ]
+        # Do not append the generic "constrained to records" boilerplate on
+        # every answer — it is noise when the answer is otherwise complete.
 
     # Calculate evidence coverage
     total_claims = len(safe_claims)

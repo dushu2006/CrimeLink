@@ -170,6 +170,52 @@ function renderMarkdown(text: string | string[] | null | undefined, onCitationCl
   );
 }
 
+function isGenericBoilerplate(text: string | string[] | null | undefined): boolean {
+  if (!text) return true;
+  const s = (Array.isArray(text) ? text.join(" ") : text).toLowerCase();
+  if (s.length < 30) return true;
+  return (
+    s.includes("this intelligence establishes documented connections") ||
+    s.includes("authoritative case verification requires") ||
+    s.includes("operational timelines from verified platform evidence")
+  );
+}
+
+function isBoilerplateList(items: string | string[] | null | undefined): boolean {
+  if (!items) return true;
+  const arr = Array.isArray(items) ? items : [items];
+  if (arr.length === 0) return true;
+  const joined = arr.join(" ").toLowerCase();
+  // Hide the old stock disclaimer unless it's informative for THIS answer
+  if (
+    arr.length <= 2 &&
+    (joined.includes("do not by themselves determine guilt") ||
+      joined.includes("do not by themselves establish criminal intent")) &&
+    joined.length < 200
+  ) {
+    return true;
+  }
+  if (
+    arr.length === 1 &&
+    joined.includes("constrained strictly to currently indexed case records")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isEstablishesBoilerplate(items: string | string[] | null | undefined): boolean {
+  if (!items) return true;
+  const arr = Array.isArray(items) ? items : [items];
+  if (arr.length === 0) return true;
+  // If the establishes list appears to just repeat counts like "12 evidence records", hide it
+  const joined = arr.join(" ").toLowerCase();
+  if (arr.length <= 2 && /\d+\s+(evidence|verified|operational|individual)/.test(joined) && joined.length < 200) {
+    return true;
+  }
+  return false;
+}
+
 function getStatusBadge(status: string) {
   const norm = (status || "").toUpperCase();
   if (norm.includes("FACT")) {
@@ -496,25 +542,30 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
             </div>
 
             <div className="case-rag-structured-box">
-              {/* DIRECT ANSWER */}
+              {/* NATURAL ANSWER — the primary content */}
               <div className="case-rag-section">
-                <h4 className="case-rag-section-title">DIRECT ANSWER</h4>
-                <div className="case-rag-section-body">
+                <div className="case-rag-section-body case-rag-natural-answer">
                   {renderMarkdown(finding?.direct_answer || answer || "", (id) =>
                     setDrawerEvidence({ id })
                   )}
                 </div>
               </div>
 
-              {/* EVIDENCE RECORD CLAIMS */}
+              {/* EVIDENCE RECORD CLAIMS — collapsible list of sourced claims */}
               {activeClaims.length > 0 && (
-                <div className="case-rag-section">
-                  <h4 className="case-rag-section-title">EVIDENCE</h4>
+                <details className="case-rag-section case-rag-collapsible">
+                  <summary className="case-rag-section-title">
+                    ▶ EVIDENCE ({activeClaims.length} sourced claim{activeClaims.length === 1 ? "" : "s"})
+                  </summary>
                   <div className="case-rag-claims-list">
                     {activeClaims.map((c, i) => {
                       const claimText = c.claim_text || c.claim || "";
                       const evidId = c.evidence_id || (c.evidence_refs && c.evidence_refs[0]) || "";
                       const status = c.support_status || c.support_level || "DOCUMENTED FACT";
+                      // Skip claims whose text is a near-duplicate of the main answer
+                      if (claimText && (finding?.direct_answer || answer || "").includes(claimText.slice(0, 80)) && evidId) {
+                        return null;
+                      }
                       return (
                         <div key={i} className="case-rag-claim-card">
                           <div className="case-rag-claim-header">
@@ -540,11 +591,11 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
                       );
                     })}
                   </div>
-                </div>
+                </details>
               )}
 
-              {/* WHY THIS MATTERS */}
-              {finding?.why_this_matters && (
+              {/* WHY THIS MATTERS — only when genuinely informative */}
+              {finding?.why_this_matters && !isGenericBoilerplate(finding.why_this_matters) && (
                 <div className="case-rag-section">
                   <h4 className="case-rag-section-title">WHY THIS MATTERS</h4>
                   <div className="case-rag-section-body">
@@ -553,18 +604,18 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
                 </div>
               )}
 
-              {/* WHAT THE EVIDENCE ESTABLISHES */}
-              {finding?.establishes && (
+              {/* WHAT THE EVIDENCE ESTABLISHES — only when explicitly present */}
+              {finding?.establishes && Array.isArray(finding.establishes) && finding.establishes.length > 0 && !isEstablishesBoilerplate(finding.establishes) && (
                 <div className="case-rag-section case-rag-establishes">
-                  <h4 className="case-rag-section-title">WHAT THE EVIDENCE ESTABLISHES</h4>
+                  <h4 className="case-rag-section-title">KEY FINDINGS</h4>
                   <div className="case-rag-section-body">
                     {renderMarkdown(finding.establishes, (id) => setDrawerEvidence({ id }))}
                   </div>
                 </div>
               )}
 
-              {/* WHAT THE EVIDENCE DOES NOT ESTABLISH */}
-              {finding?.does_not_establish && (
+              {/* WHAT THE EVIDENCE DOES NOT ESTABLISH — only when non-generic */}
+              {finding?.does_not_establish && Array.isArray(finding.does_not_establish) && finding.does_not_establish.length > 0 && !isBoilerplateList(finding.does_not_establish) && (
                 <div className="case-rag-section case-rag-not-establishes">
                   <h4 className="case-rag-section-title">WHAT THE EVIDENCE DOES NOT ESTABLISH</h4>
                   <div className="case-rag-section-body">
@@ -574,9 +625,9 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
               )}
 
               {/* LIMITATIONS */}
-              {finding?.limitations && (
+              {finding?.limitations && Array.isArray(finding.limitations) && finding.limitations.length > 0 && !isBoilerplateList(finding.limitations) && (
                 <div className="case-rag-section case-rag-limitations">
-                  <h4 className="case-rag-section-title">LIMITATIONS & GAPS</h4>
+                  <h4 className="case-rag-section-title">NOTES & LIMITATIONS</h4>
                   <div className="case-rag-section-body">
                     {renderMarkdown(finding.limitations, (id) => setDrawerEvidence({ id }))}
                   </div>
