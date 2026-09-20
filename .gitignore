@@ -23,6 +23,10 @@ lib64/
 parts/
 sdist/
 var/
+
+# Timestamped evaluation runs are regenerable; the latest run plus its scorecard
+# are the artefacts worth keeping in the tree.
+backend/evals/investigative_quality/results/eval_*.json
 wheels/
 share/python-wheels/
 *.egg-info/

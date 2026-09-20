@@ -1,3 +1,55 @@
+## Investigative-quality evaluation (measurement only — no product change)
+
+**What was added.** `backend/evals/investigative_quality/` — a deterministic evaluation suite over
+the existing assistant, and `backend/tests/test_investigative_quality_eval.py` (11 tests) pinning the
+harness itself. Nothing in `app/` or `frontend/` changed in this phase: the suite measures the
+architecture as it is.
+
+* `case_facts.py` — ground truth from the same sources the assistant may use (case records plus the
+  case's graph nodes/edges). It keeps two notions of "belongs to this case" apart: **documented**
+  (a record in this case names it) and **graph-linked** (reachable through an identifier that
+  appears in this case), because answers depend on the difference.
+* `question_bank.py` — 12 categories A–L per case, generated from the fact pack, with cross-case
+  probes chosen only from values this case's records *and* graph never touch, plus a shared-identity
+  probe (`J5`) for the case where they do.
+* `graders.py` — 15 independent checks per question (retrieval relevance, irrelevant-evidence
+  avoidance, case scope, citation validity, claim grounding, fact-vs-inference, no invention,
+  question alignment, conciseness, missing/absent evidence, case-scoped attribution, contradictions,
+  corroboration, temporal reasoning, privacy). A check that cannot be decided mechanically returns
+  "not applicable" rather than a guess.
+* `runner.py` — in-process (deterministic path) or over HTTP against a live server, same questions
+  and same ground truth; `MODEL-ASSISTED` is claimed only when a model actually answered. It warns
+  when the embedded graph is held by another process and falls back to the persisted snapshot.
+* `results/latest.json` + `results/scorecard.md` — the measured run, one record per question.
+
+**Measured run** (CR-2001, CR-2019, CR-2020; 135 questions; deterministic, no provider key):
+25/135 questions passed every check (18.5 %). Per-check pass rates: retrieval relevance, citation
+validity, no-invention, case scope and privacy **100 %**; contradiction handling 9/9 and
+corroboration 6/6; conciseness 92.6 %; fact-vs-inference 77.0 %; question alignment 74.1 %;
+case-scoped attribution 69.6 %; temporal reasoning 58.3 %; retrieval focus 45 %; claim grounding
+34.6 %; missing-evidence acknowledgement 33.3 %.
+
+**Findings** (full detail in `docs/INVESTIGATIVE_QUALITY_EVALUATION.md`):
+
+1. Attribute questions (incident/FIR date, IO, offence class, vehicle/phone/account enumerations) are
+   answered with the generic case overview — 35 alignment failures, reproduced over HTTP.
+2. Persons attached by identity resolution are presented as this case's documentary record
+   (CR-2020: "the records name 10 people" while six are named; CR-2001: "Priya Kumar is linked to
+   Sanjay Reddy through a documented ASSOCIATE_OF relationship" when no CR-2001 record contains that
+   name) — 41 attribution and 48 grounding failures. Every edge does carry a document id, so this is
+   provenance at identifier level shown as identity level.
+3. Negative questions are answered with an adjacent positive list instead of a scoped
+   "no case-scoped record documents that" — 17 negative-evidence failures. Where the refusal template
+   is reached, it is exemplary.
+4. Communication answers drop timestamps (10 temporal failures); small composition defects remain
+   (case number on every event line; one refusal with a blank entity name; two chronology items
+   reduced to "Event recorded").
+
+The limiting category is response composition, not retrieval, citations or case isolation. The
+recommended next change is recorded in the evaluation document: a deterministic attribute-answer
+path plus an explicit "named by a record" vs "linked through an identifier" tag on entity-facing
+sentences.
+
 # CrimeLink — investigative intelligence round (four capabilities)
 
 **Branch:** `arena/01a0bf94-crimelink`
