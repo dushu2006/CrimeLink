@@ -78,9 +78,11 @@ class EvidenceFilter:
 class QueryUnderstanding:
     """Structured understanding of investigator question."""
     original_question: str
-    intent: str = "general"  # general, connection, timeline, evidence, summary, etc.
+    intent: str = "general"  # legacy retrieval intent, preserved for callers
+    answer_mode: str = "CASE_SUMMARY"  # investigator-facing response mode
     entities: List[str] = field(default_factory=list)  # detected entity keys
     keywords: Set[str] = field(default_factory=set)
+    exact_terms: List[str] = field(default_factory=list)  # identifiers worth exact matching
     temporal: TemporalFilter | None = None
     spatial: SpatialFilter | None = None
     evidence: EvidenceFilter = field(default_factory=EvidenceFilter)
@@ -146,19 +148,60 @@ def _extract_keywords(question: str) -> Set[str]:
 
 
 def _detect_intent(question: str) -> str:
-    """Detect primary intent from question."""
+    """Detect primary retrieval intent from question."""
     q_lower = question.lower()
     scores = {}
     for intent, pattern in _INTENT_PATTERNS.items():
         matches = pattern.findall(q_lower)
         if matches:
             scores[intent] = len(matches)
-    
+
     if not scores:
         return "general"
-    
-    # Return highest scoring intent
+
+    # Return highest scoring intent; this legacy field remains intentionally
+    # small because ranking code and existing clients use it.
     return max(scores.items(), key=lambda x: x[1])[0]
+
+
+_ANSWER_MODE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("PATTERN_ANALYSIS", re.compile(r"\b(patterns?|clusters?|recurring|repeated|common|network pattern)\b", re.I)),
+    ("RELATIONSHIP_ANALYSIS", re.compile(r"\b(connect(?:s|ed|ion)?|link(?:s|ed)?|relationship|association|between|path|route)\b", re.I)),
+    ("TIMELINE_ANALYSIS", re.compile(r"\b(timeline|chronolog(?:y|ical)|sequence|before|after|during|when|what happened)\b", re.I)),
+    ("EVIDENCE_ANALYSIS", re.compile(r"\b(evidence|records?|documents?|sources?|proof|support(?:s|ed)?)\b", re.I)),
+    ("ENTITY_LOOKUP", re.compile(r"\b(vehicles?|cars?|phones?|mobiles?|accounts?|banks?|locations?|addresses?|organizations?)\b", re.I)),
+    ("PERSON_ANALYSIS", re.compile(r"\b(person|people|individual|profile|activities|associated with|what did)\b", re.I)),
+    ("CASE_SUMMARY", re.compile(r"\b(summary|summar(?:ize|ise|y)|overview|brief|whole case|case briefing)\b", re.I)),
+)
+
+
+def _classify_answer_mode(question: str, intent: str) -> str:
+    """Classify the explanation contract without changing legacy retrieval intent."""
+    for mode, pattern in _ANSWER_MODE_PATTERNS:
+        if pattern.search(question or ""):
+            return mode
+    return {
+        "connection": "RELATIONSHIP_ANALYSIS",
+        "timeline": "TIMELINE_ANALYSIS",
+        "evidence": "EVIDENCE_ANALYSIS",
+        "summary": "CASE_SUMMARY",
+        "financial": "ENTITY_LOOKUP",
+        "communication": "RELATIONSHIP_ANALYSIS",
+        "location": "ENTITY_LOOKUP",
+    }.get(intent, "CASE_SUMMARY")
+
+
+def _extract_exact_terms(question: str) -> list[str]:
+    """Extract identifier-like terms for exact/keyword retrieval boosts."""
+    if not question:
+        return []
+    candidates = re.findall(
+        r"(?<![A-Za-z0-9])[A-Za-z]{2,}[-_/][A-Za-z0-9][A-Za-z0-9_-]*|"
+        r"(?<![A-Za-z0-9])\+?\d{10,13}(?![A-Za-z0-9])",
+        question,
+    )
+    stop = {"what", "when", "where", "which", "show", "tell", "case"}
+    return sorted({item for item in candidates if item.casefold() not in stop}, key=str.casefold)
 
 
 def _extract_temporal_filter(question: str) -> TemporalFilter | None:
@@ -238,7 +281,9 @@ def understand_query(question: str) -> QueryUnderstanding:
     start = time.perf_counter()
     
     intent = _detect_intent(question)
+    answer_mode = _classify_answer_mode(question, intent)
     keywords = _extract_keywords(question)
+    exact_terms = _extract_exact_terms(question)
     temporal = _extract_temporal_filter(question)
     spatial = _extract_spatial_filter(question)
     evidence = _extract_evidence_filter(question)
@@ -264,7 +309,9 @@ def understand_query(question: str) -> QueryUnderstanding:
     understanding = QueryUnderstanding(
         original_question=question,
         intent=intent,
+        answer_mode=answer_mode,
         keywords=keywords,
+        exact_terms=exact_terms,
         temporal=temporal,
         spatial=spatial,
         evidence=evidence,
@@ -277,6 +324,8 @@ def understand_query(question: str) -> QueryUnderstanding:
         "retrieval.query_understanding",
         question_preview=question[:100],
         intent=intent,
+        answer_mode=answer_mode,
+        exact_terms=exact_terms,
         keywords=list(keywords)[:10],
         temporal=temporal.raw_text if temporal else None,
         spatial=spatial.locations if spatial else None,
@@ -303,10 +352,15 @@ def score_node_relevance(node: Dict[str, Any], understanding: QueryUnderstanding
     if understanding.evidence.entity_types and label in understanding.evidence.entity_types:
         score += 10.0
     
-    # Keyword matching in properties
+    # Exact identifier matches outrank semantic/keyword overlap. This is
+    # important for account numbers, case-specific record IDs and phone-like
+    # identifiers where approximate similarity is unsafe.
     content = " ".join(str(v) for v in props.values() if isinstance(v, (str, int, float))).lower()
     content += f" {label.lower()}"
-    
+    for term in understanding.exact_terms:
+        if term.casefold() in content:
+            score += 25.0
+
     for kw in understanding.keywords:
         if kw in content:
             score += min(content.count(kw), 3) * 2.0
@@ -340,8 +394,12 @@ def score_edge_relevance(edge: Dict[str, Any], understanding: QueryUnderstanding
     if understanding.intent == "communication" and "call" in rel_type.lower():
         score += 8.0
     
-    # Keyword matching
-    content = f"{rel_type} {edge.get('source_key','')} {edge.get('target_key','')}".lower()
+    # Keyword matching, with an exact identifier path for graph keys and
+    # record-like relationship properties.
+    content = f"{rel_type} {edge.get('source_key','')} {edge.get('target_key','')} {edge.get('source_doc_id','')} {edge.get('source_doc_ids','')}".lower()
+    for term in understanding.exact_terms:
+        if term.casefold() in content:
+            score += 25.0
     for kw in understanding.keywords:
         if kw in content:
             score += 2.0
@@ -369,11 +427,16 @@ def score_document_relevance(doc: Dict[str, Any], understanding: QueryUnderstand
             if dt.lower() in doc_type or dt.lower() in filename:
                 score += 15.0
     
+    # Exact identifier matches are a hard relevance signal, not a fuzzy hint.
+    for term in understanding.exact_terms:
+        if term.casefold() in combined:
+            score += 25.0
+
     # Keyword matching
     for kw in understanding.keywords:
         if kw in combined:
             score += min(combined.count(kw), 3) * 2.0
-    
+
     # Spatial filter
     if understanding.spatial:
         for loc in understanding.spatial.locations:
@@ -501,19 +564,36 @@ def rank_and_filter_context(
     filtered_nodes = [n for _, n in node_scores[:max_nodes]]
     filtered_edges = [e for _, e in edge_scores[:max_edges]]
     
-    # Filter docs to char budget and max count
+    # Filter docs to char budget and max count.  The first pass remains score
+    # ordered, while a small diversity bonus prevents a high-scoring stack of
+    # one evidence type from crowding out an independent source type.
     filtered_docs = []
     total_chars = 0
     scores_dict: Dict[str, float] = {}
-    
-    for score, doc in doc_scores:
-        if len(filtered_docs) >= max_docs:
-            break
+    remaining_candidates = list(doc_scores)
+    selected_types: set[str] = set()
+    selected_source_docs: dict[str, int] = {}
+
+    while remaining_candidates and len(filtered_docs) < max_docs:
+        def _selection_key(item: tuple[float, Dict[str, Any]]):
+            score, doc = item
+            doc_type = str(doc.get("document_type") or "UNKNOWN").rsplit(".", 1)[-1].upper()
+            diversity_bonus = 2.0 if selected_types and doc_type not in selected_types else 0.0
+            source_id = str(doc.get("source_document_id") or doc.get("doc_id") or "")
+            repeat_penalty = 1.0 if selected_source_docs.get(source_id, 0) >= 2 else 0.0
+            return (-(score + diversity_bonus - repeat_penalty), str(doc.get("filename", "")))
+
+        selected_index = min(range(len(remaining_candidates)), key=lambda index: _selection_key(remaining_candidates[index]))
+        score, doc = remaining_candidates.pop(selected_index)
+        source_id = str(doc.get("source_document_id") or doc.get("doc_id") or "")
+        if selected_source_docs.get(source_id, 0) >= 2:
+            continue
         content = str(doc.get("content", ""))
         content_len = len(content)
         remaining = max_doc_chars - total_chars
         if remaining <= 0:
             break
+        doc_type = str(doc.get("document_type") or "UNKNOWN").rsplit(".", 1)[-1].upper()
         if content_len > remaining:
             truncated = content[:remaining].strip()
             if not truncated:
@@ -522,12 +602,12 @@ def rank_and_filter_context(
             new_doc["content"] = truncated
             filtered_docs.append(new_doc)
             total_chars += len(truncated)
-            scores_dict[doc.get("doc_id", "")] = score
-            break
         else:
             filtered_docs.append(doc)
             total_chars += content_len
-            scores_dict[doc.get("doc_id", "")] = score
+        selected_types.add(doc_type)
+        selected_source_docs[source_id] = selected_source_docs.get(source_id, 0) + 1
+        scores_dict[doc.get("doc_id", "")] = score
     
     # Also store node/edge scores
     for score, node in node_scores[:max_nodes]:
