@@ -1,6 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { api, askCaseStream } from "../../api/client";
 import { EvidenceDrawer, type EvidenceDrawerData } from "./EvidenceDrawer";
+import {
+  type CaseContextSummary,
+  degradedCaseContext,
+  deriveCaseIntelligenceMetrics,
+} from "../../lib/caseIntelligence";
 
 const PHASES: Record<string, string> = {
   started: "Retrieving case context…",
@@ -9,30 +14,6 @@ const PHASES: Record<string, string> = {
   validating: "Validating evidence references…",
   fast_path: "Answering from case context…",
 };
-
-interface CaseContextSummary {
-  case_id: string;
-  case_number: string;
-  title: string;
-  stats: {
-    documents_indexed: number;
-    evidence_types_count: number;
-    evidence_types: string[];
-    entities_extracted: number;
-    entity_counts_by_type: Record<string, number>;
-    relationships_mapped: number;
-    coverage_percent: number;
-    confidence_score: number;
-  };
-  timeline: {
-    first_recorded: string;
-    latest_recorded: string;
-    event_count: number;
-  };
-  suggested_questions: string[];
-  canonical_entities_count: number;
-  evidence_count: number;
-}
 
 interface ClaimCitation {
   claim_text?: string;
@@ -85,30 +66,6 @@ function isProviderError(text: string | null | undefined): boolean {
     text.includes("CRIMELINK_AI_REASONING_API_KEY") ||
     text.includes("no_api_key_for_role")
   );
-}
-
-function formatEntityCounts(counts: Record<string, number> | undefined, total: number): string {
-  if (!counts || Object.keys(counts).length === 0) {
-    return `${total} entities`;
-  }
-  const labels: Record<string, [string, string]> = {
-    person: ["person", "people"],
-    account: ["account", "accounts"],
-    phone: ["phone", "phones"],
-    vehicle: ["vehicle", "vehicles"],
-    organization: ["organization", "organizations"],
-    company: ["company", "companies"],
-    location: ["location", "locations"],
-  };
-  const parts: string[] = [];
-  for (const [rawType, count] of Object.entries(counts)) {
-    if (count <= 0) continue;
-    const lower = rawType.toLowerCase();
-    const pair = labels[lower] || [lower, `${lower}s`];
-    const unit = count === 1 ? pair[0] : pair[1];
-    parts.push(`${count} ${unit}`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : `${total} entities`;
 }
 
 function renderMarkdown(text: string | string[] | null | undefined, onCitationClick?: (id: string) => void) {
@@ -238,42 +195,26 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
   const [history, setHistory] = useState<Array<{ role: string; content: string }>>([]);
   const [drawerEvidence, setDrawerEvidence] = useState<EvidenceDrawerData | null>(null);
 
+  // The CASE INTELLIGENCE cells are derived from the authoritative context
+  // only — never from the assistant's answer text.
+  const metrics = useMemo(() => deriveCaseIntelligenceMetrics(caseContext), [caseContext]);
+  const metricsAvailableRef = useRef(false);
+  metricsAvailableRef.current = metrics.available;
+
   const loadCaseContext = useCallback(async () => {
     try {
       const data = await api<CaseContextSummary>(`/ai/cases/${encodeURIComponent(caseId)}/context`);
       setCaseContext(data);
     } catch {
-      // If endpoint fails, fallback to basic case info
+      // The authoritative context is unavailable. Keep the panel usable with
+      // the case identity, but do not fabricate metrics: a header reading
+      // "0 entities · 0 relationships · N/A" for a populated case is a false
+      // statement about the evidence, not a fallback.
       try {
-        const caseData = await api<any>(`/cases/${encodeURIComponent(caseId)}`);
-        setCaseContext({
-          case_id: caseId,
-          case_number: caseData?.case_number || caseId,
-          title: caseData?.title || "Active Investigation",
-          stats: {
-            documents_indexed: caseData?.document_count || 0,
-            evidence_types_count: 0,
-            evidence_types: [],
-            entities_extracted: 0,
-            entity_counts_by_type: {},
-            relationships_mapped: 0,
-            coverage_percent: 0,
-            confidence_score: 0.8,
-          },
-          timeline: {
-            first_recorded: "N/A",
-            latest_recorded: "N/A",
-            event_count: 0,
-          },
-          suggested_questions: [
-            "Who are the key people in this case?",
-            "What evidence connects the primary suspect to the incident?",
-            "Show the financial relationships in this case.",
-            "What happened before and after the alleged incident?",
-          ],
-          canonical_entities_count: 0,
-          evidence_count: caseData?.document_count || 0,
-        });
+        const caseData = await api<{ case_number?: string; title?: string }>(
+          `/cases/${encodeURIComponent(caseId)}`
+        );
+        setCaseContext(degradedCaseContext(caseId, caseData));
       } catch {
         // Leave as null if entirely unreachable
       }
@@ -289,6 +230,13 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
     setHistory([]);
     setDrawerEvidence(null);
   }, [caseId, loadCaseContext]);
+
+  // A successful answer proves the case context is reachable again; if the
+  // header is still on its degraded state, re-request the authoritative
+  // metrics so the two can never disagree for the rest of the session.
+  const rehydrateMetricsIfDegraded = useCallback(() => {
+    if (!metricsAvailableRef.current) void loadCaseContext();
+  }, [loadCaseContext]);
 
   function getNetworkFallback(text: string): { answer: string; finding: FindingResult } {
     const caseNum = caseContext?.case_number || caseId;
@@ -335,6 +283,7 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
             { role: "user", content: text },
             { role: "assistant", content: summary },
           ]);
+          rehydrateMetricsIfDegraded();
         } else {
           setError(result?.error || "Investigation service was unable to analyze this inquiry.");
         }
@@ -372,6 +321,7 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
                 { role: "user", content: text },
                 { role: "assistant", content: summary },
               ]);
+              rehydrateMetricsIfDegraded();
             } else {
               void plain();
             }
@@ -414,38 +364,47 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
               <strong>{caseContext.case_number}</strong> · {caseContext.title}
             </div>
           </div>
-          <div className="case-ai-stat-grid">
-            <div className="case-ai-stat-item">
-              <span className="case-ai-stat-label">Evidence</span>
-              <span className="case-ai-stat-val">
-                {caseContext.stats?.documents_indexed ?? caseContext.evidence_count} verified records ·{" "}
-                {caseContext.stats?.evidence_types_count ?? caseContext.stats?.evidence_types?.length ?? 0} evidence types
-              </span>
+          {metrics.available ? (
+            <div className="case-ai-stat-grid">
+              <div className="case-ai-stat-item">
+                <span className="case-ai-stat-label">Evidence</span>
+                <span className="case-ai-stat-val">{metrics.evidenceLabel}</span>
+              </div>
+              <div className="case-ai-stat-item">
+                <span className="case-ai-stat-label">Entities</span>
+                <span className="case-ai-stat-val">{metrics.entitiesLabel}</span>
+              </div>
+              <div className="case-ai-stat-item">
+                <span className="case-ai-stat-label">Relationships</span>
+                <span className="case-ai-stat-val">{metrics.relationshipsLabel}</span>
+              </div>
+              <div className="case-ai-stat-item">
+                <span className="case-ai-stat-label">Timeline</span>
+                <span className="case-ai-stat-val">
+                  First recorded: {metrics.firstRecorded}
+                  <br />
+                  Latest recorded: {metrics.latestRecorded}
+                </span>
+              </div>
             </div>
-            <div className="case-ai-stat-item">
-              <span className="case-ai-stat-label">Entities</span>
-              <span className="case-ai-stat-val">
-                {formatEntityCounts(
-                  caseContext.stats?.entity_counts_by_type,
-                  caseContext.stats?.entities_extracted ?? caseContext.canonical_entities_count
-                )}
-              </span>
+          ) : (
+            <div className="case-ai-stat-grid" role="status">
+              <div className="case-ai-stat-item">
+                <span className="case-ai-stat-label">Case intelligence</span>
+                <span className="case-ai-stat-val">
+                  Metrics unavailable — the case context service did not respond.{" "}
+                  <button
+                    type="button"
+                    className="claim-inline-citation"
+                    onClick={() => void loadCaseContext()}
+                    disabled={busy}
+                  >
+                    Retry
+                  </button>
+                </span>
+              </div>
             </div>
-            <div className="case-ai-stat-item">
-              <span className="case-ai-stat-label">Relationships</span>
-              <span className="case-ai-stat-val">
-                {caseContext.stats?.relationships_mapped ?? 0} case-scoped relationships
-              </span>
-            </div>
-            <div className="case-ai-stat-item">
-              <span className="case-ai-stat-label">Timeline</span>
-              <span className="case-ai-stat-val">
-                First recorded: {caseContext.timeline?.first_recorded || "N/A"}
-                <br />
-                Latest recorded: {caseContext.timeline?.latest_recorded || "N/A"}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
