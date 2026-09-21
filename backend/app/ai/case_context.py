@@ -16,8 +16,8 @@ membership is not sufficient provenance.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 
@@ -178,24 +178,33 @@ class CaseAIContext:
             norm = label_remap.get(raw_key.lower(), raw_key.lower())
             entity_counts_by_type[norm] = entity_counts_by_type.get(norm, 0) + int(count or 0)
 
+        # A bound that is missing or empty is reported as N/A -- never as a
+        # placeholder string -- so the header's empty-case rendering is exact.
         timeline_dict = {
-            "first_recorded": self.timeline_summary.get("first_recorded", "N/A"),
-            "latest_recorded": self.timeline_summary.get("latest_recorded", "N/A"),
+            "first_recorded": self.timeline_summary.get("first_recorded") or "N/A",
+            "latest_recorded": self.timeline_summary.get("latest_recorded") or "N/A",
             "event_count": self.timeline_summary.get("total_events", 0),
         }
+
+        status = self.status.value if hasattr(self.status, "value") else self.status
 
         return {
             "case_id": self.case_id,
             "case_number": self.case_number,
             "title": self.case_title,
             "case_title": self.case_title,
-            "status": self.status,
+            "status": status,
             "jurisdiction": self.jurisdiction,
             "stats": {
-                # Frontend-compatible field names
-                "documents_indexed": self.stats.evidence_count,
+                # Frontend-compatible field names.  ``documents_indexed`` is
+                # the number of distinct case documents (the "verified
+                # records" figure), which the builder sets explicitly.
+                "documents_indexed": self.stats.document_count_or_evidence,
+                "document_count": self.stats.document_count_or_evidence,
                 "evidence_count": self.stats.evidence_count,
-                "evidence_types_count": self.stats.evidence_types_count,
+                "evidence_types_count": (
+                    self.stats.evidence_types_count or len(self.stats.evidence_types)
+                ),
                 "evidence_types": list(self.stats.evidence_types),
                 "entities_extracted": self.stats.entity_count,
                 "entity_count": self.stats.entity_count,
@@ -354,6 +363,77 @@ def case_scope_ids(item: dict[str, Any]) -> set[str]:
     return _scope_values(item)
 
 
+def _edge_identity(edge: dict[str, Any]) -> tuple[str, ...]:
+    """Identity of one relationship, whichever key spelling the source used."""
+    return (
+        "edge",
+        str(edge.get("source_key") or edge.get("source") or ""),
+        str(edge.get("target_key") or edge.get("target") or ""),
+        str(edge.get("rel_type") or ""),
+    )
+
+
+def _event_identity(ev: dict[str, Any], index: int) -> tuple[str, ...]:
+    """Identity of one timeline event, aligned with the node/edge scans."""
+    kind = str(ev.get("type") or "")
+    if kind == "edge":
+        return _edge_identity(ev)
+    if kind == "node" and ev.get("key"):
+        return ("node", str(ev["key"]))
+    key = ev.get("event_key") or ev.get("key") or ev.get("provenance_key")
+    return ("event", str(key) if key else f"#{index}")
+
+
+def _event_in_case_scope(
+    ev: dict[str, Any],
+    allowed_keys: set[str],
+    allowed_edges: set[tuple[tuple[str, ...], str]],
+    case_id: str,
+) -> bool:
+    """Whether a timeline event belongs to the validated case context.
+
+    A node event must be one of the validated nodes; an edge event must be
+    one of the validated relationships; anything else must carry this case's
+    own provenance.  This is the same boundary the counts obey, applied to
+    the dates.
+    """
+    kind = str(ev.get("type") or "")
+    if kind == "node":
+        return str(ev.get("key") or "") in allowed_keys
+    if kind == "edge":
+        # Identity plus stamp: parallel relationships between the same two
+        # nodes are told apart by the timestamp the event was built from.
+        return (_edge_identity(ev), str(ev.get("timestamp") or "")) in allowed_edges
+    key = str(ev.get("event_key") or ev.get("key") or ev.get("provenance_key") or "")
+    if key and key in allowed_keys:
+        return True
+    matched, _reason = _matches_case(ev, case_id)
+    if matched:
+        return True
+    props = ev.get("properties")
+    if isinstance(props, dict):
+        matched, _reason = _matches_case(props, case_id)
+        return matched
+    return False
+
+
+def _timeline_sort_key(ts: str) -> tuple[int, str]:
+    """Chronological sort key for one recorded timestamp.
+
+    ISO-8601 values (with or without a zone, ``Z`` or offset, date-only) are
+    compared as instants; anything unparseable sorts after them by its text,
+    so an odd stamp can never displace a real one as the first/latest bound.
+    """
+    s = str(ts).strip()
+    try:
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return (1, s)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (0, parsed.astimezone(timezone.utc).isoformat())
+
+
 def format_readable_date(ts: str | datetime | None) -> str:
     """Format an ISO date string or datetime into human readable form (e.g. Jan 12, 2026)."""
     if not ts:
@@ -489,39 +569,73 @@ def build_case_ai_context(
     validation = validate_case_context(
         case_id, nodes=nodes, edges=edges, documents=documents, require_scope=True
     )
-    stats = validation.stats
-    stats.document_count = len(validation.documents)
+    # ``CaseContextStats`` is frozen; ``validation.stats`` builds a fresh
+    # instance on every access.  Assigning ``document_count`` on it raised
+    # ``FrozenInstanceError`` and took the whole ``/ai/cases/{id}/context``
+    # endpoint down, which is what left the CASE INTELLIGENCE header on its
+    # zero/N/A fallback.  Derive the completed stats immutably instead.
+    stats = replace(validation.stats, document_count=len(validation.documents))
 
-    # Compute timeline bounds from events, nodes, edges, documents
-    timestamps: list[str] = []
-    for ev in events:
-        ts = ev.get("timestamp") or ev.get("at") or ev.get("date")
-        if ts:
-            timestamps.append(str(ts))
+    # The timeline is subject to the same case boundary as the counts.  The
+    # caller's ``events`` are usually built from the *unvalidated* snapshot,
+    # so an event is kept only when it belongs to a validated node or
+    # relationship (or carries this case's provenance itself); otherwise a
+    # cross-case or unscoped record with a timestamp could move the header's
+    # first/latest bounds even though it contributes to no other metric.
+    allowed_keys = {
+        str(item.get("provenance_key") or item.get("id"))
+        for item in validation.nodes
+        if item.get("provenance_key") or item.get("id")
+    }
+    allowed_edges = {
+        (_edge_identity(edge), str(edge.get("timestamp") or "")) for edge in validation.edges
+    }
+    scoped_events = [
+        ev for ev in events
+        if isinstance(ev, dict) and _event_in_case_scope(ev, allowed_keys, allowed_edges, case_id)
+    ]
+
+    # Dated records: (record identity, timestamp).  Identity keeps a record
+    # that reaches us twice -- once as an event and once in the direct scan
+    # below -- from being counted twice, while distinct stamps on one record
+    # (first/last seen) still both count.
+    dated: set[tuple[tuple[str, ...], str]] = set()
+
+    def _record(identity: tuple[str, ...], ts: Any) -> None:
+        text = str(ts).strip() if ts else ""
+        if text and not text.startswith("Timestamp unavailable"):
+            dated.add((identity, text))
+
+    for index, ev in enumerate(scoped_events):
+        _record(_event_identity(ev, index), ev.get("timestamp") or ev.get("at") or ev.get("date"))
     for doc in validation.documents:
-        ts = doc.get("date") or doc.get("created_at") or doc.get("recorded_at")
-        if ts:
-            timestamps.append(str(ts))
+        _record(
+            ("document", str(doc.get("doc_id") or doc.get("filename") or "")),
+            doc.get("date") or doc.get("created_at") or doc.get("recorded_at"),
+        )
     for edge in validation.edges:
-        ts = edge.get("timestamp")
-        if ts:
-            timestamps.append(str(ts))
+        _record(_edge_identity(edge), edge.get("timestamp"))
     for node in validation.nodes:
         props = node.get("properties") or {}
         for k in ("first_ts", "last_ts", "timestamp"):
             if props.get(k):
-                timestamps.append(str(props[k]))
+                _record(("node", str(node.get("provenance_key") or node.get("id") or "")), props[k])
 
-    clean_ts = sorted([t for t in timestamps if t and not str(t).startswith("Timestamp unavailable")])
+    # Order chronologically, not lexicographically: the same case mixes
+    # ``...Z``, ``...+00:00``, naive and date-only stamps, and a string sort
+    # of those can pick the wrong bound.
+    clean_ts = sorted((ts for _identity, ts in dated), key=_timeline_sort_key)
     first_ts = clean_ts[0] if clean_ts else None
     latest_ts = clean_ts[-1] if clean_ts else None
 
+    # ``None`` means "no dated record in this case"; the summary renders it
+    # as N/A so a genuinely empty case is displayed honestly.
     timeline_summary = {
-        "first_recorded": format_readable_date(first_ts) if first_ts else "Date unavailable",
-        "latest_recorded": format_readable_date(latest_ts) if latest_ts else "Date unavailable",
+        "first_recorded": format_readable_date(first_ts) if first_ts else None,
+        "latest_recorded": format_readable_date(latest_ts) if latest_ts else None,
         "first_recorded_raw": first_ts,
         "latest_recorded_raw": latest_ts,
-        "total_events": len(clean_ts),
+        "total_events": len(dated),
     }
 
     # Missing evidence types
@@ -538,7 +652,7 @@ def build_case_ai_context(
         entities=validation.nodes,
         evidence_types=stats.evidence_types,
         relationships=validation.edges,
-        events=list(events),
+        events=scoped_events,
     )
 
     # Provenance map
@@ -559,7 +673,7 @@ def build_case_ai_context(
         verified_evidence=validation.documents,
         entities=validation.nodes,
         relationships=validation.edges,
-        events=list(events),
+        events=scoped_events,
         timeline_summary=timeline_summary,
         suggested_questions=suggested,
         missing_evidence_types=missing_types,
