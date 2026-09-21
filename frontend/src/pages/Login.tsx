@@ -93,11 +93,11 @@ export default function Login() {
   return (
     <div className="login">
       <form className="login-card" onSubmit={setup ? submitSetup : submitLogin}>
-        <div className="login-brand" style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+        <div className="login-brand">
           <CrimeLinkLogo variant="dark" showSubtitle={false} />
           <div>
-            <h1 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "var(--cl-ink)" }}>{t("app.title", lang)}</h1>
-            <p style={{ margin: 0, fontSize: "12px", color: "var(--cl-text-3)" }}>{t("app.subtitle", lang)}</p>
+            <h1>{t("app.title", lang)}</h1>
+            <p>{t("app.subtitle", lang)}</p>
           </div>
         </div>
 
