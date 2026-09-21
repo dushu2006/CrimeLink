@@ -159,6 +159,9 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
   const [entityBudget, setEntityBudget] = useState<number>(DEFAULT_ENTITY_NODE_BUDGET);
   const [entityTotal, setEntityTotal] = useState<{ nodes: number; edges: number } | null>(null);
 
+  // Track which entity types actually exist in the graph data
+  const [availableEntityLabels, setAvailableEntityLabels] = useState<Set<string>>(new Set(ENTITY_LABELS));
+
   const showSupporting = entityLabels.some((label) => label !== "PERSON");
 
   // ---- Fetch Master Case Network --------------------------------------------
@@ -186,6 +189,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
     setEntityLoading(true);
     setEntityError(null);
     try {
+      // First fetch with ALL labels to discover what exists (only once initially)
       const data = await masterGraph({
         labels: entityLabels.length ? entityLabels : undefined,
         relTypes: entityRelTypes.length ? entityRelTypes : undefined,
@@ -199,6 +203,18 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
       });
       setEntityNodes(data.nodes);
       setEntityEdges(data.edges);
+
+      // Derive available entity types from the returned data
+      if (data.counts?.by_label) {
+        setAvailableEntityLabels(new Set(
+          Object.keys(data.counts.by_label).map(l => l.toUpperCase().replace(/\s+/g, "_"))
+        ));
+      } else {
+        const labelsInData = new Set(
+          data.nodes.map(n => String(n.label).toUpperCase().replace(/\s+/g, "_"))
+        );
+        setAvailableEntityLabels(labelsInData);
+      }
     } catch (err) {
       setEntityError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -206,11 +222,12 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
     }
   }, [entityLabels, entityRelTypes, entityBudget]);
 
+  // Auto-refetch whenever the entity tab is active and filters/budget change
   useEffect(() => {
-    if (level === "entity" && entityNodes.length === 0 && !entityLoading) {
+    if (level === "entity") {
       void loadEntityNetwork();
     }
-  }, [level, entityNodes.length, entityLoading, loadEntityNetwork]);
+  }, [level, loadEntityNetwork]);
 
   // Filtered entity nodes if filterCaseId is set
   const visibleEntityNodes = useMemo(() => {
@@ -305,6 +322,11 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
   // The PEOPLE NETWORK owns its own canvas inside <PersonRelationshipNetwork />.
   const graphLabels = useRef(true);
 
+  // Node count drives dynamic sizing: smaller nodes + more spacing for large graphs
+  const nodeCount = level === "case"
+    ? (caseNetwork?.nodes.length ?? 0)
+    : visibleEntityNodes.length;
+
   const canvasStyle = useMemo(
     () =>
       [
@@ -320,23 +342,32 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               if (ele.data("label") === "CASE") return "#0F172A";
               return entityColor(ele.data("label") || "PERSON");
             },
-            "border-width": (ele: any) => (ele.data("is_criminal") ? 3 : 2),
+            "border-width": (ele: any) => {
+              const base = ele.data("is_criminal") ? 3 : 2;
+              return nodeCount > 400 ? Math.max(1, base - 1.5) : nodeCount > 200 ? Math.max(1, base - 1) : base;
+            },
             "border-color": (ele: any) => (ele.data("is_criminal") ? CRIMINAL_BORDER : "#CBD5E1"),
             // Labels disappear when the zoom is too low to read them; the
             // selected node always keeps its label.
-            label: (ele: any) =>
-              ele.selected() || graphLabels.current ? String(ele.data("name") ?? "") : "",
+            label: (ele: any) => {
+              if (!ele.selected() && !graphLabels.current) return "";
+              const raw = String(ele.data("name") ?? "");
+              if (nodeCount > 300 && raw.length > 18) {
+                return raw.slice(0, 16) + "…";
+              }
+              return raw;
+            },
             color: "#FFFFFF",
             "font-family": "Inter, system-ui, sans-serif",
-            "font-size": level === "case" ? "13px" : "11px",
+            "font-size": level === "case" ? (nodeCount > 40 ? "11px" : "12.5px") : nodeCount > 400 ? "7px" : nodeCount > 200 ? "8.5px" : "11px",
             "font-weight": 600,
             "text-valign": "center",
             "text-halign": "center",
-            width: level === "case" ? 56 : 38,
-            height: level === "case" ? 56 : 38,
+            width: level === "case" ? (nodeCount > 40 ? 44 : 52) : (ele: any) => ele.data("is_criminal") ? (nodeCount > 400 ? 20 : nodeCount > 200 ? 26 : 42) : (nodeCount > 400 ? 15 : nodeCount > 200 ? 22 : 36),
+            height: level === "case" ? (nodeCount > 40 ? 44 : 52) : (ele: any) => ele.data("is_criminal") ? (nodeCount > 400 ? 20 : nodeCount > 200 ? 26 : 42) : (nodeCount > 400 ? 15 : nodeCount > 200 ? 22 : 36),
             "text-outline-color": "#0F172A",
-            "text-outline-width": 1.5,
-            "overlay-padding": 6,
+            "text-outline-width": nodeCount > 400 ? 0.6 : nodeCount > 200 ? 0.9 : 1.5,
+            "overlay-padding": nodeCount > 400 ? 2 : 5,
           },
         },
         {
@@ -352,7 +383,10 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
         {
           selector: "edge",
           style: {
-            width: (ele: any) => ele.data("weight") || 2,
+            width: (ele: any) => {
+              const base = ele.data("weight") || 2;
+              return nodeCount > 400 ? Math.max(1, base * 0.7) : base;
+            },
             "line-color": (ele: any) => {
               const strength = ele.data("strength");
               if (strength === "STRONG") return "#2563EB";
@@ -360,17 +394,27 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               return "#94A3B8";
             },
             "curve-style": "bezier",
-            // Edge labels are the densest text on the canvas: they are only
-            // drawn when there is room, or for the edge under inspection.
-            label: (ele: any) =>
-              ele.selected() || graphLabels.current ? String(ele.data("label") ?? "") : "",
-            "font-size": "10px",
+            opacity: nodeCount > 400 ? 0.75 : 0.85,
+            // In large graphs (600/3000), don't clutter the canvas with thousands of edge labels
+            // unless the edge is selected or the user is zoomed in close (zoom >= 1.0)
+            label: (ele: any) => {
+              if (ele.selected()) return String(ele.data("label") ?? "");
+              if (nodeCount > 150) {
+                if (!graphLabels.current) return "";
+                const cyInstance = ele.cy();
+                if (cyInstance && cyInstance.zoom() < 1.0) return "";
+              } else {
+                if (!graphLabels.current) return "";
+              }
+              return String(ele.data("label") ?? "");
+            },
+            "font-size": nodeCount > 400 ? "6.5px" : nodeCount > 200 ? "7.5px" : "9.5px",
             "font-weight": 500,
             color: "#475569",
             "text-rotation": "autorotate",
             "text-background-color": "#FFFFFF",
-            "text-background-opacity": 0.85,
-            "text-background-padding": "2px",
+            "text-background-opacity": nodeCount > 200 ? 0.7 : 0.85,
+            "text-background-padding": "1px",
           },
         },
         {
@@ -379,10 +423,12 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             "line-color": "#2563EB",
             width: 4,
             "font-weight": 700,
+            "font-size": "10px",
+            "text-background-opacity": 0.95,
           },
         },
       ] as any,
-    [level],
+    [level, nodeCount],
   );
 
   const {
@@ -474,14 +520,11 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               ENTITY NETWORK
             </button>
           </div>
-          {level !== "people" && (
+          {level === "case" && (
             <button
               type="button"
               className="btn btn-tertiary btn-small"
-              onClick={() => {
-                if (level === "case") void loadCaseNetwork();
-                else void loadEntityNetwork();
-              }}
+              onClick={() => void loadCaseNetwork()}
             >
               Refresh
             </button>
@@ -593,7 +636,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
           }}
         >
           <span className="muted">Node types:</span>
-          {ENTITY_LABELS.map((label) => {
+          {ENTITY_LABELS.filter((label) => availableEntityLabels.has(label)).map((label) => {
             const on = entityLabels.includes(label);
             return (
               <button
@@ -616,7 +659,9 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             <span className="muted">Max nodes:</span>
             <select
               value={entityBudget}
-              onChange={(e) => setEntityBudget(Number(e.target.value))}
+              onChange={(e) => {
+                setEntityBudget(Number(e.target.value));
+              }}
               style={{ fontSize: "var(--text-xs)", padding: "2px 6px" }}
             >
               <option value={40}>40</option>
@@ -630,9 +675,9 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             <span className="muted">Relationships:</span>
             <select
               value={entityRelTypes.join(",") || "ALL"}
-              onChange={(e) =>
-                setEntityRelTypes(e.target.value === "ALL" ? [] : [e.target.value])
-              }
+              onChange={(e) => {
+                setEntityRelTypes(e.target.value === "ALL" ? [] : [e.target.value]);
+              }}
               style={{ fontSize: "var(--text-xs)", padding: "2px 6px" }}
             >
               <option value="ALL">All relationship types</option>
@@ -666,7 +711,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
         ref={containerRef}
         style={{
           width: "100%",
-          height: 520,
+          height: nodeCount > 400 ? 780 : nodeCount > 200 ? 660 : 540,
           background: "var(--bg-canvas, #F8FAFC)",
           border: "1px solid var(--border-color, #E2E8F0)",
           borderRadius: "var(--radius-md, 8px)",

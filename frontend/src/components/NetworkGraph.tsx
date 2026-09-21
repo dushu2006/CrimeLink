@@ -218,15 +218,34 @@ export function NetworkGraph({
       }
       return;
     }
+    const nodeCount = visibleNodes.length;
+    const isLarge = nodeCount > 200;
+    const isMedium = nodeCount > 80;
+    const repulsion = isLarge ? 140000 : isMedium ? 60000 : 18000;
+    const edgeLen = isLarge ? 200 : isMedium ? 160 : 120;
+    const sep = isLarge ? 120 : isMedium ? 95 : 75;
+    const elasticity = isLarge ? 0.22 : 0.45;
+    const grav = isLarge ? 0.08 : 0.25;
+
     const cy = cytoscape({
       container: containerRef.current,
       elements,
       layout: {
         name: layoutName,
         animate: false,
-        nodeRepulsion: 12000,
-        idealEdgeLength: 130,
-        padding: 32,
+        quality: "default",
+        randomize: true,
+        nodeRepulsion: () => repulsion,
+        idealEdgeLength: () => edgeLen,
+        edgeElasticity: () => elasticity,
+        nodeSeparation: sep,
+        gravity: grav,
+        numIter: 2500,
+        tile: true,
+        packComponents: true,
+        nodeDimensionsIncludeLabels: true,
+        fit: true,
+        padding: 36,
       } as never,
       style: [
         {
@@ -242,32 +261,36 @@ export function NetworkGraph({
               const name = String(ele.data("name") ?? "");
               const label = ele.data("is_case_node")
                 ? `${name}\n[CASE]`
-                : name.length > 22
-                  ? `${name.slice(0, 21)}…`
+                : name.length > (isLarge ? 16 : 22)
+                  ? `${name.slice(0, isLarge ? 15 : 21)}…`
                   : name;
               return label;
             },
             color: "#0F172A",
-            "font-size": 11,
+            "font-size": isLarge ? 7 : isMedium ? 8.5 : 11,
             "font-weight": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") || ele.data("is_case_node") ? 700 : 500,
             "text-valign": "bottom",
-            "text-margin-y": 5,
-            "text-outline-width": 2,
+            "text-margin-y": isLarge ? 3 : 5,
+            "text-outline-width": isLarge ? 1 : 2,
             "text-outline-color": "#FFFFFF",
             "text-wrap": "wrap" as any,
-            width: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 58
-              : ele.data("is_case_node") ? 36
-              : ele.data("is_criminal") ? 30 : 22,
-            height: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 58
-              : ele.data("is_case_node") ? 36
-              : ele.data("is_criminal") ? 30 : 22,
+            width: (ele: cytoscape.NodeSingular) => {
+              if (ele.data("is_target")) return isLarge ? 36 : 58;
+              if (ele.data("is_case_node")) return isLarge ? 24 : 36;
+              if (ele.data("is_criminal")) return isLarge ? 20 : 30;
+              return isLarge ? 15 : isMedium ? 18 : 22;
+            },
+            height: (ele: cytoscape.NodeSingular) => {
+              if (ele.data("is_target")) return isLarge ? 36 : 58;
+              if (ele.data("is_case_node")) return isLarge ? 24 : 36;
+              if (ele.data("is_criminal")) return isLarge ? 20 : 30;
+              return isLarge ? 15 : isMedium ? 18 : 22;
+            },
             "border-width": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? 4
               : ele.data("is_case_node") ? 3
-              : ele.data("is_criminal") ? 3 : 1,
+              : ele.data("is_criminal") ? (isLarge ? 2 : 3) : 1,
             "border-style": "solid",
             "border-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_criminal")
@@ -277,32 +300,42 @@ export function NetworkGraph({
                   : ele.data("is_target")
                     ? "#B45309"
                     : "#E2E8F0",
-            "overlay-padding": 4,
+            "overlay-padding": isLarge ? 2 : 4,
           },
         },
         {
           selector: "edge",
           style: {
-            width: 1.6,
+            width: isLarge ? 1.2 : 1.6,
             "line-color": "#94A3B8",
             "target-arrow-color": "#94A3B8",
             "target-arrow-shape": "triangle",
-            "arrow-scale": 0.9,
+            "arrow-scale": isLarge ? 0.7 : 0.9,
             "curve-style": "bezier",
+            opacity: isLarge ? 0.75 : 0.85,
             "line-style": (ele: cytoscape.EdgeSingular) =>
               ele.data("staging") ? "dashed" : "solid",
-            label: "data(rel)",
-            "font-size": 8.5,
+            label: (ele: cytoscape.EdgeSingular) => {
+              if (ele.selected()) return String(ele.data("rel") ?? "");
+              if (isMedium) {
+                const cyInst = ele.cy();
+                if (cyInst && cyInst.zoom() < 1.0) return "";
+              }
+              return String(ele.data("rel") ?? "");
+            },
+            "font-size": isLarge ? 6.5 : isMedium ? 7.5 : 8.5,
             "font-weight": 600,
             color: "#334155",
             "text-rotation": "autorotate",
-            "text-background-opacity": 0.95,
+            "text-background-opacity": isMedium ? 0.65 : 0.95,
             "text-background-color": "#FFFFFF",
-            "text-background-padding": "2px",
+            "text-background-padding": "1px",
             "text-background-shape": "roundrectangle",
-            "text-border-opacity": 0.8,
-            "text-border-width": 1,
-            "text-border-color": "#CBD5E1",          },        },
+            "text-border-opacity": isMedium ? 0.4 : 0.8,
+            "text-border-width": isMedium ? 0 : 1,
+            "text-border-color": "#CBD5E1",
+          },
+        },
         {
           selector: "node:selected",
           style: { "border-width": 4, "border-color": "#1D4ED8" },
@@ -313,10 +346,13 @@ export function NetworkGraph({
             width: 4,
             "line-color": "#1D4ED8",
             "target-arrow-color": "#1D4ED8",
+            "font-size": 9.5,
+            "text-background-opacity": 0.95,
           },
         },
       ] as never,
     });
+    cy.one("layoutstop", () => cy.fit(undefined, 36));
     cy.on("tap", "node", (event) => {
       const key = String(event.target.id());
       onSelectNode?.(visibleNodes.find((n) => n.provenance_key === key) ?? null);

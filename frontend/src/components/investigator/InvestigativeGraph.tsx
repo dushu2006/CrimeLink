@@ -220,14 +220,33 @@ export function InvestigativeGraph({
       return;
     }
 
+    const nodeCount = visibleNodes.length;
+    const isLarge = nodeCount > 200;
+    const isMedium = nodeCount > 80;
+    const repulsion = isLarge ? 140000 : isMedium ? 60000 : 18000;
+    const edgeLen = isLarge ? 200 : isMedium ? 160 : 130;
+    const sep = isLarge ? 120 : isMedium ? 95 : 75;
+    const elasticity = isLarge ? 0.22 : 0.45;
+    const grav = isLarge ? 0.08 : 0.25;
+
     const cy = cytoscape({
       container: containerRef.current,
       elements,
       layout: {
         name: "fcose",
         animate: false,
-        nodeRepulsion: 15000,
-        idealEdgeLength: 140,
+        quality: "default",
+        randomize: true,
+        nodeRepulsion: () => repulsion,
+        idealEdgeLength: () => edgeLen,
+        edgeElasticity: () => elasticity,
+        nodeSeparation: sep,
+        gravity: grav,
+        numIter: 2500,
+        tile: true,
+        packComponents: true,
+        nodeDimensionsIncludeLabels: true,
+        fit: true,
         padding: 40,
       } as never,
       style: [
@@ -243,35 +262,35 @@ export function InvestigativeGraph({
             label: (ele: any) => {
               const name = String(ele.data("name") ?? "");
               if (ele.data("is_case_node")) return `${name}\n[CASE]`;
-              return name.length > 24 ? `${name.slice(0, 23)}…` : name;
+              return name.length > (isLarge ? 16 : 24) ? `${name.slice(0, isLarge ? 15 : 23)}…` : name;
             },
             color: "#0F172A",
-            "font-size": 11,
+            "font-size": isLarge ? 7 : isMedium ? 8.5 : 11,
             "font-weight": (ele: any) => (ele.data("is_target") || ele.data("is_pinned") ? 700 : 500),
             "text-valign": "bottom",
-            "text-margin-y": 6,
-            "text-outline-width": 2,
+            "text-margin-y": isLarge ? 3 : 6,
+            "text-outline-width": isLarge ? 1 : 2,
             "text-outline-color": "#FFFFFF",
             "text-wrap": "wrap" as any,
             width: (ele: any) => {
-              if (ele.data("is_target")) return 60;
-              if (ele.data("is_pinned")) return 32;
-              if (ele.data("is_criminal")) return 32;
-              if (ele.data("is_case_node")) return 38;
-              return 24;
+              if (ele.data("is_target")) return isLarge ? 38 : 60;
+              if (ele.data("is_pinned")) return isLarge ? 22 : 32;
+              if (ele.data("is_criminal")) return isLarge ? 22 : 32;
+              if (ele.data("is_case_node")) return isLarge ? 26 : 38;
+              return isLarge ? 15 : isMedium ? 19 : 24;
             },
             height: (ele: any) => {
-              if (ele.data("is_target")) return 60;
-              if (ele.data("is_pinned")) return 32;
-              if (ele.data("is_criminal")) return 32;
-              if (ele.data("is_case_node")) return 38;
-              return 24;
+              if (ele.data("is_target")) return isLarge ? 38 : 60;
+              if (ele.data("is_pinned")) return isLarge ? 22 : 32;
+              if (ele.data("is_criminal")) return isLarge ? 22 : 32;
+              if (ele.data("is_case_node")) return isLarge ? 26 : 38;
+              return isLarge ? 15 : isMedium ? 19 : 24;
             },
             "border-width": (ele: any) => {
               if (ele.data("is_selected")) return 4;
               if (ele.data("is_pinned")) return 3;
               if (ele.data("is_target")) return 4;
-              if (ele.data("is_criminal")) return 3;
+              if (ele.data("is_criminal")) return isLarge ? 2 : 3;
               return 1;
             },
             "border-color": (ele: any) => {
@@ -281,7 +300,7 @@ export function InvestigativeGraph({
               if (ele.data("is_target")) return "#B45309";
               return "#E2E8F0";
             },
-            "overlay-padding": 4,
+            "overlay-padding": isLarge ? 2 : 4,
           },
         },
         {
@@ -311,20 +330,28 @@ export function InvestigativeGraph({
         {
           selector: "edge",
           style: {
-            width: 1.8,
+            width: isLarge ? 1.2 : 1.8,
             "line-color": "#94A3B8",
             "target-arrow-color": "#94A3B8",
             "target-arrow-shape": "triangle",
-            "arrow-scale": 0.9,
+            "arrow-scale": isLarge ? 0.7 : 0.9,
             "curve-style": "bezier",
-            label: "data(rel)",
-            "font-size": 9,
+            opacity: isLarge ? 0.75 : 0.85,
+            label: (ele: any) => {
+              if (ele.selected() || ele.hasClass("highlighted")) return String(ele.data("rel") ?? "");
+              if (isMedium) {
+                const cyInst = ele.cy();
+                if (cyInst && cyInst.zoom() < 1.0) return "";
+              }
+              return String(ele.data("rel") ?? "");
+            },
+            "font-size": isLarge ? 6.5 : isMedium ? 7.5 : 9,
             "font-weight": 600,
             color: "#334155",
             "text-rotation": "autorotate",
-            "text-background-opacity": 0.9,
+            "text-background-opacity": isMedium ? 0.65 : 0.9,
             "text-background-color": "#FFFFFF",
-            "text-background-padding": "2px",
+            "text-background-padding": "1px",
           },
         },
         {
@@ -344,6 +371,7 @@ export function InvestigativeGraph({
         },
       ] as never,
     });
+    cy.one("layoutstop", () => cy.fit(undefined, 40));
 
     // Single click → select + highlight connections
     cy.on("tap", "node", (event: EventObject) => {

@@ -176,6 +176,8 @@ export default function PersonRelationshipNetwork({
     return out;
   }, [data]);
 
+  const nodeCount = data?.nodes.length ?? 0;
+
   const style = useMemo(
     () =>
       [
@@ -187,32 +189,41 @@ export default function PersonRelationshipNetwork({
             shape: "ellipse",
             "background-color": (ele: any) =>
               ele.data("is_criminal") ? CRIMINAL_FILL : PERSON_FILL,
-            "border-width": (ele: any) => (ele.data("is_criminal") ? 4 : 2),
+            "border-width": (ele: any) => (ele.data("is_criminal") ? (nodeCount > 150 ? 2.5 : 4) : 2),
             "border-color": (ele: any) =>
               ele.data("is_criminal") ? CRIMINAL_BORDER : "#BFDBFE",
-            width: (ele: any) =>
-              Math.min(64, 30 + 3 * Number(ele.data("relationship_count") || 0)),
-            height: (ele: any) =>
-              Math.min(64, 30 + 3 * Number(ele.data("relationship_count") || 0)),
+            width: (ele: any) => {
+              const rel = Number(ele.data("relationship_count") || 0);
+              if (nodeCount > 150) return Math.min(36, 16 + 1.5 * rel);
+              if (nodeCount > 80) return Math.min(48, 22 + 2 * rel);
+              return Math.min(64, 30 + 3 * rel);
+            },
+            height: (ele: any) => {
+              const rel = Number(ele.data("relationship_count") || 0);
+              if (nodeCount > 150) return Math.min(36, 16 + 1.5 * rel);
+              if (nodeCount > 80) return Math.min(48, 22 + 2 * rel);
+              return Math.min(64, 30 + 3 * rel);
+            },
             // Keep the person name on the node; the silhouette itself conveys criminal status.
             label: (ele: any) => {
+              if (!ele.selected() && !graphLabels.current) return "";
               const name = String(ele.data("name") ?? "");
-              const text = ele.data("is_criminal") ? `★\n${name}` : name;
-              return ele.selected() || graphLabels.current ? text : "";
+              const displayName = nodeCount > 100 && name.length > 20 ? name.slice(0, 18) + "…" : name;
+              return ele.data("is_criminal") ? `★\n${displayName}` : displayName;
             },
             "text-wrap": "wrap",
-            "text-max-width": "140px",
+            "text-max-width": nodeCount > 150 ? "100px" : "140px",
             "font-family": "Inter, system-ui, sans-serif",
-            "font-size": "11px",
+            "font-size": nodeCount > 150 ? "7.5px" : nodeCount > 80 ? "9px" : "11px",
             "font-weight": 600,
             color: "#0F172A",
             "text-valign": "top",
             "text-halign": "center",
-            "text-margin-y": -6,
+            "text-margin-y": nodeCount > 150 ? -3 : -6,
             "text-background-color": "#FFFFFF",
             "text-background-opacity": 0.82,
             "text-background-padding": "2px",
-            "overlay-padding": 8,
+            "overlay-padding": nodeCount > 150 ? 4 : 8,
           },
         },
         {
@@ -228,23 +239,34 @@ export default function PersonRelationshipNetwork({
           selector: "edge",
           style: {
             width: (ele: any) =>
-              Math.min(9, 1.5 + 0.9 * Number(ele.data("evidence_count") || 1)),
+              nodeCount > 150
+                ? Math.min(6, 1.2 + 0.5 * Number(ele.data("evidence_count") || 1))
+                : Math.min(9, 1.5 + 0.9 * Number(ele.data("evidence_count") || 1)),
             "line-color": (ele: any) =>
               STRENGTH_COLOR[ele.data("strength")] ?? "#94A3B8",
             "target-arrow-shape": "none",
             "curve-style": "bezier",
-            opacity: 0.85,
-            // Edge labels are only drawn when they can be read, or for the
-            // edge under inspection — otherwise 75 of them overlap into noise.
-            label: (ele: any) =>
-              ele.selected() || graphLabels.current ? String(ele.data("label") ?? "") : "",
-            "font-size": "9px",
+            opacity: nodeCount > 150 ? 0.75 : 0.85,
+            // Edge labels: in large graphs, don't clutter with dozens of overlapping labels
+            // unless selected or zoomed in
+            label: (ele: any) => {
+              if (ele.selected()) return String(ele.data("label") ?? "");
+              if (nodeCount > 80) {
+                if (!graphLabels.current) return "";
+                const cyInstance = ele.cy();
+                if (cyInstance && cyInstance.zoom() < 1.0) return "";
+              } else {
+                if (!graphLabels.current) return "";
+              }
+              return String(ele.data("label") ?? "");
+            },
+            "font-size": nodeCount > 150 ? "7px" : "9px",
             "font-weight": 600,
             color: "#334155",
             "text-rotation": "autorotate",
             "text-background-color": "#FFFFFF",
-            "text-background-opacity": 0.9,
-            "text-background-padding": "2px",
+            "text-background-opacity": nodeCount > 80 ? 0.7 : 0.9,
+            "text-background-padding": "1px",
           },
         },
         {
@@ -258,11 +280,13 @@ export default function PersonRelationshipNetwork({
             width: 5,
             opacity: 1,
             "font-weight": 700,
+            "font-size": "10px",
+            "text-background-opacity": 0.95,
             "z-index": 99,
           },
         },
       ] as any,
-    [],
+    [nodeCount],
   );
 
   const { containerRef, handle: graphHandle } = useGraphCanvas({
@@ -467,7 +491,7 @@ export default function PersonRelationshipNetwork({
         ref={containerRef}
         style={{
           width: "100%",
-          height: 520,
+          height: nodeCount > 150 ? 750 : nodeCount > 80 ? 640 : 520,
           background: "var(--bg-canvas, #F8FAFC)",
           border: "1px solid var(--border-color, #E2E8F0)",
           borderRadius: "var(--radius-md, 8px)",

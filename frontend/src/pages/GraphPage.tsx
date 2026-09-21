@@ -316,14 +316,34 @@ export default function GraphPage() {
       }
       return;
     }
+    const nodeCount = visible?.nodes.length ?? 0;
+    const isLarge = nodeCount > 200;
+    const isMedium = nodeCount > 80;
+    const repulsion = isLarge ? 140000 : isMedium ? 60000 : 18000;
+    const edgeLen = isLarge ? 200 : isMedium ? 160 : 120;
+    const sep = isLarge ? 120 : isMedium ? 95 : 75;
+    const elasticity = isLarge ? 0.22 : 0.45;
+    const grav = isLarge ? 0.08 : 0.25;
+
     const cy = cytoscape({
       container: containerRef.current,
       elements,
       layout: {
         name: "fcose",
         animate: false,
-        nodeRepulsion: 12000,
-        idealEdgeLength: 130,
+        quality: "default",
+        randomize: true,
+        nodeRepulsion: () => repulsion,
+        idealEdgeLength: () => edgeLen,
+        edgeElasticity: () => elasticity,
+        nodeSeparation: sep,
+        gravity: grav,
+        numIter: 2500,
+        tile: true,
+        packComponents: true,
+        nodeDimensionsIncludeLabels: true,
+        fit: true,
+        padding: 36,
       } as never,
       style: [
         {
@@ -337,39 +357,44 @@ export default function GraphPage() {
                 : LABEL_COLOR[String(ele.data("label"))] ?? "#1D4ED8",
             label: (ele: cytoscape.NodeSingular) => {
               const name = String(ele.data("name") ?? "");
-              return name.length > 22 ? `${name.slice(0, 21)}…` : name;
+              return name.length > (isLarge ? 16 : 22) ? `${name.slice(0, isLarge ? 15 : 21)}…` : name;
             },
             color: "#0F172A",
             "font-family": "Inter, -apple-system, sans-serif",
-            "font-size": 11,
+            "font-size": isLarge ? 7 : isMedium ? 8.5 : 11,
             "font-weight": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? 700 : 500,
             "text-valign": "bottom",
-            "text-margin-y": 5,
-            "text-outline-width": 2,
+            "text-margin-y": isLarge ? 3 : 5,
+            "text-outline-width": isLarge ? 1 : 2,
             "text-outline-color": "#FFFFFF",
-            width: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target")
-                ? LABEL_SIZE.PERSON + 18
-                : (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
-                (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
-            height: (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target")
-                ? LABEL_SIZE.PERSON + 18
-                : (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
-                (0.75 + 0.25 * Number(ele.data("confidence") ?? 1)),
+            width: (ele: cytoscape.NodeSingular) => {
+              if (ele.data("is_target")) return isLarge ? 36 : LABEL_SIZE.PERSON + 18;
+              const base = (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
+                (0.75 + 0.25 * Number(ele.data("confidence") ?? 1));
+              return isLarge ? Math.max(14, base * 0.65) : base;
+            },
+            height: (ele: cytoscape.NodeSingular) => {
+              if (ele.data("is_target")) return isLarge ? 36 : LABEL_SIZE.PERSON + 18;
+              const base = (LABEL_SIZE[String(ele.data("label"))] ?? 22) *
+                (0.75 + 0.25 * Number(ele.data("confidence") ?? 1));
+              return isLarge ? Math.max(14, base * 0.65) : base;
+            },
             "border-width": (ele: cytoscape.NodeSingular) =>
-              ele.data("is_target") ? 4 : ele.data("is_criminal") ? 3 : 1,
+              ele.data("is_target") ? 4 : ele.data("is_criminal") ? (isLarge ? 2 : 3) : 1,
             "border-style": "solid",
             "border-color": (ele: cytoscape.NodeSingular) =>
               ele.data("is_target") ? "#B45309" : ele.data("is_criminal") ? "#991B1B" : "#E2E8F0",
-            "overlay-padding": 4,
+            "overlay-padding": isLarge ? 2 : 4,
           },
         },
         {
           selector: "edge",
           style: {
-            width: (ele: cytoscape.EdgeSingular) => 1.5 + 2 * Number(ele.data("confidence") ?? 1),
+            width: (ele: cytoscape.EdgeSingular) =>
+              isLarge
+                ? Math.max(1, (1.5 + 2 * Number(ele.data("confidence") ?? 1)) * 0.65)
+                : 1.5 + 2 * Number(ele.data("confidence") ?? 1),
             "line-color": (ele: cytoscape.EdgeSingular) => {
               const rel = String(ele.data("raw_rel") ?? "");
               if (rel.includes("TRANSFER") || rel.includes("TRANSACTION")) return "#1D4ED8";
@@ -383,21 +408,29 @@ export default function GraphPage() {
               return "#94A3B8";
             },
             "target-arrow-shape": "triangle",
-            "arrow-scale": 0.9,
-            "curve-style": "straight",
+            "arrow-scale": isLarge ? 0.7 : 0.9,
+            "curve-style": "bezier",
+            opacity: isLarge ? 0.75 : 0.85,
             "line-style": (ele: cytoscape.EdgeSingular) => (ele.data("staging") ? "dashed" : "solid"),
-            label: "data(rel)",
+            label: (ele: cytoscape.EdgeSingular) => {
+              if (ele.selected()) return String(ele.data("rel") ?? "");
+              if (isMedium) {
+                const cyInst = ele.cy();
+                if (cyInst && cyInst.zoom() < 1.0) return "";
+              }
+              return String(ele.data("rel") ?? "");
+            },
             "font-family": "Inter, -apple-system, sans-serif",
-            "font-size": 8.5,
+            "font-size": isLarge ? 6.5 : isMedium ? 7.5 : 8.5,
             "font-weight": 600,
             color: "#334155",
             "text-rotation": "autorotate",
-            "text-background-opacity": 0.95,
+            "text-background-opacity": isMedium ? 0.65 : 0.95,
             "text-background-color": "#FFFFFF",
-            "text-background-padding": "2px",
+            "text-background-padding": "1px",
             "text-background-shape": "roundrectangle",
-            "text-border-opacity": 0.8,
-            "text-border-width": 1,
+            "text-border-opacity": isMedium ? 0.4 : 0.8,
+            "text-border-width": isMedium ? 0 : 1,
             "text-border-color": "#CBD5E1",
           },
         },
@@ -411,10 +444,13 @@ export default function GraphPage() {
             width: 4,
             "line-color": "#1D4ED8",
             "target-arrow-color": "#1D4ED8",
+            "font-size": 9.5,
+            "text-background-opacity": 0.95,
           },
         },
       ],
     });
+    cy.one("layoutstop", () => cy.fit(undefined, 36));
     cy.on("tap", "node", (event) => {
       const key = String(event.target.id());
       const node = visible?.nodes.find((n) => n.provenance_key === key) ?? null;

@@ -18,6 +18,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
+import fcose from "cytoscape-fcose";
+
+try {
+  cytoscape.use(fcose);
+} catch {
+  // extension already registered
+}
 import {
   attachViewportPolicy,
   forceLayoutOptions,
@@ -152,6 +159,13 @@ export function useGraphCanvas(options: GraphCanvasOptions): {
     });
     policy.fitToView();
     syncLabels(instance.zoom());
+
+    // When an asynchronous/animated layout completes positioning nodes, re-fit
+    // so the viewport bounds match the true final node coordinates.
+    instance.one("layoutstop", () => {
+      policy.fitToView();
+      syncLabels(instance.zoom());
+    });
 
     instance.on("tap", "node", (evt: any) => onTapNode?.(evt.target));
     instance.on("tap", "edge", (evt: any) => onTapEdge?.(evt.target));

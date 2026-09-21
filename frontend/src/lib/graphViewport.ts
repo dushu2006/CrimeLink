@@ -382,27 +382,53 @@ export function forceLayoutOptions(
   const minSpacing = options.minSpacing ?? MIN_NODE_SPACING;
   const padding = options.padding ?? DEFAULT_VIEWPORT_PADDING;
   const crowded = Math.max(1, nodeCount);
+
+  // Scale repulsion and spacing aggressively for large graphs so nodes
+  // don't collapse into an overlapping mess.
+  const repulsion = crowded > 400
+    ? 140_000
+    : crowded > 200
+      ? 75_000
+      : Math.min(28_000, 5_000 + crowded * 25);
+
+  const edgeLength = crowded > 400
+    ? 220
+    : crowded > 200
+      ? 180
+      : Math.min(150, minSpacing + crowded * 0.2);
+
+  // Guarantee minimum distance between any two entities as requested by the user
+  const separation = crowded > 400
+    ? 130
+    : crowded > 200
+      ? 110
+      : minSpacing;
+
+  // Reduce gravity and edge elasticity for large graphs so nodes spread naturally outwards
+  const grav = crowded > 400 ? 0.08 : crowded > 200 ? 0.15 : 0.28;
+  const elasticity = crowded > 300 ? 0.22 : 0.45;
+
   return {
     name: "fcose",
     animate: true,
-    animationDuration: 400,
+    animationDuration: crowded > 300 ? 250 : 350,
     padding,
-    quality: crowded > 300 ? "draft" : "default",
+    quality: "default",
     randomize: true,
-    nodeRepulsion: () => Math.min(24_000, 4_000 + crowded * 22),
-    idealEdgeLength: () => Math.min(240, minSpacing + crowded * 0.18),
-    edgeElasticity: () => 0.45,
-    nodeSeparation: minSpacing,
-    gravity: 0.35,
-    gravityRange: 2.2,
-    numIter: crowded > 300 ? 1200 : 2500,
+    nodeRepulsion: () => repulsion,
+    idealEdgeLength: () => edgeLength,
+    edgeElasticity: () => elasticity,
+    nodeSeparation: separation,
+    gravity: grav,
+    gravityRange: crowded > 400 ? 1.6 : 2.5,
+    numIter: 2500,
     tile: true,
     packComponents: true,
     nodeDimensionsIncludeLabels: true,
     fit: true,
     // Constrain the simulation to the drawable area rather than letting it
     // expand into coordinates the viewport can never show.
-    initialEnergyOnIncremental: 0.4,
+    initialEnergyOnIncremental: 0.3,
   };
 }
 
