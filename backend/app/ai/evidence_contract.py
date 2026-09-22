@@ -98,13 +98,14 @@ def _normalise_claims(finding: FindingResult) -> list[ClaimCitation]:
             )
     if not claims and finding.summary.strip():
         refs = [ref.doc_id for ref in finding.evidence_refs]
+        eff_level = finding.evidence_level if refs else "UNKNOWN"
         claims.append(
             ClaimCitation(
                 claim=finding.summary.strip(),
                 evidence_refs=refs,
-                evidence_level=finding.evidence_level,
+                evidence_level=eff_level,
                 support_level=classify_evidence_support(
-                    finding.evidence_level, refs
+                    eff_level, refs
                 ),
             )
         )

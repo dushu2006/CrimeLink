@@ -571,6 +571,8 @@ class AIGateway:
         entities: list | None = None,
         user_id: str | None = None,
         session: Any = None,
+        timeout_override: float | None = None,
+        max_retries_override: int | None = None,
     ):
         """Narrate deterministic investigation results (explain-only contract).
 
@@ -603,14 +605,25 @@ class AIGateway:
                 text = text.replace(pseudo, name)
             return text
 
+        effective_timeout = (
+            timeout_override
+            if timeout_override is not None
+            else max(getattr(self.settings, "ai_timeout_s", 180.0), 180.0)
+        )
+        effective_retries = (
+            max_retries_override
+            if max_retries_override is not None
+            else getattr(self.settings, "ai_max_retries", 2)
+        )
+
         result = await self.router.chat(
             "investigation_reasoning",
             system_prompt=INVESTIGATOR_SYSTEM,
             user_prompt=safe_brief,
             response_format={"type": "json_object"},
             max_tokens=2048,
-            timeout_override=self.settings.ai_interactive_timeout_s,
-            max_retries_override=self.settings.ai_interactive_max_retries,
+            timeout_override=effective_timeout,
+            max_retries_override=effective_retries,
         )
         latency_ms = int((time.monotonic() - started) * 1000)
         base_audit = dict(
@@ -634,13 +647,32 @@ class AIGateway:
                 success=False,
                 error=reason,
             )
+            r_lower = reason.lower()
+            if "no_api_key" in r_lower or "api_key_unavailable" in r_lower:
+                caveat = (
+                    "No language model is configured: this answer is the deterministic "
+                    "analysis only. Configure an AI provider key to add narrative explanation."
+                )
+            elif "auth" in r_lower or "401" in r_lower or "403" in r_lower:
+                caveat = (
+                    "AI reasoning authentication failed: deterministic analysis preserved."
+                )
+            elif "rate" in r_lower or "429" in r_lower:
+                caveat = (
+                    "AI reasoning temporarily rate-limited: deterministic analysis preserved."
+                )
+            elif "timeout" in r_lower:
+                caveat = (
+                    "AI reasoning timed out: deterministic analysis preserved."
+                )
+            else:
+                caveat = (
+                    f"AI reasoning unavailable ({reason}): deterministic analysis preserved."
+                )
             return ModelSection(
                 available=False,
                 reason=reason,
-                caveats=[
-                    "No language model is configured: this answer is the deterministic "
-                    "analysis only. Configure an AI provider key to add narrative explanation."
-                ],
+                caveats=[caveat],
             )
         content = result.get("content") or ""
         narrative, _note = self._parse_narrative(content)
@@ -2873,37 +2905,78 @@ class AIGateway:
                 context_report.get("evidence_inventory", {}).get("missing_types", [])
             )
             evidence_ids = context_report.get("retrieved_evidence_ids", [])
-            context_report["claim_citation_coverage"] = citation_coverage(
-                finding, evidence_ids
-            )
-            try:
-                # Enforce references when the retrieval layer supplied an
-                # evidence package.  Some offline/legacy adapters deliberately
-                # return no document IDs; preserving their structured output is
-                # safer than pretending an empty adapter result is a complete
-                # package.  Direct safety tests still reject references against
-                # an explicit allowed set.
-                evidence_ids = context_report.get("retrieved_evidence_ids", [])
-                if evidence_ids:
+            all_case_doc_ids = {str(d.get("doc_id")) for d in (all_documents or []) if d.get("doc_id")}
+            allowed_evidence = set(evidence_ids) | all_case_doc_ids
+
+            if allowed_evidence:
+                # Pre-sanitize finding references against the case evidence package
+                finding.evidence_refs = [
+                    ref for ref in finding.evidence_refs
+                    if ref.doc_id in allowed_evidence
+                ]
+                if finding.evidence_level == "FACT" and not finding.evidence_refs:
+                    finding.evidence_level = "UNKNOWN"
+
+                for step in finding.reasoning_steps:
+                    step.evidence_refs = [
+                        ref for ref in step.evidence_refs
+                        if ref in allowed_evidence
+                    ]
+
+                for claim in finding.claims:
+                    claim.evidence_refs = [
+                        ref for ref in claim.evidence_refs
+                        if ref in allowed_evidence
+                    ]
+                    if not claim.evidence_refs:
+                        claim.evidence_level = "UNKNOWN"
+                        claim.support_level = "UNSUPPORTED"
+
+                for index, rel in enumerate(finding.relationships):
+                    if isinstance(rel, dict):
+                        refs = rel.get("evidence_refs") or rel.get("evidence") or []
+                        if isinstance(refs, str):
+                            refs = [refs]
+                        clean_rel_refs = []
+                        for ref in refs:
+                            r_id = ref.get("doc_id") or ref.get("ref") if isinstance(ref, dict) else str(ref)
+                            if r_id in allowed_evidence:
+                                clean_rel_refs.append(r_id)
+                        if clean_rel_refs:
+                            rel["evidence_refs"] = clean_rel_refs
+                        elif evidence_ids:
+                            rel["evidence_refs"] = [evidence_ids[0]]
+
+                allowed_entities = {
+                    *key_to_name.keys(),
+                    *pmap.entries().keys(),
+                    *pmap.entries().values(),
+                }
+                if allowed_entities:
+                    finding.entities = [
+                        ent for ent in finding.entities
+                        if ent.pseudo_id in allowed_entities
+                    ]
+
+                context_report["claim_citation_coverage"] = citation_coverage(
+                    finding, list(allowed_evidence)
+                )
+                try:
                     validate_finding(
                         finding,
-                        allowed_evidence_ids=evidence_ids,
-                        allowed_entity_ids={
-                            *key_to_name.keys(),
-                            *pmap.entries().keys(),
-                            *pmap.entries().values(),
-                        },
+                        allowed_evidence_ids=allowed_evidence,
+                        allowed_entity_ids=allowed_entities,
                     )
-            except AISafetyViolation as exc:
-                log.warning("ai.safety_firewall_rejected_output", query_id=query_id, error=str(exc))
-                finding = FindingResult(
-                    finding_type="UNVERIFIED_AI_OUTPUT",
-                    summary="The AI response failed evidence-reference validation and was withheld.",
-                    confidence=0.0,
-                    evidence_level="UNKNOWN",
-                    recommended_review=True,
-                    uncertainties=[str(exc)],
-                )
+                except AISafetyViolation as exc:
+                    log.warning("ai.safety_firewall_rejected_output", query_id=query_id, error=str(exc))
+                    finding = FindingResult(
+                        finding_type="UNVERIFIED_AI_OUTPUT",
+                        summary="The AI response failed evidence-reference validation and was withheld.",
+                        confidence=0.0,
+                        evidence_level="UNKNOWN",
+                        recommended_review=True,
+                        uncertainties=[str(exc)],
+                    )
             if finding:
                 # Controlled de-anonymization: the model reasoned about
                 # pseudonyms, and CrimeLink — which holds the mapping — restores
@@ -4819,24 +4892,34 @@ class AIGateway:
                     clean_rels.append({"type": rel})
             data["relationships"] = clean_rels
 
+        def _clean_doc_ref(val: Any) -> str:
+            s = str(val or "").strip()
+            return re.sub(r"^[\[\(\"']+|[\]\)\"'\.,;]+$", "", s).strip()
+
         if isinstance(data.get("evidence_refs"), list):
             clean_refs = []
             for ref in data["evidence_refs"]:
                 if isinstance(ref, str):
-                    clean_refs.append({"doc_id": ref, "ref_type": "DOCUMENT"})
+                    c = _clean_doc_ref(ref)
+                    if c:
+                        clean_refs.append({"doc_id": c, "ref_type": "DOCUMENT"})
                 elif isinstance(ref, dict):
-                    clean_refs.append(ref)
+                    d_id = _clean_doc_ref(ref.get("doc_id") or ref.get("ref"))
+                    if d_id:
+                        clean_refs.append({"doc_id": d_id, "ref_type": ref.get("ref_type", "DOCUMENT")})
             data["evidence_refs"] = clean_refs
 
         if isinstance(data.get("claims"), list):
             clean_claims = []
             for item in data["claims"]:
                 if isinstance(item, str):
+                    inline = [_clean_doc_ref(m) for m in re.findall(r"doc-[a-zA-Z0-9_-]+", item, re.IGNORECASE)]
+                    inline = [r for r in inline if r]
                     clean_claims.append({
                         "claim": item,
-                        "evidence_refs": [],
-                        "evidence_level": "UNKNOWN",
-                        "support_level": "UNSUPPORTED",
+                        "evidence_refs": inline,
+                        "evidence_level": "FACT" if inline else "UNKNOWN",
+                        "support_level": "DIRECTLY_SUPPORTED" if inline else "UNSUPPORTED",
                     })
                 elif isinstance(item, dict) and item.get("claim"):
                     refs = item.get("evidence_refs", [])
@@ -4844,34 +4927,66 @@ class AIGateway:
                         refs = [refs]
                     if isinstance(refs, list):
                         refs = [
-                            (ref.get("doc_id") or ref.get("ref")) if isinstance(ref, dict) else str(ref)
+                            _clean_doc_ref((ref.get("doc_id") or ref.get("ref")) if isinstance(ref, dict) else str(ref))
                             for ref in refs
                         ]
                         refs = [ref for ref in refs if ref]
-                    item["evidence_refs"] = refs if isinstance(refs, list) else []
-                    if item.get("evidence_level") not in ("FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"):
+                    else:
+                        refs = []
+
+                    # If empty, check for inline document references in the claim text
+                    if not refs:
+                        inline = [_clean_doc_ref(m) for m in re.findall(r"doc-[a-zA-Z0-9_-]+", str(item.get("claim", "")), re.IGNORECASE)]
+                        refs = [r for r in inline if r]
+
+                    item["evidence_refs"] = refs
+                    if not refs:
+                        # An uncited claim cannot be a FACT; mark it UNKNOWN so honest ungrounded statements do not fail validation
                         item["evidence_level"] = "UNKNOWN"
-                    if item.get("support_level") not in ("DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"):
                         item["support_level"] = "UNSUPPORTED"
+                    else:
+                        if item.get("evidence_level") not in ("FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"):
+                            item["evidence_level"] = "FACT"
+                        if item.get("support_level") not in ("DIRECTLY_SUPPORTED", "STRONGLY_SUPPORTED", "INFERRED", "UNSUPPORTED"):
+                            item["support_level"] = "DIRECTLY_SUPPORTED"
                     clean_claims.append(item)
             data["claims"] = clean_claims
 
-        # Claim-level citations are authoritative input to the envelope too.
+        # Claim-level, person-level, and inline citations are authoritative input to the envelope too.
         # Normalize them into the legacy top-level evidence_refs field so older
         # clients and the existing FACT validator remain compatible.
         if not data.get("evidence_refs"):
             derived_refs: list[dict[str, str]] = []
             for item in data.get("claims", []):
                 for ref in item.get("evidence_refs", []):
-                    if ref and not any(existing["doc_id"] == str(ref) for existing in derived_refs):
-                        derived_refs.append({"doc_id": str(ref), "ref_type": "DOCUMENT"})
+                    ref_c = _clean_doc_ref(ref)
+                    if ref_c and not any(existing["doc_id"] == ref_c for existing in derived_refs):
+                        derived_refs.append({"doc_id": ref_c, "ref_type": "DOCUMENT"})
             for item in data.get("reasoning_steps", []):
                 if isinstance(item, dict):
                     for ref in item.get("evidence_refs", []) or []:
-                        if ref and not any(existing["doc_id"] == str(ref) for existing in derived_refs):
-                            derived_refs.append({"doc_id": str(ref), "ref_type": "DOCUMENT"})
+                        ref_c = _clean_doc_ref(ref)
+                        if ref_c and not any(existing["doc_id"] == ref_c for existing in derived_refs):
+                            derived_refs.append({"doc_id": ref_c, "ref_type": "DOCUMENT"})
+            for item in data.get("people", []):
+                if isinstance(item, dict):
+                    p_refs = item.get("evidence_refs") or []
+                    if isinstance(p_refs, str):
+                        p_refs = [p_refs]
+                    for ref in p_refs:
+                        ref_c = _clean_doc_ref(ref)
+                        if ref_c and not any(existing["doc_id"] == ref_c for existing in derived_refs):
+                            derived_refs.append({"doc_id": ref_c, "ref_type": "DOCUMENT"})
+            full_text = f"{data.get('summary', '')} {data.get('direct_answer', '')}"
+            for m in re.findall(r"doc-[a-zA-Z0-9_-]+", full_text, re.IGNORECASE):
+                ref_c = _clean_doc_ref(m)
+                if ref_c and not any(existing["doc_id"] == ref_c for existing in derived_refs):
+                    derived_refs.append({"doc_id": ref_c, "ref_type": "DOCUMENT"})
             if derived_refs:
                 data["evidence_refs"] = derived_refs
+
+        if not data.get("evidence_refs") and data.get("evidence_level") == "FACT":
+            data["evidence_level"] = "UNKNOWN"
 
         for list_field in ("establishes", "does_not_establish", "missing_evidence"):
             if not isinstance(data.get(list_field), list):

@@ -81,7 +81,9 @@ const JOB_STAGE_LABELS: Record<string, string> = {
   COMPLETED: "Completed",
   AI_UNAVAILABLE: "AI reasoning offline — deterministic analysis complete",
   AI_TIMEOUT: "AI timed out — deterministic analysis complete",
-  AI_INVALID_RESPONSE: "AI response invalid — deterministic analysis complete",
+  AI_INVALID_RESPONSE: "AI reasoning response could not be parsed — deterministic analysis preserved",
+  AI_RATE_LIMITED: "AI reasoning temporarily unavailable — deterministic analysis preserved",
+  AI_AUTH_FAILED: "AI reasoning authentication failed — deterministic analysis preserved",
   FAILED: "Failed",
   CANCELLED: "Cancelled",
 };

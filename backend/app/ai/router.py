@@ -55,7 +55,7 @@ class ModelInvocation:
     def available(self) -> bool:
         return bool(self.api_key)
 
-    def client(self):
+    def client(self, timeout: float | None = None):
         """Return an OpenAI-compatible client, or None if unavailable."""
         if not self.api_key:
             return None
@@ -63,7 +63,18 @@ class ModelInvocation:
             from openai import AsyncOpenAI
         except Exception:  # pragma: no cover
             return None
-        return AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+        return AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=timeout or self.timeout)
+
+
+#: Known aliases/successors for models that were retired or renamed by providers.
+NVIDIA_MODEL_ALIASES: dict[str, str] = {
+    # deepseek-ai/deepseek-v4-pro-0813 reached EOL on NVIDIA NIM on 2026-09-14
+    "deepseek-ai/deepseek-v4-pro-0813": "nvidia/nemotron-3-super-120b-a12b",
+    # meta/llama-3.1-8b-instruct reached EOL on NVIDIA NIM on 2026-08-26
+    "meta/llama-3.1-8b-instruct": "meta/llama-3.2-11b-vision-instruct",
+    # nemotron-3.5-lightning-30b-a3b experiences high latency/hangs on NIM
+    "nvidia/nemotron-3.5-lightning-30b-a3b": "nvidia/nemotron-3-super-120b-a12b",
+}
 
 
 class AIModelRouter:
@@ -75,10 +86,16 @@ class AIModelRouter:
     def route(self, task: str) -> ModelInvocation:
         role = TASK_TO_ROLE.get(task, task)
         cfg = self.settings.role_config(role)
+        model = cfg["model"]
+        if (
+            str(cfg.get("provider") or "").lower() == "nvidia"
+            or "nvidia" in str(cfg.get("base_url") or "").lower()
+        ) and model in NVIDIA_MODEL_ALIASES:
+            model = NVIDIA_MODEL_ALIASES[model]
         return ModelInvocation(
             role=role,
             provider=cfg["provider"],
-            model=cfg["model"],
+            model=model,
             api_key=cfg["api_key"],
             base_url=cfg["base_url"],
             temperature=cfg["temperature"],
@@ -105,12 +122,12 @@ class AIModelRouter:
         invocation = self.route(task)
         if not invocation.available:
             return {"available": False, "reason": f"no_api_key_for_role_{invocation.role}"}
-        client = invocation.client()
+        effective_timeout = timeout_override or getattr(invocation, "timeout", getattr(getattr(self, "settings", None), "ai_timeout_s", 180.0))
+        client = invocation.client(timeout=effective_timeout)
         if client is None:
             return {"available": False, "reason": "openai_client_unavailable"}
 
         attempts = max(1, int(max_retries_override if max_retries_override is not None else getattr(self.settings, "ai_max_retries", 2)) + 1)
-        effective_timeout = timeout_override or getattr(invocation, "timeout", getattr(getattr(self, "settings", None), "ai_timeout_s", 60.0))
         last_error: Exception | None = None
         for attempt in range(attempts):
             started = time.perf_counter()
@@ -176,9 +193,20 @@ class AIModelRouter:
                     break
                 await asyncio.sleep(min(2 ** attempt, 8))
 
+        exc_name = type(last_error).__name__
+        status_code = getattr(last_error, "status_code", None)
+        if status_code in (401, 403) or "auth" in exc_name.lower():
+            reason = f"authentication_failed: {exc_name}"
+        elif status_code == 429 or "ratelimit" in exc_name.lower():
+            reason = f"rate_limited: {exc_name}"
+        elif isinstance(last_error, (TimeoutError, asyncio.TimeoutError)) or "timeout" in exc_name.lower():
+            reason = f"timeout: {exc_name}"
+        else:
+            reason = f"invocation_failed: {exc_name}"
+
         return {
             "available": False,
-            "reason": f"invocation_failed: {type(last_error).__name__}",
+            "reason": reason,
             "detail": _safe_error(last_error) if last_error else None,
             "role": invocation.role,
             "model": invocation.model,
@@ -207,7 +235,8 @@ class AIModelRouter:
         invocation = self.route(task)
         if not invocation.available:
             return {"available": False, "reason": f"no_api_key_for_role_{invocation.role}"}
-        client = invocation.client()
+        effective_timeout = timeout_override or getattr(invocation, "timeout", getattr(getattr(self, "settings", None), "ai_timeout_s", 180.0))
+        client = invocation.client(timeout=effective_timeout)
         if client is None:
             return {"available": False, "reason": "openai_client_unavailable"}
 

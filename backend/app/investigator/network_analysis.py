@@ -821,6 +821,7 @@ async def analyze_network(
         entities=seeds,
         user_id=getattr(principal, "id", None),
         session=session,
+        timeout_override=max(getattr(gateway.settings, "ai_timeout_s", 180.0), 180.0),
     )
     _mark("narrative_ms", stage_t)
     # The reasoning gateway appends its AI_QUERY audit row to *this* session.
@@ -834,7 +835,7 @@ async def analyze_network(
         r_lower = reason.lower()
         if "timeout" in r_lower:
             ai_status = "AI_TIMEOUT"
-            await _report("AI_TIMEOUT", 95, "Reasoning model timed out — deterministic analysis preserved")
+            await _report("AI_TIMEOUT", 95, "AI reasoning timed out — deterministic analysis preserved")
         elif (
             "unparseable" in r_lower
             or "invalid_json" in r_lower
@@ -842,7 +843,13 @@ async def analyze_network(
             or (("json" in r_lower or "schema" in r_lower) and "invocation_failed" not in r_lower)
         ):
             ai_status = "AI_INVALID_RESPONSE"
-            await _report("AI_INVALID_RESPONSE", 95, "Reasoning model response unparseable — deterministic analysis preserved")
+            await _report("AI_INVALID_RESPONSE", 95, "AI reasoning response could not be parsed — deterministic analysis preserved")
+        elif "rate" in r_lower or "429" in r_lower:
+            ai_status = "AI_RATE_LIMITED"
+            await _report("AI_RATE_LIMITED", 95, "AI reasoning temporarily unavailable — deterministic analysis preserved")
+        elif "auth" in r_lower or "401" in r_lower or "403" in r_lower:
+            ai_status = "AI_AUTH_FAILED"
+            await _report("AI_AUTH_FAILED", 95, "AI reasoning authentication failed — deterministic analysis preserved")
         else:
             ai_status = "AI_UNAVAILABLE"
             await _report("AI_UNAVAILABLE", 95, "Reasoning model offline/unavailable — deterministic analysis preserved")

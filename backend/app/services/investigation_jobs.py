@@ -32,6 +32,8 @@ TERMINAL_STATUSES = frozenset(
         "AI_UNAVAILABLE",
         "AI_TIMEOUT",
         "AI_INVALID_RESPONSE",
+        "AI_RATE_LIMITED",
+        "AI_AUTH_FAILED",
         "DATA_ERROR",
         "GRAPH_ERROR",
         "INTERNAL_ERROR",
@@ -110,7 +112,7 @@ class InvestigationReporter:
         provisional["terminal"] = provisional.get("status") in TERMINAL_STATUSES
         if provisional.get("terminal"):
             st = provisional.get("status")
-            if st in ("COMPLETED", "AI_UNAVAILABLE", "AI_TIMEOUT", "AI_INVALID_RESPONSE") or provisional.get("result") is not None:
+            if st in ("COMPLETED", "AI_UNAVAILABLE", "AI_TIMEOUT", "AI_INVALID_RESPONSE", "AI_RATE_LIMITED", "AI_AUTH_FAILED") or provisional.get("result") is not None:
                 provisional["progress_pct"] = 100
             else:
                 provisional["progress_pct"] = provisional.get("progress_pct", 0)
@@ -146,7 +148,7 @@ class InvestigationReporter:
                 job.error = error
             if job.status in TERMINAL_STATUSES and job.finished_at is None:
                 job.finished_at = utcnow()
-                if job.status in ("COMPLETED", "AI_UNAVAILABLE", "AI_TIMEOUT", "AI_INVALID_RESPONSE") or job.result is not None:
+                if job.status in ("COMPLETED", "AI_UNAVAILABLE", "AI_TIMEOUT", "AI_INVALID_RESPONSE", "AI_RATE_LIMITED", "AI_AUTH_FAILED") or job.result is not None:
                     job.progress_pct = 100
             job.updated_at = utcnow()
             steps = list(job.steps or [])

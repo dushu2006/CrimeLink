@@ -152,20 +152,34 @@ async def start_network_analysis(
             )
             status = str(result.get("status", "COMPLETED"))
             terminal_status = status if status in TERMINAL_STATUSES else "COMPLETED"
-            is_done = terminal_status in ("COMPLETED", "AI_UNAVAILABLE", "AI_TIMEOUT", "AI_INVALID_RESPONSE")
+            is_done = terminal_status in (
+                "COMPLETED",
+                "AI_UNAVAILABLE",
+                "AI_TIMEOUT",
+                "AI_INVALID_RESPONSE",
+                "AI_RATE_LIMITED",
+                "AI_AUTH_FAILED",
+            )
+            if terminal_status == "COMPLETED":
+                msg = "Network analysis completed"
+            elif terminal_status == "AI_INVALID_RESPONSE":
+                msg = "AI reasoning response could not be parsed — deterministic analysis preserved"
+            elif terminal_status == "AI_RATE_LIMITED":
+                msg = "AI reasoning temporarily unavailable — deterministic analysis preserved"
+            elif terminal_status == "AI_AUTH_FAILED":
+                msg = "AI reasoning authentication failed — deterministic analysis preserved"
+            elif terminal_status == "AI_TIMEOUT":
+                msg = "AI timed out — deterministic analysis preserved"
+            elif terminal_status == "AI_UNAVAILABLE":
+                msg = "Deterministic network analysis completed (AI offline)"
+            else:
+                msg = f"Deterministic network analysis preserved ({terminal_status})"
+
             await reporter.update(
                 status=terminal_status,
                 stage="COMPLETED" if terminal_status == "COMPLETED" else status,
                 progress_pct=100 if is_done else 90,
-                message=(
-                    "Network analysis completed"
-                    if terminal_status == "COMPLETED"
-                    else (
-                        "Deterministic network analysis completed (AI offline)"
-                        if terminal_status == "AI_UNAVAILABLE"
-                        else f"Deterministic network analysis preserved ({terminal_status})"
-                    )
-                ),
+                message=msg,
                 result=result,
             )
             return result

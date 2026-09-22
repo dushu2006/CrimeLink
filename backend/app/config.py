@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     nlp_provider: Literal["auto", "nim", "indicner", "heuristic"] = "auto"
     nim_api_key: str | None = None
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nim_model: str = "deepseek-ai/deepseek-v4-pro-0813"
+    nim_model: str = "nvidia/nemotron-3-super-120b-a12b"
     nim_temperature: float = 0.0
     nim_max_tokens: int = 4096
     nim_timeout_s: float = 90.0
@@ -185,28 +185,28 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://integrate.api.nvidia.com/v1"
     ai_temperature: float = 0.1
     ai_max_tokens: int = 2048
-    ai_timeout_s: float = 90.0
+    ai_timeout_s: float = 180.0
     ai_allow_raw_pii: bool = False            # safety: always false unless explicit
     ai_pseudonymize: bool = True              # apply reversible pseudonymization
     ai_audit_prompt_storage: bool = False     # whether to persist full prompts in audit
 
-    ai_extraction_model: str = "deepseek-ai/deepseek-v4-pro-0813"
+    ai_extraction_model: str = "nvidia/nemotron-3-super-120b-a12b"
     ai_extraction_provider: str = "default"   # "default" uses ai_provider/ai_api_key
     ai_extraction_api_key: str | None = None
     ai_extraction_base_url: str | None = None
 
-    ai_reasoning_model: str = "deepseek-ai/deepseek-v4-pro-0813"
+    ai_reasoning_model: str = "nvidia/nemotron-3-super-120b-a12b"
     ai_reasoning_provider: str = "default"
     ai_reasoning_api_key: str | None = None
     ai_reasoning_base_url: str | None = None
     ai_reasoning_target_count: int = 5
 
-    ai_explanation_model: str = "meta/llama-3.1-8b-instruct"
+    ai_explanation_model: str = "meta/llama-3.2-11b-vision-instruct"
     ai_explanation_provider: str = "default"
     ai_explanation_api_key: str | None = None
     ai_explanation_base_url: str | None = None
 
-    ai_classification_model: str = "meta/llama-3.1-8b-instruct"
+    ai_classification_model: str = "meta/llama-3.2-11b-vision-instruct"
     ai_classification_provider: str = "default"
     ai_classification_api_key: str | None = None
     ai_classification_base_url: str | None = None
@@ -239,7 +239,7 @@ class Settings(BaseSettings):
     #: shorter latency budget than any background/batch AI usage.  These
     #: override the global ai_timeout_s / ai_max_retries / context budget
     #: for that path only.
-    ai_interactive_timeout_s: float = 30.0
+    ai_interactive_timeout_s: float = 45.0
     ai_interactive_max_retries: int = 1
     ai_interactive_max_context_nodes: int = 100
     ai_interactive_max_context_edges: int = 200
@@ -254,9 +254,7 @@ class Settings(BaseSettings):
     # the deterministic local embedder is used, so the embedded profile needs
     # no service, no key and no network.
     ai_semantic_enabled: bool = True
-    #: Use ``AIModelRouter.embed`` when an embedding key is configured.  When
-    #: false, or when the provider is unavailable, the local embedder is used.
-    ai_semantic_use_provider_embeddings: bool = True
+    ai_semantic_use_provider_embeddings: bool = False
     ai_semantic_top_k: int = 8
     ai_semantic_min_score: float = 0.05
     #: Upper bound on embedded chunks per case (a bound on work, not on recall

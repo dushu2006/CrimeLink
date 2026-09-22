@@ -143,7 +143,6 @@ export function useGraphCanvas(options: GraphCanvasOptions): {
       elements,
       style,
       layout: layout as any,
-      wheelSensitivity: 0.22,
       minZoom: 0.05,
       maxZoom: 3,
       userPanningEnabled: true,
