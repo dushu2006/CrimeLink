@@ -35,6 +35,7 @@ import {
 } from "../../api/client";
 import { Badge, Empty, ErrorState, Spinner } from "../Status";
 import { EvidencePointerLink } from "../EvidenceLink";
+import { GraphSourceChips } from "../graph/GraphSourceChips";
 import { TechnicalDetails } from "../TechnicalDetails";
 import { NetworkGraph } from "../NetworkGraph";
 import { PatternList } from "./PatternCard";
@@ -472,6 +473,12 @@ export function NetworkAnalysisPanel({ initialCaseId }: NetworkAnalysisPanelProp
                     )}
                     . Network position never changes it.
                   </p>
+                  <div className="graph-sources" style={{ marginBottom: "var(--space-2)" }}>
+                    <GraphSourceChips
+                      docIds={selectedNode.source_doc_ids}
+                      emptyMessage="No source documents recorded for this entity."
+                    />
+                  </div>
                   <div className="evidence-link-row">
                     <EvidencePointerLink pointer={selectedNode.evidence} />
                   </div>
@@ -483,6 +490,15 @@ export function NetworkAnalysisPanel({ initialCaseId }: NetworkAnalysisPanelProp
                   <p className="muted">
                     confidence {Math.round(selectedEdge.confidence * 100)}%
                   </p>
+                  <div className="graph-sources" style={{ marginBottom: "var(--space-2)" }}>
+                    <GraphSourceChips
+                      docIds={[
+                        ...(selectedEdge.source_doc_ids ?? []),
+                        selectedEdge.source_doc_id,
+                      ]}
+                      emptyMessage="No source documents recorded for this relationship."
+                    />
+                  </div>
                   <div className="evidence-link-row">
                     <EvidencePointerLink pointer={selectedEdge.evidence} />
                   </div>

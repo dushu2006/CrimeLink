@@ -51,11 +51,13 @@ import {
 } from "../../api/client";
 import { Badge, Empty, ErrorState, Spinner } from "../Status";
 import { DocumentFileLink, EvidencePointerLink, ReferenceLink } from "../EvidenceLink";
+import { GraphSourceChips } from "../graph/GraphSourceChips";
 import { TechnicalDetails } from "../TechnicalDetails";
 import PersonRelationshipNetwork from "./PersonRelationshipNetwork";
 import GraphViewControls from "../common/GraphViewControls";
 import { useGraphCanvas } from "../../lib/useGraphCanvas";
 import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../../lib/displayLabels";
+import { typeSpecificRows, edgeSpecificRows, relLabel } from "../../lib/investigation";
 
 /**
  * Entity types the ENTITY NETWORK can show.  A supporting entity (phone,
@@ -149,6 +151,9 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
   const [entityLoading, setEntityLoading] = useState(false);
   const [entityError, setEntityError] = useState<string | null>(null);
   const [selectedEntityNode, setSelectedEntityNode] = useState<GraphNodeRow | null>(null);
+  // An entity-level relationship selected on the canvas — the WHY behind the
+  // edge and the records that support it.
+  const [selectedEntityEdge, setSelectedEntityEdge] = useState<GraphEdgeRow | null>(null);
   const [filterCaseId, setFilterCaseId] = useState<string | null>(null);
 
   // ENTITY NETWORK progressive disclosure.  People first, supporting entities
@@ -447,16 +452,26 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
         setSelectedEdge(null);
       } else {
         setSelectedEntityNode(data.raw_node as GraphNodeRow);
+        setSelectedEntityEdge(null);
       }
     },
-    onTapEdge: (edge: any) => {      if (level !== "case") return;      const data = edge.data();
-      setSelectedEdge(data.raw_edge as MasterCaseEdge);
-      setSelectedCase(null);
+    onTapEdge: (edge: any) => {
+      const data = edge.data();
+      if (level === "case") {
+        setSelectedEdge(data.raw_edge as MasterCaseEdge);
+        setSelectedCase(null);
+      } else {
+        // Entity-level relationship: surface its provenance like every other
+        // graph edge — type, records and the documents that created it.
+        setSelectedEntityEdge(data.raw_edge as GraphEdgeRow);
+        setSelectedEntityNode(null);
+      }
     },
     onTapBackground: () => {
       setSelectedCase(null);
       setSelectedEdge(null);
       setSelectedEntityNode(null);
+      setSelectedEntityEdge(null);
     },
   });
   const switchToEntityView = (caseNumberOrId?: string) => {
@@ -490,6 +505,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
                 setSelectedCase(null);
                 setSelectedEdge(null);
                 setSelectedEntityNode(null);
+                setSelectedEntityEdge(null);
               }}
             >
               PEOPLE NETWORK
@@ -502,6 +518,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
               onClick={() => {
                 setLevel("case");
                 setSelectedEntityNode(null);
+                setSelectedEntityEdge(null);
               }}
             >
               CASE NETWORK
@@ -515,6 +532,7 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
                 setLevel("entity");
                 setSelectedCase(null);
                 setSelectedEdge(null);
+                setSelectedEntityEdge(null);
               }}
             >
               ENTITY NETWORK
@@ -960,9 +978,84 @@ export default function MasterCaseNetwork({ activeDatasetId }: MasterCaseNetwork
             )}
             . Graph layout or network position never establishes criminality.
           </p>
+          {Boolean((selectedEntityNode.properties as Record<string, unknown> | undefined)?.description) && (
+            <p style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-1)" }}>
+              {String(
+                (selectedEntityNode.properties as Record<string, unknown>).description,
+              ).trim()}
+            </p>
+          )}
+          {(() => {
+            const rows = typeSpecificRows(selectedEntityNode);
+            if (rows.length === 0) return null;
+            return (
+              <dl className="detail-rows" style={{ marginTop: "var(--space-2)" }}>
+                {rows.map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{k}</dt>
+                    <dd>{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            );
+          })()}
+          <div className="graph-sources" style={{ marginTop: "var(--space-2)" }}>
+            <GraphSourceChips
+              docIds={selectedEntityNode.source_doc_ids}
+              emptyMessage="No source documents recorded for this entity."
+            />
+          </div>
           {selectedEntityNode.evidence && (
-            <div className="evidence-link-row">
+            <div className="evidence-link-row" style={{ marginTop: "var(--space-1)" }}>
               <EvidencePointerLink pointer={selectedEntityNode.evidence} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* -------------- DETAILS: ENTITY RELATIONSHIP SELECTED ------------- */}
+      {selectedEntityEdge && (
+        <div className="detail-panel" style={{ marginTop: "var(--space-3)" }}>
+          <div className="inv-objective-head">
+            <h3>
+              {(visibleEntityNodes.find((n) => n.provenance_key === selectedEntityEdge.source)?.name ||
+                selectedEntityEdge.source)}{" "}
+              <span className="muted">—</span> {relLabel(selectedEntityEdge.rel_type)} →{" "}
+              {(visibleEntityNodes.find((n) => n.provenance_key === selectedEntityEdge.target)?.name ||
+                selectedEntityEdge.target)}
+            </h3>
+            <Badge value={selectedEntityEdge.rel_type.replace(/_/g, " ")} />
+          </div>
+          <p className="muted" style={{ fontSize: "var(--text-xs)" }}>
+            This relationship exists because the case records below document it — never because
+            the entities happened to be placed near each other on the canvas.
+          </p>
+          {(() => {
+            const rows = edgeSpecificRows(selectedEntityEdge);
+            if (rows.length === 0) return null;
+            return (
+              <dl className="detail-rows" style={{ marginTop: "var(--space-2)" }}>
+                {rows.map(([k, v]) => (
+                  <div key={k}>
+                    <dt>{k}</dt>
+                    <dd>{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            );
+          })()}
+          <div className="graph-sources" style={{ marginTop: "var(--space-2)" }}>
+            <GraphSourceChips
+              docIds={[
+                ...(selectedEntityEdge.source_doc_ids ?? []),
+                selectedEntityEdge.source_doc_id,
+              ]}
+              emptyMessage="No source documents recorded for this relationship."
+            />
+          </div>
+          {selectedEntityEdge.evidence && (
+            <div className="evidence-link-row" style={{ marginTop: "var(--space-1)" }}>
+              <EvidencePointerLink pointer={selectedEntityEdge.evidence} />
             </div>
           )}
         </div>

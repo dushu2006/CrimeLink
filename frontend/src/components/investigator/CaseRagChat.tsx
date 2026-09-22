@@ -6,67 +6,23 @@ import {
   degradedCaseContext,
   deriveCaseIntelligenceMetrics,
 } from "../../lib/caseIntelligence";
+import {
+  type ChatFinding,
+  type ChatMessage,
+  answerText,
+  answerSources,
+  followupsFor,
+  buildHistory,
+  isProviderErrorText,
+} from "../../lib/caseAiChat";
 
 const PHASES: Record<string, string> = {
-  started: "Retrieving case context…",
-  retrieving: "Retrieving case evidence…",
-  generating: "Generating grounded answer…",
-  validating: "Validating evidence references…",
-  fast_path: "Answering from case context…",
+  started: "Looking into the case…",
+  retrieving: "Checking the case records…",
+  generating: "Writing the answer…",
+  validating: "Checking the references…",
+  fast_path: "Answering from the case context…",
 };
-
-interface ClaimCitation {
-  claim_text?: string;
-  claim?: string;
-  evidence_id?: string;
-  evidence_refs?: string[];
-  support_status?: string;
-  support_level?: string;
-  corroboration?: string | null;
-}
-
-interface FindingResult {
-  id?: string;
-  title?: string;
-  summary?: string;
-  direct_answer?: string;
-  evidence_explanation?: string;
-  investigator_interpretation?: string;
-  why_this_matters?: string;
-  establishes?: string | string[];
-  does_not_establish?: string | string[];
-  limitations?: string | string[];
-  claims?: ClaimCitation[];
-  claim_citations?: ClaimCitation[];
-  why_this_answer?: {
-    sources_used?: Array<string | { doc_id?: string; document_type?: string }>;
-    entities_considered?: Array<string | { id?: string; label?: string }>;
-    relationship_paths?: string[];
-  };
-  evidence_coverage?: {
-    claims?: number;
-    supported?: number;
-    unsupported?: number;
-    total_claims?: number;
-    supported_claims?: number;
-    unsupported_claims?: number;
-    inferred_claims?: number;
-  };
-  contradictions?: string[];
-  temporal_analysis?: Record<string, unknown>;
-  followup_questions?: string[];
-}
-
-function isProviderError(text: string | null | undefined): boolean {
-  if (!text) return true;
-  return (
-    text.includes("AI reasoning is unavailable") ||
-    text.includes("APIStatusError") ||
-    text.includes("configured provider call failed") ||
-    text.includes("CRIMELINK_AI_REASONING_API_KEY") ||
-    text.includes("no_api_key_for_role")
-  );
-}
 
 function renderMarkdown(text: string | string[] | null | undefined, onCitationClick?: (id: string) => void) {
   if (!text) return null;
@@ -127,73 +83,15 @@ function renderMarkdown(text: string | string[] | null | undefined, onCitationCl
   );
 }
 
-function isGenericBoilerplate(text: string | string[] | null | undefined): boolean {
-  if (!text) return true;
-  const s = (Array.isArray(text) ? text.join(" ") : text).toLowerCase();
-  if (s.length < 30) return true;
-  return (
-    s.includes("this intelligence establishes documented connections") ||
-    s.includes("authoritative case verification requires") ||
-    s.includes("operational timelines from verified platform evidence")
-  );
-}
-
-function isBoilerplateList(items: string | string[] | null | undefined): boolean {
-  if (!items) return true;
-  const arr = Array.isArray(items) ? items : [items];
-  if (arr.length === 0) return true;
-  const joined = arr.join(" ").toLowerCase();
-  // Hide the old stock disclaimer unless it's informative for THIS answer
-  if (
-    arr.length <= 2 &&
-    (joined.includes("do not by themselves determine guilt") ||
-      joined.includes("do not by themselves establish criminal intent")) &&
-    joined.length < 200
-  ) {
-    return true;
-  }
-  if (
-    arr.length === 1 &&
-    joined.includes("constrained strictly to currently indexed case records")
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function isEstablishesBoilerplate(items: string | string[] | null | undefined): boolean {
-  if (!items) return true;
-  const arr = Array.isArray(items) ? items : [items];
-  if (arr.length === 0) return true;
-  // If the establishes list appears to just repeat counts like "12 evidence records", hide it
-  const joined = arr.join(" ").toLowerCase();
-  if (arr.length <= 2 && /\d+\s+(evidence|verified|operational|individual)/.test(joined) && joined.length < 200) {
-    return true;
-  }
-  return false;
-}
-
-function getStatusBadge(status: string) {
-  const norm = (status || "").toUpperCase();
-  if (norm.includes("FACT")) {
-    return <span className="claim-badge claim-badge-fact">✓ DOCUMENTED FACT</span>;
-  }
-  if (norm.includes("INFERENCE")) {
-    return <span className="claim-badge claim-badge-inference">~ INFERENCE</span>;
-  }
-  return <span className="claim-badge claim-badge-unsupported">? UNVERIFIED</span>;
-}
-
 export default function CaseRagChat({ caseId }: { caseId: string }) {
   const [caseContext, setCaseContext] = useState<CaseContextSummary | null>(null);
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
-  const [finding, setFinding] = useState<FindingResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [phase, setPhase] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<Array<{ role: string; content: string }>>([]);
   const [drawerEvidence, setDrawerEvidence] = useState<EvidenceDrawerData | null>(null);
+  const nextId = useRef(1);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   // The CASE INTELLIGENCE cells are derived from the authoritative context
   // only — never from the assistant's answer text.
@@ -223,13 +121,18 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     void loadCaseContext();
-    // Reset state on case change
-    setAnswer(null);
-    setFinding(null);
-    setError(null);
-    setHistory([]);
+    // The transcript is deliberately session-only: switching cases starts a
+    // fresh conversation, and history never leaves this component's state
+    // (page refresh / sign-out resets it).
+    setMessages([]);
     setDrawerEvidence(null);
   }, [caseId, loadCaseContext]);
+
+  // Keep the newest exchange in view as the transcript grows.
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, busy]);
 
   // A successful answer proves the case context is reachable again; if the
   // header is still on its degraded state, re-request the authoritative
@@ -238,110 +141,125 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
     if (!metricsAvailableRef.current) void loadCaseContext();
   }, [loadCaseContext]);
 
-  function getNetworkFallback(text: string): { answer: string; finding: FindingResult } {
-    const caseNum = caseContext?.case_number || caseId;
-    const direct = `Unable to connect to the CrimeLink investigation assistant backend for Case ${caseNum}. Please check network connectivity and ensure the API server is running.`;
-    const fallbackFinding: FindingResult = {
-      title: `Service Notification — ${caseNum}`,
-      summary: direct,
-      direct_answer: direct,
-      why_this_matters: `Investigation queries require an active connection to the CrimeLink backend and case records database.`,
-      limitations: `Client network request failed. No case data could be loaded.`,
-      evidence_coverage: { total_claims: 0, supported_claims: 0, claims: 0, supported: 0, unsupported: 0 },
-      followup_questions: caseContext?.suggested_questions?.slice(0, 3) || [],
-    };
-    return { answer: direct, finding: fallbackFinding };
+  const lastAssistantId = (() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "assistant") return messages[i].id;
+    }
+    return null;
+  })();
+
+  function patchAssistant(id: number, patch: Partial<ChatMessage>) {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   }
 
   async function ask(queryText?: string) {
     const text = (queryText ?? question).trim();
     if (!text || busy) return;
     setBusy(true);
-    setAnswer(null);
-    setFinding(null);
-    setError(null);
     setPhase("started");
-    let settled = false;
 
-    const currentHistory = history.slice(-6);
+    const history = buildHistory(messages, 6);
+    const userMsg: ChatMessage = { id: nextId.current++, role: "user", text: String(text), status: "done" };
+    const assistantId = nextId.current++;
+    const placeholder: ChatMessage = { id: assistantId, role: "assistant", text: "", status: "streaming" };
+    setMessages((prev) => [...prev, userMsg, placeholder]);
+    setQuestion("");
 
-    const plain = async () => {
+    const applyResponse = (payload: Record<string, any> | null, streamedText: string) => {
+      const finding = (payload?.finding ?? null) as ChatFinding | null;
+      let finalText = answerText(finding).trim();
+      if (!finalText && streamedText.trim() && !isProviderErrorText(streamedText)) {
+        finalText = streamedText.trim();
+      }
+      const context = (payload?.context ?? {}) as Record<string, any>;
+      const rewritten = context?.followup_resolution?.rewritten;
+      if (!finalText || isProviderErrorText(finalText)) {
+        patchAssistant(assistantId, {
+          status: "error",
+          text: "I couldn't complete the analysis just then — the service did not respond. Your question is still in the transcript; ask again in a moment.",
+        });
+        return false;
+      }
+      patchAssistant(assistantId, {
+        status: "done",
+        text: finalText,
+        finding,
+        resolvedQuestion: typeof rewritten === "string" ? rewritten : null,
+      });
+      rehydrateMetricsIfDegraded();
+      return true;
+    };
+
+    const failAssistant = (message: string) => {
+      patchAssistant(assistantId, { status: "error", text: message });
+    };
+
+    const plain = async (): Promise<boolean> => {
       try {
         const result = await api<any>(`/ai/cases/${encodeURIComponent(caseId)}/ask`, {
           method: "POST",
-          body: JSON.stringify({ question: text, history: currentHistory }),
+          body: JSON.stringify({ question: text, history }),
         });
-        settled = true;
-        const resFinding = (result?.finding || {}) as FindingResult;
-        const summary = resFinding?.direct_answer || resFinding?.summary || result?.summary;
-
-        if (summary && !isProviderError(summary)) {
-          setFinding(resFinding);
-          setAnswer(summary);
-          setHistory((prev) => [
-            ...prev,
-            { role: "user", content: text },
-            { role: "assistant", content: summary },
-          ]);
-          rehydrateMetricsIfDegraded();
-        } else {
-          setError(result?.error || "Investigation service was unable to analyze this inquiry.");
-        }
-      } catch (err) {
-        const fallback = getNetworkFallback(text);
-        setAnswer(fallback.answer);
-        setFinding(fallback.finding);
+        return applyResponse(result, "");
+      } catch {
+        const caseNum = caseContext?.case_number || caseId;
+        failAssistant(
+          `I couldn't reach the CrimeLink backend for case ${caseNum}. Check that the API server is running and ask again — the conversation above is intact.`
+        );
+        return false;
       } finally {
         setBusy(false);
         setPhase(null);
       }
     };
 
+    let settled = false;
+    let streamedText = "";
+    let receivedDone: Record<string, any> | null = null;
     try {
       await askCaseStream(
         caseId,
-        text,
+        String(text),
         {
           onAck: () => setPhase("started"),
           onStage: (event) => setPhase(String(event.stage ?? "retrieving")),
           onDelta: (chunk) => {
-            setAnswer((prev) => (prev ? prev + chunk : chunk));
+            streamedText += chunk;
+            patchAssistant(assistantId, { text: streamedText });
           },
           onDone: async (result) => {
             settled = true;
-            const payload = result as any;
-            const resFinding = (payload?.finding || {}) as FindingResult;
-            const summary = resFinding?.direct_answer || resFinding?.summary || payload?.summary;
-
-            if (summary && !isProviderError(summary)) {
-              setFinding(resFinding);
-              setAnswer(summary);
-              setHistory((prev) => [
-                ...prev,
-                { role: "user", content: text },
-                { role: "assistant", content: summary },
-              ]);
-              rehydrateMetricsIfDegraded();
-            } else {
-              void plain();
+            receivedDone = result as Record<string, any>;
+            const ok = applyResponse(receivedDone, streamedText);
+            if (!ok) void plain();
+            else {
+              setBusy(false);
+              setPhase(null);
             }
-            setBusy(false);
-            setPhase(null);
           },
           onError: async () => {
             settled = true;
             void plain();
           },
           onFallback: () => {
-            if (!settled) void plain();
+            if (settled) return;
+            settled = true;
+            void plain();
           },
         },
-        { history: currentHistory }
+        { history }
       );
     } catch {
       if (!settled) await plain();
+      return;
     }
+    // The stream resolving without a `done` event (e.g. the connection was
+    // acknowledged then dropped mid-answer) is not a settled turn either —
+    // recover through the plain POST so the placeholder can never strand.
+    if (!settled) await plain();
   }
+
+  const openCitation = useCallback((id: string) => setDrawerEvidence({ id }), []);
 
   return (
     <section className="panel case-rag-chat" aria-label="Case evidence assistant">
@@ -349,10 +267,10 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
         <div>
           <h2>CASE EVIDENCE ASSISTANT</h2>
           <p className="hint">
-            RAG-grounded to this case only. Factual claims link directly to stored evidence records.
+            Answers are drawn from this case's records only. Ask follow-ups the way you would ask a person.
           </p>
         </div>
-        <span className="badge badge-ok">RAG · CASE-SCOPED</span>
+        <span className="badge badge-ok">CASE-SCOPED</span>
       </div>
 
       {/* Dynamic Authoritative Case Context Block */}
@@ -409,7 +327,7 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
       )}
 
       {/* Dynamic Case-Tailored Suggested Questions */}
-      {caseContext?.suggested_questions && caseContext.suggested_questions.length > 0 && !finding && (
+      {caseContext?.suggested_questions && caseContext.suggested_questions.length > 0 && messages.length === 0 && (
         <div className="case-ai-suggestions">
           <span className="case-ai-suggestions-label">Suggested Inquiries:</span>
           <div className="case-ai-chips">
@@ -431,253 +349,77 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
         </div>
       )}
 
-      {/* Inquiry Form */}
-      <form
-        className="form-row"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void ask();
-        }}
+      {/* Transcript — a continuous conversation; new turns append below. */}
+      <div
+        className="case-ai-transcript"
+        ref={transcriptRef}
+        aria-live="polite"
+        aria-label="Conversation with the case assistant"
       >
-        <input
-          value={question}
-          onChange={(event) => setQuestion(event.target.value)}
-          placeholder="Ask: What connects these people? Which evidence supports it? What happened first?"
-          aria-label="Ask a question about this case"
-          className="case-rag-input"
-          style={{ flex: 1, minWidth: 280 }}
-        />
-        <button className="cl-btn cl-btn-primary" type="submit" disabled={busy || !question.trim()}>
-          {busy ? "Analyzing…" : "Ask Assistant"}
-        </button>
-      </form>
+        {messages.length === 0 && !busy && (
+          <div className="case-ai-empty">
+            Ask anything about this case — a straight question gets a straight
+            answer; deeper questions get a deeper answer with their sources.
+          </div>
+        )}
 
-      {busy && (
-        <div className="ai-progress" role="status" style={{ marginTop: "12px" }}>
-          <span className="spinner" aria-hidden="true" />
-          <span>{PHASES[phase ?? "started"] ?? "Searching case evidence…"}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="banner banner-warn" role="alert" style={{ marginTop: "12px" }}>
-          {error}
-        </div>
-      )}
-
-      {/* Response Card */}
-      {(finding || answer) && (() => {
-        const activeClaims = (finding?.claim_citations && finding.claim_citations.length > 0)
-          ? finding.claim_citations
-          : (finding?.claims && finding.claims.length > 0 ? finding.claims : []);
-
-        const coverageTotal = finding?.evidence_coverage?.total_claims ?? finding?.evidence_coverage?.claims ?? activeClaims.length;
-        const coverageSupported = finding?.evidence_coverage?.supported_claims ?? finding?.evidence_coverage?.supported ?? (
-          activeClaims.filter((c) => {
-            const s = (c.support_status || c.support_level || "").toUpperCase();
-            return s.includes("FACT") || s.includes("SUPPORTED");
-          }).length
-        );
-        const coverageUnsupported = finding?.evidence_coverage?.unsupported_claims ?? finding?.evidence_coverage?.unsupported ?? (
-          activeClaims.filter((c) => {
-            const s = (c.support_status || c.support_level || "").toUpperCase();
-            return s.includes("UNSUPPORTED");
-          }).length
-        );
-
-        const answerStr = finding?.direct_answer || answer || "";
-        const hasCitations = /\[[A-Za-z0-9_-]{2,}\]/.test(answerStr) || activeClaims.some((c) => Boolean(c.evidence_id || (c.evidence_refs && c.evidence_refs.length > 0)));
-
-        return (
-          <div className="case-rag-response-card" style={{ marginTop: "12px" }}>
-            <div className="case-rag-response-header">
-              <span className="badge badge-ok">CASE INTELLIGENCE</span>
-              <span className="case-rag-response-badge">Grounded</span>
-              {coverageTotal > 0 && (
-                <span className="claim-corroboration-badge" style={{ marginLeft: "auto" }}>
-                  Coverage: {coverageSupported}/{coverageTotal} supported
-                </span>
-              )}
-            </div>
-
-            <div className="case-rag-structured-box">
-              {/* NATURAL ANSWER — the primary content */}
-              <div className="case-rag-section">
-                <div className="case-rag-section-body case-rag-natural-answer">
-                  {renderMarkdown(finding?.direct_answer || answer || "", (id) =>
-                    setDrawerEvidence({ id })
-                  )}
-                </div>
+        {messages.map((m) => {
+          if (m.role === "user") {
+            return (
+              <div key={m.id} className="case-ai-turn case-ai-turn-user">
+                <div className="case-ai-bubble case-ai-bubble-user">{m.text}</div>
               </div>
-
-              {/* EVIDENCE RECORD CLAIMS — collapsible list of sourced claims */}
-              {activeClaims.length > 0 && (
-                <details className="case-rag-section case-rag-collapsible">
-                  <summary className="case-rag-section-title">
-                    ▶ EVIDENCE ({activeClaims.length} sourced claim{activeClaims.length === 1 ? "" : "s"})
-                  </summary>
-                  <div className="case-rag-claims-list">
-                    {activeClaims.map((c, i) => {
-                      const claimText = c.claim_text || c.claim || "";
-                      const evidId = c.evidence_id || (c.evidence_refs && c.evidence_refs[0]) || "";
-                      const status = c.support_status || c.support_level || "DOCUMENTED FACT";
-                      // Skip claims whose text is a near-duplicate of the main answer
-                      if (claimText && (finding?.direct_answer || answer || "").includes(claimText.slice(0, 80)) && evidId) {
-                        return null;
-                      }
-                      return (
-                        <div key={i} className="case-rag-claim-card">
-                          <div className="case-rag-claim-header">
-                            {getStatusBadge(status)}
-                            {c.corroboration && (
-                              <span className="claim-corroboration-badge">★ {c.corroboration}</span>
-                            )}
-                            {evidId && (
-                              <button
-                                type="button"
-                                className="claim-citation-btn"
-                                onClick={() => setDrawerEvidence({ id: evidId })}
-                                title={`Inspect ${evidId} in Evidence Drawer`}
-                              >
-                                [{evidId}]
-                              </button>
-                            )}
-                          </div>
-                          <div className="case-rag-section-body">
-                            {renderMarkdown(claimText, (id) => setDrawerEvidence({ id }))}
-                          </div>
-                        </div>
-                      );
-                    })}
+            );
+          }
+          const finding = m.finding ?? null;
+          const sources = m.status === "done" ? answerSources(finding) : [];
+          const followups =
+            m.status === "done" && m.id === lastAssistantId
+              ? followupsFor(finding)
+              : [];
+          const showRewritten =
+            m.resolvedQuestion && m.resolvedQuestion.replace(/\s+/g, " ").trim() !== "";
+          return (
+            <div key={m.id} className="case-ai-turn case-ai-turn-assistant">
+              <div
+                className={
+                  "case-ai-bubble case-ai-bubble-assistant" +
+                  (m.status === "error" ? " case-ai-bubble-error" : "")
+                }
+              >
+                {showRewritten && (
+                  <div className="case-ai-understood">
+                    Understood as: <em>{m.resolvedQuestion}</em>
                   </div>
-                </details>
-              )}
-
-              {/* WHY THIS MATTERS — only when genuinely informative */}
-              {finding?.why_this_matters && !isGenericBoilerplate(finding.why_this_matters) && (
-                <div className="case-rag-section">
-                  <h4 className="case-rag-section-title">WHY THIS MATTERS</h4>
-                  <div className="case-rag-section-body">
-                    {renderMarkdown(finding.why_this_matters, (id) => setDrawerEvidence({ id }))}
+                )}
+                {m.status === "streaming" && !m.text ? (
+                  <div className="case-ai-typing" aria-label="Assistant is typing">
+                    <span className="case-ai-dot" />
+                    <span className="case-ai-dot" />
+                    <span className="case-ai-dot" />
                   </div>
-                </div>
-              )}
-
-              {/* WHAT THE EVIDENCE ESTABLISHES — only when explicitly present */}
-              {finding?.establishes && Array.isArray(finding.establishes) && finding.establishes.length > 0 && !isEstablishesBoilerplate(finding.establishes) && (
-                <div className="case-rag-section case-rag-establishes">
-                  <h4 className="case-rag-section-title">KEY FINDINGS</h4>
-                  <div className="case-rag-section-body">
-                    {renderMarkdown(finding.establishes, (id) => setDrawerEvidence({ id }))}
+                ) : (
+                  renderMarkdown(m.text, openCitation)
+                )}
+                {sources.length > 0 && (
+                  <div className="case-ai-source-row" aria-label="Sources">
+                    <span className="case-ai-source-label">Sources</span>
+                    {sources.map((src) => (
+                      <button
+                        key={src.doc_id}
+                        type="button"
+                        className="case-ai-source-chip"
+                        onClick={() => openCitation(src.doc_id)}
+                        title={src.filename || src.doc_id}
+                      >
+                        {src.document_type ? `${src.document_type} · ` : ""}{src.doc_id}
+                      </button>
+                    ))}
                   </div>
-                </div>
-              )}
-
-              {/* WHAT THE EVIDENCE DOES NOT ESTABLISH — only when non-generic */}
-              {finding?.does_not_establish && Array.isArray(finding.does_not_establish) && finding.does_not_establish.length > 0 && !isBoilerplateList(finding.does_not_establish) && (
-                <div className="case-rag-section case-rag-not-establishes">
-                  <h4 className="case-rag-section-title">WHAT THE EVIDENCE DOES NOT ESTABLISH</h4>
-                  <div className="case-rag-section-body">
-                    {renderMarkdown(finding.does_not_establish, (id) => setDrawerEvidence({ id }))}
-                  </div>
-                </div>
-              )}
-
-              {/* LIMITATIONS */}
-              {finding?.limitations && Array.isArray(finding.limitations) && finding.limitations.length > 0 && !isBoilerplateList(finding.limitations) && (
-                <div className="case-rag-section case-rag-limitations">
-                  <h4 className="case-rag-section-title">NOTES & LIMITATIONS</h4>
-                  <div className="case-rag-section-body">
-                    {renderMarkdown(finding.limitations, (id) => setDrawerEvidence({ id }))}
-                  </div>
-                </div>
-              )}
-
-              {/* WHY THIS ANSWER (Provenance & Coverage) */}
-              {finding?.why_this_answer &&
-                ((finding.why_this_answer.sources_used && finding.why_this_answer.sources_used.length > 0) ||
-                  (finding.why_this_answer.entities_considered && finding.why_this_answer.entities_considered.length > 0) ||
-                  (finding.why_this_answer.relationship_paths && finding.why_this_answer.relationship_paths.length > 0)) ? (
-                <details className="case-rag-provenance">
-                  <summary className="case-rag-provenance-summary">
-                    ▶ WHY THIS ANSWER (Evidence Provenance & Coverage)
-                  </summary>
-                  <div className="case-rag-provenance-body">
-                    {coverageTotal > 0 && (
-                      <div className="case-rag-coverage-bar">
-                        <span>
-                          Claims: <strong>{coverageTotal}</strong>
-                        </span>
-                        <span>
-                          Supported:{" "}
-                          <strong style={{ color: "#059669" }}>
-                            {coverageSupported}
-                          </strong>
-                        </span>
-                        <span>
-                          Unsupported:{" "}
-                          <strong
-                            style={{
-                              color: coverageUnsupported > 0 ? "#e11d48" : "#64748b",
-                            }}
-                          >
-                            {coverageUnsupported}
-                          </strong>
-                        </span>
-                      </div>
-                    )}
-
-                    {finding.why_this_answer.sources_used &&
-                      finding.why_this_answer.sources_used.length > 0 && (
-                        <div>
-                          <strong>Sources used:</strong>
-                          <pre className="provenance-tree">
-                            {finding.why_this_answer.sources_used
-                              .map((s, idx, arr) => {
-                                const text = typeof s === "string" ? s : `${s.document_type || "DOCUMENT"} [${s.doc_id}]`;
-                                return `${idx === arr.length - 1 ? "└── " : "├── "}${text}`;
-                              })
-                              .join("\n")}
-                          </pre>
-                        </div>
-                      )}
-
-                    {finding.why_this_answer.entities_considered &&
-                      finding.why_this_answer.entities_considered.length > 0 && (
-                        <div>
-                          <strong>Entities considered:</strong>
-                          <div className="case-ai-chips" style={{ marginTop: "4px" }}>
-                            {finding.why_this_answer.entities_considered.map((e, idx) => {
-                              const text = typeof e === "string" ? e : (e.label || e.id || "Entity");
-                              return (
-                                <span key={idx} className="case-ai-chip" style={{ cursor: "default" }}>
-                                  {text}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                    {finding.why_this_answer.relationship_paths &&
-                      finding.why_this_answer.relationship_paths.length > 0 && (
-                        <div>
-                          <strong>Relationship paths:</strong>
-                          <pre className="provenance-tree">
-                            {finding.why_this_answer.relationship_paths.join("\n")}
-                          </pre>
-                        </div>
-                      )}
-                  </div>
-                </details>
-              ) : null}
-
-              {/* SUGGESTED FOLLOW-UPS */}
-              {finding?.followup_questions && finding.followup_questions.length > 0 && (
-                <div className="case-ai-suggestions" style={{ marginTop: "10px" }}>
-                  <span className="case-ai-suggestions-label">Suggested Follow-ups:</span>
-                  <div className="case-ai-chips">
-                    {finding.followup_questions.map((fq, i) => (
+                )}
+                {followups.length > 0 && (
+                  <div className="case-ai-chips case-ai-followup-row">
+                    {followups.map((fq, i) => (
                       <button
                         key={i}
                         type="button"
@@ -692,23 +434,51 @@ export default function CaseRagChat({ caseId }: { caseId: string }) {
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
+          );
+        })}
+      </div>
 
-            <div className="case-rag-response-footer">
-              <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>
-                verified_user
-              </span>
-              <span>
-                {hasCitations
-                  ? "Click any [DOC-ID] citation to view verified provenance in the Evidence Drawer."
-                  : "All statements are strictly derived from verified case-scoped records and graph context."}
-              </span>
-            </div>
-          </div>
-        );
-      })()}
+      {busy && (
+        <div className="ai-progress" role="status">
+          <span className="spinner" aria-hidden="true" />
+          <span>{PHASES[phase ?? "started"] ?? "Looking into the case…"}</span>
+        </div>
+      )}
+
+      {/* Inquiry Form */}
+      <form
+        className="form-row case-ai-composer"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void ask();
+        }}
+      >
+        <input
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="Ask about people, links, timelines, case data, or files in this case…"
+          aria-label="Ask a question about this case"
+          className="case-rag-input"
+          style={{ flex: 1, minWidth: 280 }}
+        />
+        <button className="cl-btn cl-btn-primary" type="submit" disabled={busy || !question.trim()}>
+          {busy ? "Thinking…" : "Ask"}
+        </button>
+        {messages.length > 0 && (
+          <button
+            className="cl-btn"
+            type="button"
+            disabled={busy}
+            onClick={() => setMessages([])}
+            title="Clear this conversation (history is session-only)"
+          >
+            New chat
+          </button>
+        )}
+      </form>
 
       {/* Integrated Evidence Drawer */}
       {drawerEvidence && (

@@ -41,6 +41,7 @@ import {
 import { isConfirmedCriminal, nodeShapeRule, getDisplayLabel } from "../lib/displayLabels";
 import { Empty, ErrorState, Spinner } from "../components/Status";
 import { EvidencePointerLink } from "../components/EvidenceLink";
+import { GraphSourceChips } from "../components/graph/GraphSourceChips";
 import { TechnicalDetails } from "../components/TechnicalDetails";
 
 cytoscape.use(fcose);
@@ -487,6 +488,42 @@ export default function GraphPage() {
     [visible],
   );
 
+  /**
+   * The selected node's documented neighbours within this graph's visible
+   * subgraph — the "Connected entities" block of the detail panel.  Only
+   * edges that exist in this case's graph are listed; nothing is inferred
+   * from layout or centrality.
+   */
+  const selectedConnections = useMemo(() => {
+    if (!selected || !visible) return [];
+    const key = selected.provenance_key;
+    const out: { key: string; name: string; rel: string }[] = [];
+    for (const edge of visible.edges) {
+      if (edge.source !== key && edge.target !== key) continue;
+      const otherKey = edge.source === key ? edge.target : edge.source;
+      if (out.some((c) => c.key === otherKey)) continue;
+      out.push({
+        key: otherKey,
+        name: nameOf(otherKey),
+        rel: relLabel(edge.rel_type),
+      });
+      if (out.length >= 12) break;
+    }
+    return out;
+  }, [selected, visible, nameOf]);
+
+  /**
+   * A source-derived short description, if one exists for this node in the
+   * case data.  Never generated — when the records carry no description the
+   * panel simply omits it (spec: no description is better than fabricated).
+   */
+  const selectedDescription = useMemo(() => {
+    if (!selected) return null;
+    const raw = (selected.properties as Record<string, unknown> | undefined)?.description;
+    const text = typeof raw === "string" ? raw.trim() : "";
+    return text || null;
+  }, [selected]);
+
   const counts = useMemo(() => {
     if (mode === "person" && network) return network.counts;
     if (mode === "master" && master) return master.counts;
@@ -917,6 +954,9 @@ export default function GraphPage() {
                   {t("graph.aka")}: {selected.aliases.join(", ")}
                 </p>
               )}
+              {selectedDescription && (
+                <p className="graph-node-description">{selectedDescription}</p>
+              )}
               <dl className="detail-rows">
                 {typeSpecificRows(selected).map(([k, v]) => (
                   <div key={k}>
@@ -925,6 +965,36 @@ export default function GraphPage() {
                   </div>
                 ))}
               </dl>
+              {selectedConnections.length > 0 && (
+                <div className="graph-connected" style={{ marginTop: "var(--space-2)" }}>
+                  <h4>{t("graph.connections")}</h4>
+                  <ul className="inv-relationship-list" style={{ marginTop: "var(--space-1)" }}>
+                    {selectedConnections.map((c) => (
+                      <li key={c.key} className="inv-relationship">
+                        <div className="inv-relationship-head">
+                          <button
+                            type="button"
+                            className="btn btn-tertiary btn-small"
+                            title={`Select ${c.name}`}
+                            onClick={() => {
+                              const node = visible?.nodes.find(
+                                (n) => n.provenance_key === c.key,
+                              );
+                              if (node) {
+                                setSelected(node);
+                                setSelectedEdge(null);
+                              }
+                            }}
+                          >
+                            {c.rel}
+                          </button>
+                          <span>↔ {c.name}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {influence && (
                 <div className="influence">
                   <h4>{t("graph.influence")}</h4>
@@ -963,7 +1033,14 @@ export default function GraphPage() {
                     {t("graph.setFocus")}
                   </button>
                 )}
-              <div className="evidence-link-row" style={{ marginTop: "var(--space-3)" }}>
+              <div className="graph-sources" style={{ marginTop: "var(--space-3)" }}>
+                <GraphSourceChips
+                  docIds={selected.source_doc_ids}
+                  heading={t("graph.sources")}
+                  emptyMessage={t("graph.noSourcesNode")}
+                />
+              </div>
+              <div className="evidence-link-row" style={{ marginTop: "var(--space-2)" }}>
                 <EvidencePointerLink pointer={selected.evidence} />
               </div>
               <TechnicalDetails label="node key & raw data">
@@ -1013,7 +1090,14 @@ export default function GraphPage() {
                   </div>
                 ))}
               </dl>
-              <div className="evidence-link-row" style={{ marginTop: "var(--space-3)" }}>
+              <div className="graph-sources" style={{ marginTop: "var(--space-3)" }}>
+                <GraphSourceChips
+                  docIds={selectedEdge.source_doc_ids}
+                  heading={t("graph.sources")}
+                  emptyMessage={t("graph.noSourcesEdge")}
+                />
+              </div>
+              <div className="evidence-link-row" style={{ marginTop: "var(--space-2)" }}>
                 <EvidencePointerLink pointer={selectedEdge.evidence} />
               </div>
               <TechnicalDetails label="edge key & raw data">
