@@ -30,6 +30,7 @@ import {
 } from "../../api/client";
 import { Badge, Empty, ErrorState, Spinner } from "../Status";
 import { EvidencePointerLink } from "../EvidenceLink";
+import { GraphSourceChips } from "../graph/GraphSourceChips";
 import GraphViewControls from "../common/GraphViewControls";
 import { useGraphCanvas } from "../../lib/useGraphCanvas";
 
@@ -537,6 +538,12 @@ export default function PersonRelationshipNetwork({
               <strong>{selectedNode.case_ids.length}</strong>
             </span>
           </div>
+          <div className="graph-sources" style={{ marginTop: "var(--space-2)" }}>
+            <GraphSourceChips
+              docIds={selectedNode.source_doc_ids}
+              emptyMessage=""   /* counts already state "Supporting records" */
+            />
+          </div>
           <h5>RELATIONSHIPS</h5>
           <ul className="inv-relationship-list" style={{ marginTop: "var(--space-1)" }}>
             {(data?.edges ?? [])
@@ -602,6 +609,12 @@ export default function PersonRelationshipNetwork({
             </span>
           </div>
 
+          <div className="graph-sources" style={{ marginTop: "var(--space-2)" }}>
+            <GraphSourceChips
+              docIds={selectedEdge.source_doc_ids}
+              emptyMessage=""   /* item-level evidence pointers carry the empty state */
+            />
+          </div>
           <div style={{ marginTop: "var(--space-2)" }}>
             <span className="muted" style={{ marginRight: "var(--space-2)", fontSize: "var(--text-xs)" }}>
               Established by:

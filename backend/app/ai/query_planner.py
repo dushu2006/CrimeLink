@@ -75,6 +75,16 @@ class QueryPlan:
     #: :mod:`app.ai.temporal` when the question is anchored on an event.
     temporal_relation: str = ""
     temporal_anchor: str = ""
+    #: For INTENT_ENTITY_LOOKUP: which attribute is being asked for
+    #: (phone / vehicle / account / address / role / identity / fir_number /
+    #: case_status / incident_date / "").  Empty means "the question names an
+    #: entity but no specific attribute".
+    requested_attribute: str = ""
+    #: For INTENT_ENTITY_LOOKUP: which attribute is being asked for
+    #: (phone / vehicle / account / address / role / identity / fir_number /
+    #: case_status / incident_date / "").  Empty means "the question names an
+    #: entity but no specific attribute".
+    requested_attribute: str = ""
     confidence: float = 0.5
     # legacy compatibility fields
     answer_mode: str = "CASE_SUMMARY"
@@ -103,6 +113,22 @@ class QueryPlan:
 
 _INTENT_RULES: list[tuple[str, re.Pattern[str], int]] = [
     # Each rule is (intent, pattern, base_score).  Higher base_score wins ties.
+    # Direct entity-attribute lookups ("What is Rahul's phone number?",
+    # "What is the FIR number?", "Where does Ravi live?").  These must never
+    # degrade into a summary: the answer is one recorded value.  The base
+    # score sits above FINANCIAL/COMMUNICATION/LOCATION because their
+    # vocabularies (bank, call, where) appear inside attribute questions too.
+    (INTENT_ENTITY_LOOKUP, re.compile(
+        r"\b(phone\s+(?:number|no\.?)|mobile\s+(?:number|no\.?)|contact\s+(?:number|details?|info(?:rmation)?)|"
+        r"vehicle\s+(?:number|registration|plate)|registration\s+(?:number|no\.?)|"
+        r"account\s+(?:number|details?)|bank\s+account\s+(?:number|details?)|"
+        r"fir\s+(?:number|no\.?)|case\s+(?:status|number)|"
+        r"date\s+of\s+(?:the\s+)?incident|incident\s+(?:date|time)|"
+        r"where\s+does\s+\w+\s+(?:live|stay|reside)|address\s+of|"
+        r"(?:what|which)\s+(?:vehicle|car|bike|phone\s+number|mobile\s+number|account\s+number|address)|"
+        r"whose\s+(?:phone|mobile|vehicle|car|account)|"
+        r"(?:phone|mobile|address|bank\s+account)\s+of\s+[A-Z][a-zA-Z]{2,}"
+        r"|[A-Z][a-zA-Z]{2,}'s\s+(?:phone|mobile|vehicle|car|bike|account|address|bank))\b", re.I), 65),
     # Contradictions — very specific phrasing
     (INTENT_CONTRADICTION, re.compile(
         r"\b(contradict(?:ions?|ory)?|conflict(?:ing|s)?|inconsisten|discrepan|don't\s+match|doesn't\s+match|"
@@ -222,11 +248,28 @@ def _classify_intent(question: str) -> tuple[str, float]:
     return intent, confidence
 
 
+#: Possessive single names ("What is Ravi's phone number?") and "of <Name>"
+#: forms ("the phone number of Ravi") — unambiguous single-name references
+#: the two-word heuristic cannot catch.
+_POSSESSIVE_NAME_RE = re.compile(r"\b([A-Z][a-z]{2,})'s\b")
+_OF_NAME_RE = re.compile(r"\b(?:of|about|for)\s+([A-Z][a-z]{3,})(?![a-z'])")
+
+_NAME_STOPWORDS = {
+    "what", "who", "when", "where", "why", "how", "which", "this", "that",
+    "case", "incident", "fir", "phone", "number", "vehicle", "account",
+    "address", "role", "status", "date", "time", "file", "record",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
+    "capital", "president", "minister", "population", "currency",
+}
+
+
 def _extract_person_names(question: str, known_names: Iterable[str] = ()) -> list[str]:
     """Extract likely person names.
 
     First matches known names (if provided), then applies a conservative
-    two-capitalized-words heuristic for western/south-asian romanized names.
+    two-capitalized-words heuristic for western/south-asian romanized names,
+    then possessive / "of <Name>" single-name forms.
     """
     found: list[str] = []
     q = question or ""
@@ -262,7 +305,19 @@ def _extract_person_names(question: str, known_names: Iterable[str] = ()) -> lis
         if all(w.lower() in {"the", "a", "an", "what", "who", "this", "that", "these", "those"} for w in words):
             continue
         found.append(candidate)
-    return found[:5]
+    if found:
+        return found[:5]
+    # Single-name references: "What is Ravi's phone number?", "the phone
+    # number of Rahul" — unambiguous possessive/of forms.
+    singles: list[str] = []
+    for pattern in (_POSSESSIVE_NAME_RE, _OF_NAME_RE):
+        for match in pattern.finditer(q):
+            name = match.group(1)
+            if name.lower() in _NAME_STOPWORDS:
+                continue
+            if name not in singles:
+                singles.append(name)
+    return singles[:5]
 
 
 def _extract_exact_terms(question: str) -> list[str]:
@@ -381,6 +436,61 @@ def _classify_detail(question: str) -> str:
     return DETAIL_STANDARD
 
 
+#: Attribute vocabularies for INTENT_ENTITY_LOOKUP.  The value is the
+#: canonical attribute name consumed by the composer.
+_ATTRIBUTE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("phone", re.compile(
+        r"\b(phone\s+(?:number|no\.?)|mobile|contact\s+(?:number|details?|info(?:rmation)?)|"
+        r"phone|cell(?:phone)?)\b", re.I)),
+    ("vehicle", re.compile(
+        r"\b(vehicle|car|bike|motorcycle|scooter|registration\s+(?:number|no\.?)|plate\s+number)\b", re.I)),
+    ("account", re.compile(
+        r"\b(account\s+(?:number|details?)|bank\s+account|account)\b", re.I)),
+    ("address", re.compile(
+        r"\b(address|residence|where\s+does\s+\w+\s+(?:live|stay|reside)|lives?\s+(?:at|in))\b", re.I)),
+    ("fir_number", re.compile(r"\bfir\s+(?:number|no\.?)\b", re.I)),
+    ("case_status", re.compile(
+        r"\bcase\s+status\b|\bstatus\s+of\s+(?:this|the)\s+case\b", re.I)),
+    ("case_number", re.compile(r"\bcase\s+number\b", re.I)),
+    ("incident_date", re.compile(
+        r"\b(date\s+of\s+(?:the\s+)?incident|incident\s+(?:date|time)|"
+        r"when\s+did\s+(?:the\s+)?(?:incident|crime|event|it)\s+(?:happen|occur|take\s+place))\b", re.I)),
+]
+
+_IDENTITY_RE = re.compile(
+    r"^\s*who\s+(?:is|was|are|were)\s+(.+?)\s*\??\s*$", re.I,
+)
+_ROLE_RE = re.compile(r"\b(role|designation|position)\s+of\b|\bwhat\s+role\b", re.I)
+
+#: "Who is the investigating officer?" asks for a role *holder*, not for a
+#: named person's identity — those stay on the people-intent path.
+_GENERIC_IDENTITY_SUBJECTS = frozenset({
+    "the investigating officer", "investigating officer", "the io", "io",
+    "the complainant", "complainant", "the accused", "accused",
+    "the suspect", "the suspects", "suspects", "the victim", "victim",
+    "the witness", "witnesses", "the criminals", "criminals", "the people",
+    "people", "the persons", "persons", "the individuals",
+})
+#: Individual words that mark an identity question as asking about a role
+#: rather than a named person ("Who are the persons in this case?").
+_GENERIC_IDENTITY_WORDS = frozenset({
+    "complainant", "accused", "suspect", "suspects", "victim", "victims",
+    "witness", "witnesses", "criminal", "criminals", "officer", "people",
+    "person", "persons", "individuals", "involved", "case",
+})
+
+
+def _detect_requested_attribute(question: str) -> str:
+    """Which recorded attribute the question asks for ("" when none)."""
+    q = question or ""
+    for name, pattern in _ATTRIBUTE_PATTERNS:
+        if pattern.search(q):
+            return name
+    if _ROLE_RE.search(q):
+        return "role"
+    return ""
+
+
 def plan_query(
     question: str,
     *,
@@ -397,6 +507,33 @@ def plan_query(
     if not temporal_relation and intent == INTENT_TIMELINE:
         # A chronology question without an explicit anchor is still chronological.
         temporal_relation = "CHRONOLOGICAL"
+
+    # "Who is Rahul Kumar?" — a single named person's identity/role — is an
+    # attribute lookup, not a roster question.  "Who are the people
+    # involved?" stays INTENT_PEOPLE.  Single-word names ("Who is Rahul?")
+    # are caught by the identity shape even when the two-word heuristic
+    # could not extract a name.
+    identity_match = _IDENTITY_RE.match(question or "")
+    if intent in (INTENT_PEOPLE, INTENT_GENERAL) and identity_match:
+        subject = identity_match.group(1).strip()
+        subject_low = subject.lower()
+        generic_role_holder = (
+            subject_low in _GENERIC_IDENTITY_SUBJECTS
+            or any(
+                re.search(rf"\b{re.escape(word)}\b", subject_low)
+                for word in _GENERIC_IDENTITY_WORDS
+            )
+        )
+        if len(subject) >= 2 and not generic_role_holder:
+            intent = INTENT_ENTITY_LOOKUP
+            if not person_names and re.search(r"[A-Za-z]", subject):
+                person_names = [subject]
+
+    requested_attribute = (
+        _detect_requested_attribute(question) if intent == INTENT_ENTITY_LOOKUP else ""
+    )
+    if intent == INTENT_ENTITY_LOOKUP and not requested_attribute and identity_match:
+        requested_attribute = "identity"
 
     entity_types: list[str] = []
     relationship_types: list[str] = []
@@ -477,6 +614,7 @@ def plan_query(
         need_documents=need_documents,
         temporal_relation=temporal_relation,
         temporal_anchor=temporal_anchor,
+        requested_attribute=requested_attribute,
         confidence=confidence,
         answer_mode=answer_mode,
     )

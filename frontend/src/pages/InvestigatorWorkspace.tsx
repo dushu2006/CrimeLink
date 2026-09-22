@@ -231,17 +231,13 @@ export default function InvestigatorWorkspace() {
 
   const handleOpenEvidence = useCallback((ref?: string) => {
     if (!ref) return;
-    setEvidenceDrawerData({
-      id: ref,
-      title: ref,
-      type: "Communication record",
-      supports: selectedEdge ? `${selectedEdge.source} ↔ ${selectedEdge.target}` : "Person connection",
-      evidenceRole: "Supports relationship",
-      source: "Case record",
-      evidenceLevel: "FACT",
-    });
+    // Only the identifier is passed: the drawer re-fetches the real document
+    // type, provenance and classification from the backend.  Nothing about
+    // the record ("Communication record", "Case record", "FACT") is stated
+    // here — invented metadata would be a provenance fabrication.
+    setEvidenceDrawerData({ id: ref, title: ref });
     setShowEvidenceDrawer(true);
-  }, [selectedEdge]);
+  }, []);
 
   const handleGraphContextAction = useCallback((action: { id: string; node?: GraphNodeRow }) => {
     if (action.id === "focus" && action.node) {
@@ -291,7 +287,7 @@ export default function InvestigatorWorkspace() {
   /** Open evidence helper */
   const openDoc = useCallback((docId?: string | null) => {
     if (!docId) return;
-    setEvidenceDrawerData({ id: docId, title: docId, source: "Case record", evidenceLevel: "FACT" });
+    setEvidenceDrawerData({ id: docId, title: docId });
     setShowEvidenceDrawer(true);
   }, []);
 

@@ -78,6 +78,11 @@ class FindingResult(BaseModel):
     contradictions: list[str] = Field(default_factory=list)
     temporal_analysis: dict[str, Any] | None = None
     followup_questions: list[str] = Field(default_factory=list)
+    #: Rendering hints for a conversational UI: which source chips (if any)
+    #: provenance supports attaching to the answer.  Sources are attached
+    #: only when they materially back the answer — simple or general answers
+    #: carry an empty list, never an "empty sources" section.
+    presentation: dict[str, Any] | None = None
 
     @field_validator("evidence_refs")
     @classmethod

@@ -734,6 +734,30 @@ export const STRINGS: Record<string, Record<Lang, string>> = {
     te: "కనెక్షన్లు",
     ta: "தொடர்புகள்",
   },
+  "graph.sources": {
+    en: "Sources",
+    hi: "स्रोत",
+    te: "మూలాలు",
+    ta: "ஆதாரங்கள்",
+  },
+  "graph.noSources": {
+    en: "No source documents recorded for this selection.",
+    hi: "इस चयन के लिए कोई स्रोत दस्तावेज़ दर्ज नहीं।",
+    te: "ఈ ఎంపిక కోసం మూల పత్రాలేమీ నమోదు కాలేదు.",
+    ta: "இந்தத் தேர்வுக்கு மூல ஆவணங்கள் எதுவும் பதிவு செய்யப்படவில்லை.",
+  },
+  "graph.noSourcesNode": {
+    en: "No source documents recorded for this entity.",
+    hi: "इस इकाई के लिए कोई स्रोत दस्तावेज़ दर्ज नहीं।",
+    te: "ఈ ఎంటిటీ కోసం మూల పత్రాలేమీ నమోదు కాలేదు.",
+    ta: "இந்த நிகழ்வுக்கு மூல ஆவணங்கள் எதுவும் பதிவில்லை.",
+  },
+  "graph.noSourcesEdge": {
+    en: "No source documents recorded for this relationship.",
+    hi: "इस संबंध के लिए कोई स्रोत दस्तावेज़ दर्ज नहीं।",
+    te: "ఈ సంబంధం కోసం మూల పత్రాలేమీ నమోదు కాలేదు.",
+    ta: "இந்த உறவுக்கு மூல ஆவணங்கள் எதுவும் பதிவில்லை.",
+  },
   "graph.aka": {
     en: "aka",
     hi: "उर्फ़",

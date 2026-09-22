@@ -86,10 +86,18 @@ from app.ai.query_planner import (
     INTENT_COMMUNICATION,
     INTENT_CONTRADICTION,
     INTENT_CORROBORATION,
+    INTENT_ENTITY_LOOKUP,
     INTENT_EVIDENCE_INVENTORY,
     INTENT_FINANCIAL,
     INTENT_LOCATION,
     INTENT_TIMELINE,
+)
+from app.ai.conversation import (
+    conversation_for_prompt,
+    is_general_knowledge_question,
+    normalize_history,
+    resolve_followup,
+    _known_name_slots,
 )
 from app.ai.evidence_boundary import (
     build_evidence_boundary,
@@ -123,6 +131,8 @@ from app.ai.semantic import (
     search_case_index,
 )
 from app.ai.response_composer import (
+    attribute_answer,
+    build_presentation,
     build_prompt as build_intent_prompt,
     deterministic_fallback as intent_deterministic_fallback,
     fallback_to_finding,
@@ -700,6 +710,115 @@ class AIGateway:
             evidence_level="UNKNOWN",
             recommended_review=True,
             uncertainties=["No case-scoped evidence records were available to support a factual answer."],
+        )
+
+    async def _answer_general_knowledge(
+        self,
+        *,
+        question: str,
+        query_id: str,
+        case_id: str,
+        dataset_id: str | None,
+        timer: "StageTimer",
+        emit: EmitFn,
+        principal_id: str | None,
+        original_question: str,
+    ) -> AIResponse:
+        """Answer a non-case, world-knowledge question directly.
+
+        The conversational gate has already established that the question
+        carries no case vocabulary and names no case entity, so no case
+        retrieval runs at all: the model answers from its own knowledge, and
+        the response carries no case citations, no evidence counts and no
+        case summary.  When no provider is configured, the honest fallback is
+        a single sentence — never a case dump and never a confusing
+        "narrative unavailable" error.
+        """
+        async def send(event: dict[str, Any]) -> None:
+            if emit is not None:
+                maybe_awaitable = emit(event)
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
+
+        await send({
+            "type": "stage", "stage": "fast_path",
+            "message": "General question — answering directly",
+        })
+
+        answer_text: str | None = None
+        model_name: str | None = None
+        unavailable_reason: str | None = None
+        try:
+            result = await self.router.chat(
+                "classification",
+                system_prompt=(
+                    "You are the general-knowledge side of CrimeLink's case "
+                    "assistant. Answer the user's general question directly, "
+                    "accurately and briefly (one to three sentences). Do not "
+                    "mention cases, evidence, FIRs or this platform."
+                ),
+                user_prompt=question,
+                max_tokens=240,
+            )
+            if result.get("available") and str(result.get("content") or "").strip():
+                answer_text = str(result["content"]).strip()
+                model_name = result.get("model")
+            else:
+                unavailable_reason = str(result.get("reason") or "unavailable")
+        except Exception as exc:  # pragma: no cover - provider guard
+            unavailable_reason = str(exc)
+            log.warning("ai.general_knowledge_provider_failed", query_id=query_id, error=str(exc))
+
+        if answer_text is None:
+            answer_text = (
+                "That's a general question rather than something in this case's "
+                "records, and the AI model that would answer it isn't reachable "
+                "right now. Ask me anything about this case — people, records, "
+                "connections, or the timeline — and I'll answer from the case "
+                "data directly."
+            )
+
+        await send({"type": "delta", "text": answer_text})
+
+        finding = FindingResult(
+            finding_type="GENERAL_KNOWLEDGE",
+            summary=answer_text,
+            confidence=0.6 if model_name else 0.2,
+            evidence_level="UNKNOWN",
+            recommended_review=False,
+            presentation={"sources": [], "intent": "GENERAL_KNOWLEDGE"},
+        )
+        context: dict[str, Any] = {
+            "fast_path": True,
+            "answer_kind": "general_knowledge",
+            "nodes": 0,
+            "edges": 0,
+            "retrieved": False,
+            "dataset_id": dataset_id,
+            "case_id": case_id,
+            "timing": timer.report(),
+        }
+        await self._audit(
+            query_id=query_id, case_id=case_id,
+            user_id=principal_id, role="classification",
+            model=model_name, latency_ms=0, tokens=(None, None),
+            pmap_size=0, question=original_question,
+            output_hash=None, success=bool(model_name),
+            error=None if model_name else f"general_knowledge_offline: {unavailable_reason}",
+        )
+        log.info(
+            "ai.general_knowledge_answered",
+            query_id=query_id, case_id=case_id, model=bool(model_name),
+        )
+        return AIResponse(
+            query_id=query_id,
+            role="conversational",
+            model=model_name,
+            finding=finding,
+            latency_ms=max(1, timer.report()["total_ms"]),
+            pseudonymized=False,
+            available=True,
+            context=context,
         )
 
     async def _resolve_case_keys(self, case_id: str) -> tuple[str, str, set[str], Any]:
@@ -1448,6 +1567,115 @@ class AIGateway:
                 log.info("ai.no_dataset_answered", query_id=query_id, case_id=case_id)
                 return response
 
+            # --- 0c. Conversation layer: make the question standalone --------
+            # The chat is conversational: "What about Ravi?" only means
+            # something against the recent turns.  Resolve such fragments
+            # deterministically into a standalone question BEFORE planning
+            # and retrieval.  The conversation is context, never a key —
+            # the rewritten question still goes through the same case-scoped
+            # retrieval and citation validation as a fresh question.
+            history_turns = normalize_history(history)
+            early_case_nodes: list[dict] = []
+            case_entity_names: list[str] = []
+            if case_id and not target_key:
+                try:
+                    early_case_nodes = await self._get_all_case_nodes(case_id)
+                    for _n in early_case_nodes:
+                        _props = _n.get("properties") or {}
+                        _nm = _props.get("name") or _props.get("full_name")
+                        if _nm:
+                            case_entity_names.append(str(_nm))
+                except Exception as exc:  # pragma: no cover - defensive
+                    log.warning(
+                        "ai.case_nodes_prefetch_failed",
+                        query_id=query_id, error=str(exc),
+                    )
+
+            resolution = resolve_followup(
+                question, history_turns, known_names=case_entity_names
+            )
+            if resolution.needs_clarification and resolution.clarification:
+                # Two equally valid readings — ask one short question rather
+                # than fabricate an interpretation.
+                await send({
+                    "type": "stage", "stage": "fast_path",
+                    "message": "The follow-up is ambiguous — asking for clarification",
+                })
+                clarify_finding = FindingResult(
+                    finding_type="CLARIFICATION",
+                    summary=resolution.clarification,
+                    confidence=1.0,
+                    evidence_level="UNKNOWN",
+                    recommended_review=False,
+                    presentation={"sources": [], "intent": "CLARIFICATION"},
+                )
+                context = {
+                    "fast_path": True,
+                    "answer_kind": "clarification",
+                    "clarification": resolution.clarification,
+                    "nodes": 0,
+                    "edges": 0,
+                    "retrieved": False,
+                    "dataset_id": dataset_id,
+                    "case_id": case_id,
+                    "timing": timer.report(),
+                }
+                log.info(
+                    "ai.followup_clarification_asked",
+                    query_id=query_id, case_id=case_id, note=resolution.note,
+                )
+                return AIResponse(
+                    query_id=query_id,
+                    role="conversational",
+                    model=None,
+                    finding=clarify_finding,
+                    latency_ms=max(1, timer.report()["total_ms"]),
+                    pseudonymized=False,
+                    available=True,
+                    context=context,
+                )
+            effective_question = (resolution.standalone_question or question).strip() or question
+            followup_resolution_info = {
+                "is_followup": resolution.is_followup,
+                "kind": resolution.kind,
+                "rewritten": effective_question if effective_question != question else None,
+            }
+            if followup_resolution_info["rewritten"]:
+                log.info(
+                    "ai.followup_resolved",
+                    query_id=query_id,
+                    case_id=case_id,
+                    kind=resolution.kind,
+                    original_preview=question[:80],
+                    rewritten_preview=effective_question[:120],
+                )
+                await send({
+                    "type": "stage", "stage": "understanding",
+                    "message": "Resolving the follow-up against the conversation…",
+                })
+
+            # --- 0d. General-knowledge gate ----------------------------------
+            # "What is the capital of India?" is not a case question: no case
+            # retrieval, no evidence dump, no citations.  The gate is
+            # deliberately conservative — any case vocabulary, any case entity,
+            # or any follow-up shape keeps the question on the case pipeline.
+            matched_case_names = _known_name_slots(effective_question, case_entity_names)
+            if is_general_knowledge_question(
+                effective_question,
+                is_followup=resolution.is_followup,
+                matched_case_names=matched_case_names,
+            ):
+                return await self._answer_general_knowledge(
+                    question=effective_question,
+                    query_id=query_id,
+                    case_id=case_id,
+                    dataset_id=dataset_id,
+                    timer=timer,
+                    emit=emit,
+                    principal_id=principal_id or user_id,
+                    original_question=question,
+                )
+
             # 1. Investigation Retrieval Engine — Query Understanding + Entity Detection + Filtering
             # Build Order Step 2: deterministic retrieval before any vector RAG
             # -----------------------------------------------------------------
@@ -1457,8 +1685,8 @@ class AIGateway:
             # response composer and evidence boundary).
             query_plan: QueryPlan
             try:
-                query_understanding = understand_query(question)
-                query_plan = plan_query(question)
+                query_understanding = understand_query(effective_question)
+                query_plan = plan_query(effective_question)
                 timer.stage("query_understanding_ms")
             except Exception as exc:
                 log.warning("ai.query_understanding_failed", query_id=query_id, error=str(exc))
@@ -1473,22 +1701,27 @@ class AIGateway:
 
             if not target_key:
                 try:
-                    all_case_nodes = await self._get_all_case_nodes(case_id)
+                    all_case_nodes = early_case_nodes or await self._get_all_case_nodes(case_id)
                     # Resolve the new plan's person names against known nodes
                     try:
                         query_plan = resolve_plan_entities(query_plan, all_case_nodes)
                     except Exception as exc:
                         log.warning("ai.plan_entity_resolution_failed", query_id=query_id, error=str(exc))
 
-                    detected_entity_keys = self._detect_entities_in_question(question, all_case_nodes)
+                    detected_entity_keys = self._detect_entities_in_question(effective_question, all_case_nodes)
                     # Merge plan-resolved keys
                     plan_keys = [k for k in query_plan.resolved_entity_keys if k]
                     for pk in plan_keys:
                         if pk not in detected_entity_keys:
                             detected_entity_keys.append(pk)
 
-                    if not detected_entity_keys and history:
-                        resolved_history_keys = self._resolve_entities_from_history(question, history, all_case_nodes)
+                    normalized_history_dicts = [
+                        {"role": t.role, "content": t.content} for t in history_turns
+                    ]
+                    if not detected_entity_keys and normalized_history_dicts:
+                        resolved_history_keys = self._resolve_entities_from_history(
+                            effective_question, normalized_history_dicts, all_case_nodes
+                        )
                         if resolved_history_keys:
                             detected_entity_keys = resolved_history_keys
                             entity_detection_used = True
@@ -1501,6 +1734,32 @@ class AIGateway:
                         # Merge with query understanding entities
                         query_understanding.entities = detected_entity_keys
                         query_plan.entities = detected_entity_keys
+                        # Backfill person names the heuristic planner missed
+                        # (single first names like "Ravi"): the detected keys
+                        # are authoritative case entities, so their display
+                        # names drive attribute lookup and prompt scoping.
+                        if not query_plan.person_names:
+                            _detected_person_names = []
+                            _node_by_key = {
+                                str(n.get("provenance_key") or n.get("id")): n
+                                for n in all_case_nodes
+                            }
+                            for _key in detected_entity_keys:
+                                _node = _node_by_key.get(str(_key))
+                                if not _node:
+                                    continue
+                                if str(_node.get("label", "")).upper() != "PERSON":
+                                    continue
+                                _props = _node.get("properties") or {}
+                                _nm = _props.get("name") or _props.get("full_name")
+                                if _nm and str(_nm) not in _detected_person_names:
+                                    _detected_person_names.append(str(_nm))
+                            if _detected_person_names:
+                                query_plan.person_names = _detected_person_names
+                                query_plan.entity_labels = [
+                                    {"label": "PERSON", "name": n}
+                                    for n in _detected_person_names
+                                ]
                         log.info(
                             "ai.entity_detection",
                             query_id=query_id,
@@ -1557,7 +1816,7 @@ class AIGateway:
                         case_id, target_keys=effective_target_keys, depth=depth,
                         max_nodes=max_nodes_eff,
                         max_edges=max_edges_eff,
-                        question=question,
+                        question=effective_question,
                         dataset_id=dataset_id,
                     )
                 except TypeError:
@@ -1570,7 +1829,7 @@ class AIGateway:
                     nodes, edges = await self._retrieve_subgraph(
                         case_id, depth=depth,
                         target_key=None if wants_whole_case else target_key,
-                        question=question,
+                        question=effective_question,
                         dataset_id=dataset_id,
                         # Whole-case intents must not be collapsed to the
                         # person→person view: the financial and communication
@@ -1583,7 +1842,7 @@ class AIGateway:
                     try:
                         nodes, edges = await self._retrieve_subgraph(
                             case_id, depth=depth, target_key=target_key,
-                            question=question, dataset_id=dataset_id,
+                            question=effective_question, dataset_id=dataset_id,
                         )
                     except TypeError:
                         nodes, edges = await self._retrieve_subgraph(
@@ -1633,7 +1892,7 @@ class AIGateway:
                 # For backward compat, keep nodes/edges as filtered, but docs as ranked
                 # We still run old filter as fallback check for target_key join
                 old_filtered_docs, _, _ = self._filter_relevant_documents(
-                    question=question,
+                    question=effective_question,
                     nodes=compressed.nodes,
                     edges=compressed.edges,
                     documents=compressed.documents,
@@ -1657,7 +1916,7 @@ class AIGateway:
                 # Fallback to old filtering
                 try:
                     documents, docs_available, docs_included = self._filter_relevant_documents(
-                        question=question,
+                        question=effective_question,
                         nodes=nodes,
                         edges=edges,
                         documents=all_documents,
@@ -1684,7 +1943,7 @@ class AIGateway:
                 documents, semantic_diagnostics = await self._augment_with_semantic_retrieval(
                     query_id=query_id,
                     case_id=case_id,
-                    question=question,
+                    question=effective_question,
                     documents=documents,
                     all_documents=all_documents,
                     nodes=nodes,
@@ -1820,6 +2079,7 @@ class AIGateway:
                 "query_intent": query_understanding.intent,
                 # The planner's intent is the one that actually shaped the answer.
                 "plan_intent": query_plan.intent,
+                "followup_resolution": followup_resolution_info,
                 "response_style": query_plan.response_style,
                 "detail": query_plan.detail,
                 "answer_mode": query_plan.answer_mode,
@@ -2018,10 +2278,10 @@ class AIGateway:
             # both privacy modes: in strict mode the boundary is pseudonymized
             # before it becomes a prompt, so identity never reaches the model.
             use_new_pipeline = True
-            question_for_model = question
+            question_for_model = effective_question
             if pseudonymized:
                 question_for_model = self._rewrite_question_for_pseudonyms(
-                    question, nodes, pmap, target_key=target_key,
+                    effective_question, nodes, pmap, target_key=target_key,
                 )
 
             eff_nodes = (
@@ -2069,7 +2329,7 @@ class AIGateway:
                     try:
                         intelligence = await self._build_case_intelligence(
                             case_id=case_id,
-                            question=question,
+                            question=effective_question,
                             plan=query_plan,
                             documents=intelligence_documents,
                             nodes=nodes,
@@ -2120,7 +2380,10 @@ class AIGateway:
                         # Privacy boundary: identities become stable pseudonyms
                         # and the identity map stays inside CrimeLink.
                         boundary = pseudonymize_boundary(boundary, pmap, nodes=nodes)
-                    intent_system_prompt, context = build_intent_prompt(boundary)
+                    intent_system_prompt, context = build_intent_prompt(
+                        boundary,
+                        conversation=conversation_for_prompt(history_turns),
+                    )
                     reasoning_prompt = intent_system_prompt
                     # A conflict or a corroboration is a property of the case
                     # file, so the claims behind them may cite any record the
@@ -2265,6 +2528,69 @@ class AIGateway:
                         context=context_report,
                     )
 
+            # 4b. Direct attribute questions are answered deterministically.
+            # "What is Rahul's phone number?" must return the recorded number
+            # verbatim — a value a model re-typed is a hallucination risk, and
+            # a value already resolved costs no model call.  The answer comes
+            # from the same case-scoped boundary the model would have seen.
+            _local_boundary = locals().get("boundary") if use_new_pipeline else None
+            if query_plan.intent == INTENT_ENTITY_LOOKUP and _local_boundary is not None:
+                attr_payload = None
+                try:
+                    attr_payload = attribute_answer(_local_boundary, query_plan)
+                except Exception as exc:
+                    log.warning("ai.attribute_answer_failed", query_id=query_id, error=str(exc))
+                if attr_payload is not None:
+                    attribute_finding = fallback_to_finding(attr_payload)
+                    if pseudonymized:
+                        # The boundary the attribute came from is pseudonymized
+                        # in strict mode — restore real identities before the
+                        # answer reaches the authorized investigator.
+                        self._restore_identities_in_finding(attribute_finding, pmap, key_to_name)
+                    attribute_finding = enrich_finding_contract(
+                        attribute_finding,
+                        evidence_type_by_id={
+                            str(d.get("doc_id")): str(d.get("document_type") or "UNKNOWN")
+                            for d in (all_documents or documents)
+                            if d.get("doc_id")
+                        },
+                        answer_mode=query_plan.answer_mode,
+                    )
+                    attribute_finding.presentation = build_presentation(
+                        attribute_finding,
+                        intent=query_plan.intent,
+                        documents=documents,
+                        all_documents=all_documents,
+                    )
+                    context_report["timing"] = timer.report()
+                    context_report["deterministic_attribute_answer"] = True
+                    await send({
+                        "type": "stage", "stage": "fast_path",
+                        "message": "Answered directly from the case records",
+                    })
+                    if attribute_finding.direct_answer:
+                        await send({"type": "delta", "text": attribute_finding.direct_answer})
+                    await self._audit(
+                        query_id=query_id, case_id=case_id,
+                        user_id=principal_id or user_id, role="reasoning",
+                        model=None, latency_ms=0, tokens=(None, None),
+                        pmap_size=len(pmap), question=question,
+                        output_hash=None, success=True,
+                        error="deterministic_entity_lookup",
+                    )
+                    log.info(
+                        "ai.entity_lookup_answered",
+                        query_id=query_id, case_id=case_id,
+                        attribute=query_plan.requested_attribute,
+                    )
+                    return AIResponse(
+                        query_id=query_id, role="reasoning", model=None,
+                        finding=attribute_finding, pseudonymized=pseudonymized,
+                        available=True,
+                        latency_ms=max(1, context_report["timing"]["total_ms"]),
+                        context=context_report,
+                    )
+
             # 5. Ask reasoning model (streaming tokens to the UI when a
             #    progress channel exists)
             await send({
@@ -2275,11 +2601,11 @@ class AIGateway:
             async def on_delta(text: str) -> None:
                 await send({"type": "delta", "text": text})
 
-            reasoning_prompt = (
-                SYSTEM_PROMPT_REASONING_RAW
-                if self.settings.ai_allow_raw_pii
-                else SYSTEM_PROMPT_REASONING
-            )
+            # NOTE: reasoning_prompt is set by the pipeline above — the
+            # intent-composed system prompt when the new pipeline ran, the
+            # legacy template otherwise.  An earlier revision reassigned the
+            # fixed SYSTEM_PROMPT_REASONING here, which silently reverted
+            # every intent-driven answer to the old rigid section template.
             if emit is not None:
                 result = await self.router.chat_stream(
                     "investigation_reasoning",
@@ -2459,6 +2785,12 @@ class AIGateway:
                     deterministic_finding.missing_evidence = list(
                         context_report.get("evidence_inventory", {}).get("missing_types", [])
                     )
+                    deterministic_finding.presentation = build_presentation(
+                        deterministic_finding,
+                        intent=query_plan.intent,
+                        documents=documents,
+                        all_documents=all_documents,
+                    )
                     context_report["timing"] = timer.report()
                     context_report["deterministic_fallback"] = True
                     context_report["ai_explanation_available"] = False
@@ -2577,6 +2909,16 @@ class AIGateway:
                 # pseudonyms, and CrimeLink — which holds the mapping — restores
                 # the real identities for the authorized investigator.
                 self._restore_identities_in_finding(finding, pmap, key_to_name)
+            if finding:
+                # Conversational rendering hint: attach only the sources that
+                # materially back the answer (none for a withheld finding).
+                finding.presentation = build_presentation(
+                    finding,
+                    intent=query_plan.intent,
+                    documents=documents,
+                    all_documents=all_documents,
+                    allow_sources=finding.finding_type != "UNVERIFIED_AI_OUTPUT",
+                )
             context_report["timing"] = timer.report()
 
             # 7. Audit
