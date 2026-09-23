@@ -4,7 +4,10 @@ CrimeLink is configured as a Vercel Services deployment. The checked-in
 `vercel.json` keeps the existing two-service architecture:
 
 - `frontend/` is the Vite console (`npm ci`, `npm run build`, output `dist`).
-- `backend/` is the FastAPI service with entrypoint `app.main:app`.
+- `backend/` is the FastAPI service with entrypoint `main:app`
+  (`backend/main.py` re-exports the existing `app.main:app` ASGI instance for
+  Vercel's runtime, which resolves a service entrypoint file at the service
+  root).
 - `/api/*` is sent to the backend service.
 - Every other path is sent to the frontend service, whose `/index.html` rewrite
   provides the existing SPA deep-link fallback.
