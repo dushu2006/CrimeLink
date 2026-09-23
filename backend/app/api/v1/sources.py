@@ -169,6 +169,30 @@ def _raw_url(relative_path: str) -> str:
     )
 
 
+def _may_open_raw_sources(principal) -> bool:
+    """Who may receive a signed raw-source URL.
+
+    ``GET /sources/raw`` accepts either a signed link or an INVESTIGATOR/ADMIN
+    bearer token; ``/sources/preview`` and ``/sources/file`` are
+    INVESTIGATOR/ADMIN-only. Endpoints that a VIEWER may legitimately read
+    (the file manifest, provenance references) must therefore NOT hand out
+    signed links — a viewer could otherwise replay the signature and pull raw
+    restricted source bytes without ever passing a role check. The gate below
+    mirrors the ``require_roles("INVESTIGATOR", "ADMIN")`` used by the preview
+    endpoints exactly, so the frontend contract is unchanged for the roles
+    that could already open sources.
+    """
+    role = getattr(getattr(principal, "role", None), "value", None) or str(
+        getattr(principal, "role", "")
+    )
+    return str(role).upper() in {"INVESTIGATOR", "ADMIN"}
+
+
+def _raw_url_for(principal, relative_path: str) -> str | None:
+    """Signed raw URL for callers allowed to open sources, else ``None``."""
+    return _raw_url(relative_path) if _may_open_raw_sources(principal) else None
+
+
 def _get_object_store_for_sources():
     """Get object store — MinIO mandatory in production, fail loudly.
 
@@ -325,7 +349,10 @@ async def dataset_files(
                 "reference_count": counts.get(row.relative_path, 0),
                 "openable": openable,
                 "readable": openable,
-                "download_url": _raw_url(row.relative_path),
+                # Signed raw-source links are INVESTIGATOR/ADMIN material: a
+                # VIEWER sees the manifest (paths, status, hashes) but gets no
+                # replayable URL for the bytes behind it.
+                "download_url": _raw_url_for(principal, row.relative_path),
                 "storage": "minio" if exists_minio else ("filesystem" if exists_fs else "missing"),
             }
         )
@@ -1139,7 +1166,8 @@ async def get_reference(
         "status": status,
         "reason": reason,
         "preview_url": f"/api/v1/sources/preview?path={quote(ref.origin_file, safe='/')}",
-        "raw_url": _raw_url(ref.origin_file.split("#", 1)[0]),
+        # Signed raw bytes stay INVESTIGATOR/ADMIN-only (see _may_open_raw_sources).
+        "raw_url": _raw_url_for(principal, ref.origin_file.split("#", 1)[0]),
         "case": {"id": case.id, "case_number": case.case_number},
         "document": (
             {

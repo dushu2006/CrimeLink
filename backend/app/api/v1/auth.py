@@ -60,6 +60,18 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=10)
 
 
+class QuickLoginRequest(BaseModel):
+    """One of the three documented demo badges — no secret in the request.
+
+    The login screen offers Admin / Investigator / Viewer as one-click access.
+    The password material never ships in the frontend bundle: the server owns
+    the account table, authenticates the fixed badge set below through the
+    same token machinery as ``/auth/login``, and audits the sign-in.
+    """
+
+    badge_number: str = Field(min_length=2, max_length=64)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -222,6 +234,87 @@ async def login(
         ip_address=_client_ip(request),
         trace_id=get_trace_id(),
         details={"session_family": record.family_id},
+    )
+    return _token_response(user, create_access_token(user, settings), raw_refresh, settings)
+
+
+@router.post("/demo/login", response_model=TokenResponse)
+async def demo_login(
+    payload: QuickLoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> TokenResponse:
+    """Quick sign-in for the three documented demo roles (no client secret).
+
+    The login page offers Admin / Investigator / Viewer as one click. The
+    badge set is fixed server-side (``app.db.bootstrap.DEMO_USERS`` — the same
+    accounts the seed creates and the startup metadata repair guarantees);
+    passwords never appear in the frontend bundle. Everything else — rate
+    limiting, lockout, refresh-token rotation, audit trail — is the normal
+    sign-in machinery. Operators can switch the affordance off with
+    ``CRIMELINK_DEMO_QUICK_LOGIN_ENABLED=false`` without touching any account.
+    """
+    settings = get_settings()
+    enforce_rate_limit(request, identity=payload.badge_number, auth=True)
+
+    if not settings.demo_quick_login_enabled:
+        raise AuthenticationError(
+            "Quick sign-in is disabled on this deployment. Use badge number and password."
+        )
+
+    from app.db.bootstrap import DEMO_USERS
+
+    known = {str(spec["badge_number"]).strip().upper() for spec in DEMO_USERS}
+    badge = payload.badge_number.strip()
+    if badge.upper() not in known:
+        await audit_service.append_async(
+            session,
+            action_type=AuditAction.LOGIN_FAILED,
+            badge_number=payload.badge_number,
+            ip_address=_client_ip(request),
+            trace_id=get_trace_id(),
+            details={"reason": "quick_login_unknown_badge"},
+        )
+        await session.commit()
+        raise AuthenticationError("Invalid badge number or password.")
+
+    user = (
+        await session.execute(
+            select(User).where(func.upper(User.badge_number) == badge.upper())
+        )
+    ).scalar_one_or_none()
+
+    if user is None or not user.is_active:
+        await audit_service.append_async(
+            session,
+            action_type=AuditAction.LOGIN_FAILED,
+            badge_number=badge,
+            ip_address=_client_ip(request),
+            trace_id=get_trace_id(),
+            details={"reason": "quick_login_account_unavailable"},
+        )
+        await session.commit()
+        raise AuthenticationError(
+            "This demo account is not provisioned on this deployment."
+        )
+
+    if user.locked_until and user.locked_until > utcnow():
+        raise AccountLockedError()
+
+    user.failed_login_count = 0
+    user.locked_until = None
+    raw_refresh, record = await issue_refresh_token_async(
+        session, user, ip_address=_client_ip(request), settings=settings
+    )
+    await audit_service.append_async(
+        session,
+        action_type=AuditAction.LOGIN,
+        user_id=user.id,
+        badge_number=user.badge_number,
+        jurisdiction_id=user.jurisdiction_id,
+        ip_address=_client_ip(request),
+        trace_id=get_trace_id(),
+        details={"session_family": record.family_id, "method": "quick_login"},
     )
     return _token_response(user, create_access_token(user, settings), raw_refresh, settings)
 

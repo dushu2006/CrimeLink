@@ -87,6 +87,54 @@ export default function Layout() {
     return localStorage.getItem("crimelink_sidebar_collapsed") === "true";
   });
 
+  // --- Mobile drawer ------------------------------------------------------
+  // At ≤900px the sidebar is an overlay drawer (see the RESPONSIVE block in
+  // styles.css), not a layout column: it slides over the content on a
+  // backdrop, closes on navigation/Escape/backdrop tap, and the desktop
+  // collapse/resize affordances are disabled. The breakpoint must match the
+  // CSS media query exactly.
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches
+  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 900px)");
+    const onChange = (event: MediaQueryListEvent) => {
+      setIsMobile(event.matches);
+      if (!event.matches) setDrawerOpen(false);
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  // Navigating from the drawer closes it (the tap on a link is also a tap
+  // "outside" the drawer's purpose).
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
+
+  // Escape closes the drawer; the command palette keeps its own Escape.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawerOpen]);
+
+  // Lock background scroll while the drawer is open, restoring whatever was
+  // there before (other overlays may also manage body overflow).
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [drawerOpen]);
+
   const isResizingRef = useRef(false);
 
   const handleResizeStart = (e: React.MouseEvent) => {
@@ -115,10 +163,20 @@ export default function Layout() {
   };
 
   const toggleSidebar = () => {
+    if (isMobile) {
+      // On mobile the button operates the drawer; the collapsed-width state
+      // stays a desktop-only preference.
+      setDrawerOpen((open) => !open);
+      return;
+    }
     const next = !sidebarCollapsed;
     setSidebarCollapsed(next);
     localStorage.setItem("crimelink_sidebar_collapsed", String(next));
   };
+
+  // The drawer always shows the full navigation: the desktop collapse state
+  // must not shrink it into the 68px icon rail while it is sliding open.
+  const effectiveCollapsed = isMobile ? false : sidebarCollapsed;
 
   const userInitials = useMemo(() => {
     if (!session?.full_name) return "OF";
@@ -135,22 +193,32 @@ export default function Layout() {
   return (
     <div
       className="stitch-shell"
-      style={{ "--cl-sidebar-w": `${sidebarCollapsed ? 68 : sidebarWidth}px` } as React.CSSProperties}
+      style={{ "--cl-sidebar-w": `${effectiveCollapsed ? 68 : sidebarWidth}px` } as React.CSSProperties}
     >
-      <aside className={`stitch-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+      {isMobile && drawerOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`stitch-sidebar ${effectiveCollapsed ? "collapsed" : ""} ${isMobile && drawerOpen ? "open" : ""}`}
+        aria-label="Primary navigation"
+      >
         <div className="sidebar-brand">
           <div className="sidebar-brand-inner">
-            <CrimeLinkLogo className="sidebar-logo-svg" showSubtitle={!sidebarCollapsed} variant="light" />
+            <CrimeLinkLogo className="sidebar-logo-svg" showSubtitle={!effectiveCollapsed} variant="light" />
           </div>
           <button
             type="button"
             className="sidebar-collapse-btn"
-            onClick={toggleSidebar}
-            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={isMobile ? () => setDrawerOpen(false) : toggleSidebar}
+            title={isMobile ? "Close menu" : effectiveCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={isMobile ? "Close menu" : effectiveCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             <span className="material-symbols-outlined">
-              {sidebarCollapsed ? "chevron_right" : "menu_open"}
+              {isMobile ? "close" : effectiveCollapsed ? "chevron_right" : "menu_open"}
             </span>
           </button>
         </div>
@@ -296,11 +364,12 @@ export default function Layout() {
               type="button"
               className="header-sidebar-toggle-btn"
               onClick={toggleSidebar}
-              title={sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
-              aria-label="Toggle sidebar"
+              title={isMobile ? (drawerOpen ? "Close menu" : "Open menu") : sidebarCollapsed ? "Open sidebar" : "Collapse sidebar"}
+              aria-label={isMobile ? (drawerOpen ? "Close menu" : "Open menu") : "Toggle sidebar"}
+              aria-expanded={isMobile ? drawerOpen : !sidebarCollapsed}
             >
               <span className="material-symbols-outlined">
-                {sidebarCollapsed ? "menu" : "menu_open"}
+                {isMobile ? (drawerOpen ? "close" : "menu") : sidebarCollapsed ? "menu" : "menu_open"}
               </span>
             </button>
             <span className="crumb-section-text">{contextInfo.section}</span>

@@ -48,9 +48,54 @@ log = get_logger("crimelink.graph.neo4j")
 
 try:  # the driver is only importable where it is installed
     from neo4j import GraphDatabase, basic_auth  # type: ignore
+    from neo4j.exceptions import (  # type: ignore
+        ServiceUnavailable as Neo4jServiceUnavailable,
+        SessionExpired as Neo4jSessionExpired,
+    )
 except ImportError:  # pragma: no cover - production image always has it
     GraphDatabase = None  # type: ignore
     basic_auth = None  # type: ignore
+    Neo4jServiceUnavailable = None  # type: ignore
+    Neo4jSessionExpired = None  # type: ignore
+
+from app.errors import ServiceUnavailableError
+
+GRAPH_UNAVAILABLE_MESSAGE = (
+    "The graph database (Neo4j) is unreachable. Graph views are temporarily "
+    "unavailable; relational case data is unaffected."
+)
+
+
+def _is_connectivity_failure(exc: BaseException) -> bool:
+    """Whether *exc* means "the graph database could not be reached".
+
+    The driver signals an unresolvable/unreachable server inconsistently:
+    ``ServiceUnavailable``/``SessionExpired`` for TCP/TLS failures, but a plain
+    ``ValueError`` (``Cannot resolve address neo4j:7687``) when DNS itself
+    fails — which is exactly what a deployment still pointing at a
+    Docker-Compose hostname does on a serverless platform. Left unhandled,
+    that ValueError escapes as an opaque 500 (and on Vercel as
+    FUNCTION_INVOCATION_FAILED); classified here, every graph-touching request
+    answers with the documented 503 "graph unavailable" contract while case
+    metadata keeps working (docs/DEMO_ENVIRONMENT.md failure table).
+    """
+    if Neo4jServiceUnavailable is not None and isinstance(exc, Neo4jServiceUnavailable):
+        return True
+    if Neo4jSessionExpired is not None and isinstance(exc, Neo4jSessionExpired):
+        return True
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    if isinstance(exc, OSError) and not isinstance(exc, ValueError):
+        # socket.gaierror and friends surface as OSError subclasses.
+        return True
+    if isinstance(exc, ValueError):
+        message = str(exc).lower()
+        return "resolve" in message or "address" in message or "uri" in message
+    return False
+
+
+def _unavailable(exc: BaseException) -> ServiceUnavailableError:
+    return ServiceUnavailableError(f"{GRAPH_UNAVAILABLE_MESSAGE} ({type(exc).__name__})")
 
 
 # ---------------------------------------------------------------------------
@@ -217,10 +262,20 @@ class Neo4jGraphStore:
         if GraphDatabase is None:  # pragma: no cover
             raise RuntimeError("neo4j driver is not installed")
         self.settings = settings or get_settings()
-        self._driver = GraphDatabase.driver(
-            self.settings.neo4j_uri,
-            auth=basic_auth(self.settings.neo4j_user, self.settings.neo4j_password),
-        )
+        try:
+            self._driver = GraphDatabase.driver(
+                self.settings.neo4j_uri,
+                auth=basic_auth(self.settings.neo4j_user, self.settings.neo4j_password),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # A malformed URI (leftover placeholder, wrong scheme) raises
+            # ValueError here. Surface it as the same 503 contract as an
+            # unreachable server so a broken graph degrades the graph pages
+            # instead of every request that touches the container.
+            if _is_connectivity_failure(exc) or isinstance(exc, ValueError):
+                log.error("graph.neo4j.driver_invalid", error=str(exc))
+                raise _unavailable(exc) from exc
+            raise
         self._version = 0
         self._templates: dict[tuple[str, str], str] = {}
         self._expand_templates: dict[int, str] = {}
@@ -269,12 +324,22 @@ class Neo4jGraphStore:
         return self._templates[key]
 
     def _write(self, fn, *args, **kwargs):
-        with self._driver.session(database=self.settings.neo4j_database) as session:
-            return session.execute_write(fn, *args, **kwargs)
+        try:
+            with self._driver.session(database=self.settings.neo4j_database) as session:
+                return session.execute_write(fn, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if _is_connectivity_failure(exc):
+                raise _unavailable(exc) from exc
+            raise
 
     def _read(self, fn, *args, **kwargs):
-        with self._driver.session(database=self.settings.neo4j_database) as session:
-            return session.execute_read(fn, *args, **kwargs)
+        try:
+            with self._driver.session(database=self.settings.neo4j_database) as session:
+                return session.execute_read(fn, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if _is_connectivity_failure(exc):
+                raise _unavailable(exc) from exc
+            raise
 
     def ensure_constraints(self) -> None:
         def _apply(tx):
