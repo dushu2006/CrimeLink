@@ -46,8 +46,9 @@ async def lifespan(app: FastAPI):
     settings.ensure_directories()
 
     # Alembic owns the schema.  The application and the deploy hook run the very
-    # same upgrade (`python -m app.db.upgrade`, e.g. a Render pre-deploy command),
-    # so a container can never boot against a schema its code does not expect —
+    # same upgrade (`python -m app.db.upgrade`, for example from a deployment
+    # pre-deploy hook), so a container can never boot against a schema its code
+    # does not expect —
     # and a pre-Alembic database is adopted on first start.  Once the database is
     # at head this is a version-table read; it runs off the event loop because
     # Alembic is synchronous.

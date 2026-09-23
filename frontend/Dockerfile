@@ -20,8 +20,8 @@ RUN rm -f /etc/nginx/conf.d/default.conf
 # entrypoint renders /etc/nginx/templates/*.template through envsubst before
 # starting.  The default is the Compose/Kubernetes service name; a managed
 # platform overrides CRIMELINK_API_UPSTREAM with the API service's internal
-# address (see render.yaml) instead of the console needing to know a hostname
-# at build time.
+# address supplied by the deployment environment instead of the console needing
+# to know a hostname at build time.
 ENV CRIMELINK_API_UPSTREAM=api:8000
 COPY nginx.conf /etc/nginx/templates/crimelink.conf.template
 COPY --from=build /build/dist /usr/share/nginx/html

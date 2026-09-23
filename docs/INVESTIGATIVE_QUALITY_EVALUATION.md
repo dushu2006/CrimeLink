@@ -13,8 +13,7 @@ tuned to make a result look better.
 | `backend/evals/investigative_quality/question_bank.py` | 12 categories (A–L) of questions generated per case from that fact pack |
 | `backend/evals/investigative_quality/graders.py` | 15 independent checks; one machine-readable record per question |
 | `backend/evals/investigative_quality/runner.py` | Runs the suite in-process (deterministic path) or over HTTP against a live server |
-| `backend/evals/investigative_quality/results/latest.json` | Every question, its answer excerpt, citations, retrieved records, per-check verdict, per-check reason |
-| `backend/evals/investigative_quality/results/scorecard.md` | Human-readable scorecard for the same run |
+| `backend/evals/investigative_quality/results/` | Ignored local output directory containing the generated JSON run and Markdown scorecard |
 | `backend/tests/test_investigative_quality_eval.py` | 11 tests pinning the harness itself (grounding, absence, provenance, temporal, scope, coverage) |
 
 **Command**
@@ -139,7 +138,7 @@ Two notes on reading these numbers, because they bound what each one means:
 ## 6. Findings — the failure categories, with evidence
 
 Representative questions are quoted; every question's full answer, citations and per-check reasons
-are in `results/latest.json` and `results/scorecard.md`.
+are generated locally by the runner in the ignored `results/` directory.
 
 ### 6.1 Attribute questions fall back to a case overview (A, B, E, F, I, K — 35 alignment failures)
 
@@ -277,5 +276,5 @@ cd backend
 .venv/bin/python -m pytest tests/test_investigative_quality_eval.py -q
 ```
 
-The run is deterministic; repeating it yields the same verdicts. `results/latest.json` is the
-machine-readable form of the table in §3–§4.
+The run is deterministic; repeating it yields the same verdicts. The generated JSON in the
+ignored `results/` directory is the machine-readable form of the table in §3–§4.

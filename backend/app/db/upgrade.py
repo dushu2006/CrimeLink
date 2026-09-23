@@ -5,9 +5,9 @@ schema: ``create_all`` creates missing *tables* but never adds a column to a
 table that already exists, so a database seeded by an earlier build silently
 drifts (``cases.classification does not exist``) until a request fails.  Alembic
 owns the schema instead, and this module is the single entry point both the
-deployment hook and the application bootstrap use, so a Render pre-deploy, a
-Compose start and ``python run.py`` can never disagree about how the database
-gets to ``head``.
+deployment hook and the application bootstrap use, so a managed-platform
+pre-deploy, a Compose start and ``python run.py`` can never disagree about how
+the database gets to ``head``.
 
 Three database shapes are handled, in this order:
 
@@ -16,9 +16,10 @@ Three database shapes are handled, in this order:
     ``alembic upgrade head``.
 
 ``fresh``
-    An empty database (a new Render Postgres): ``alembic upgrade head`` builds
-    the entire schema.  Since revision ``9c0d1e2f003`` that includes the
-    dataset-management and job tables, the ``dataset_id`` columns, the widened
+    An empty database (a new managed PostgreSQL instance): ``alembic upgrade
+    head`` builds the entire schema.  Since revision ``9c0d1e2f003`` that
+    includes the dataset-management and job tables, the ``dataset_id`` columns,
+    the widened
     enum columns and the reconciled ``CHECK`` constraints, so ``head`` is the
     model schema — verified by ``scripts/check_schema_drift.py``.
 

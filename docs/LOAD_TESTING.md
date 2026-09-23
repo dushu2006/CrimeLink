@@ -77,8 +77,9 @@ export default function () {
 }
 ```
 
-Before Phase 1-3: p95 ~45-60s, timeouts 10-15% (DeepSeek)
-After Phase 1-3: p95 ~12-18s, timeouts <1% (measured in docs/AI_LATENCY_INVESTIGATION.md)
+No latency result is committed as a baseline. Run this scenario against the
+current deployment and record p95, p99, and timeout rate with the active provider
+and model configuration.
 
 ### 3. Auth Rate Limiting (Credential Stuffing Defense)
 
@@ -154,5 +155,6 @@ scrape_configs:
 ## Current State
 
 - No k6 scripts yet — this doc is the spec
-- Phase 1-3 latency numbers recorded in `docs/AI_LATENCY_INVESTIGATION.md`
 - CI does not run load tests (too heavy) — run manually before prod
+- Record results outside the source tree; generated load-test output is not a
+  deployment artifact

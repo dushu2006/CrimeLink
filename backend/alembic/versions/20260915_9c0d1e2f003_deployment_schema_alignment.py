@@ -10,8 +10,9 @@ Until now the relational schema was only ever *completed* by
 the migration chain lagged behind ``app/db/models.py``.  That is invisible on
 the embedded SQLite profile — SQLite ignores ``VARCHAR`` lengths and
 ``create_all`` happily adds new tables — but it breaks a clean PostgreSQL
-deployment, which is exactly what a fresh Render database is.  Measured against
-a database created by ``alembic upgrade head`` only, the drift was:
+deployment, which is exactly what a fresh managed PostgreSQL database is.
+Measured against a database created by ``alembic upgrade head`` only, the drift
+was:
 
 * six tables the models declare were never created by any migration —
   ``datasets``, ``dataset_files``, ``dataset_entities``,

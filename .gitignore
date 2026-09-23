@@ -24,9 +24,9 @@ parts/
 sdist/
 var/
 
-# Timestamped evaluation runs are regenerable; the latest run plus its scorecard
-# are the artefacts worth keeping in the tree.
-backend/evals/investigative_quality/results/eval_*.json
+# Evaluation outputs are regenerable and stay local to the evaluation run.
+backend/evals/investigative_quality/results/*.json
+backend/evals/investigative_quality/results/*.md
 wheels/
 share/python-wheels/
 *.egg-info/
