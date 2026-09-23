@@ -1421,6 +1421,17 @@ async def rebuild_graph(
     says and what the graph shows.
     """
     emit = progress or _noop
+    #: Captured *before* anything that can roll back.  ``Session.rollback()``
+    #: expires every ORM instance the session holds -- unlike ``commit()``,
+    #: which honours ``expire_on_commit=False`` -- so reading ``dataset.id``
+    #: afterwards is not a plain attribute read: it issues a refresh SELECT.
+    #: That SELECT is driven from ordinary async code, i.e. outside the
+    #: greenlet context SQLAlchemy establishes only for its own awaited calls,
+    #: so the async DBAPI shim raises ``MissingGreenlet`` ("await_only() called
+    #: outside greenlet_spawn").  The secondary error then replaced the real
+    #: one and the operator saw a greenlet failure instead of the graph
+    #: database's own message.  The id is a plain string; keep it.
+    dataset_id = dataset.id
     await registry.set_stage(session, dataset, "BUILDING_GRAPH", detail="Rebuilding graph")
     await session.commit()
     try:
@@ -1428,16 +1439,25 @@ async def rebuild_graph(
             session, dataset, progress=_scaled(emit, 0, 95)
         )
         dataset.graph_built_at = utcnow()
-        dataset.stats = await registry.dataset_stats(session, dataset.id)
+        dataset.stats = await registry.dataset_stats(session, dataset_id)
         await registry.set_stage(session, dataset, "READY", detail="Graph rebuilt")
         await session.commit()
         await emit("READY", 100, "Graph rebuilt")
         return stats
     except Exception as exc:  # noqa: BLE001
-        await session.rollback()
         message = f"{type(exc).__name__}: {exc}"
-        refreshed = await session.get(Dataset, dataset.id)
-        if refreshed is not None:
-            await registry.set_stage(session, refreshed, "FAILED", detail=message, error=message)
-            await session.commit()
+        # Recording the failure is best effort, and it must never speak in
+        # place of the failure it is recording: a rebuild that died because the
+        # graph database was unreachable is reported as exactly that, even if
+        # this write cannot reach the relational database either.
+        try:
+            await session.rollback()
+            refreshed = await session.get(Dataset, dataset_id)
+            if refreshed is not None:
+                await registry.set_stage(
+                    session, refreshed, "FAILED", detail=message, error=message
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("datasets.graph_rebuild_record_failed", dataset_id=dataset_id)
         raise
