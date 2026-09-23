@@ -225,6 +225,34 @@ def is_production_selection(profile: str | None, environment: str | None) -> boo
     return profile == "production" or environment == "production"
 
 
+#: Environment variables serverless platforms inject into every function.
+#: ``VERCEL``/``VERCEL_ENV`` are set by the Vercel Python runtime; the AWS
+#: variables cover Lambda-based hosts (Vercel functions run on Lambda).
+_SERVERLESS_VARS = (
+    "VERCEL",
+    "VERCEL_ENV",
+    "AWS_LAMBDA_FUNCTION_NAME",
+)
+
+
+def running_on_serverless() -> bool:
+    """Best-effort detection of "this process runs inside a serverless function".
+
+    Serverless changes two operational facts the application must respect:
+
+    * the only writable directory is ``/tmp`` — anything else may be a
+      read-only bundle;
+    * a failure during ASGI startup poisons the whole function instance: the
+      Vercel Python runtime only defines its request handler after a
+      successful lifespan, so a startup crash turns *every* later invocation
+      into ``500 FUNCTION_INVOCATION_FAILED`` instead of one failed boot.
+
+    Detection follows the same convention as :func:`running_in_container`: a
+    convenience, not a contract — nothing security-relevant depends on it.
+    """
+    return any(os.environ.get(name) for name in _SERVERLESS_VARS)
+
+
 def resolve_runtime_context(
     *,
     explicit: str | None = None,

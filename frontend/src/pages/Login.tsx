@@ -6,13 +6,16 @@ import { currentLang, setLang, t } from "../i18n";
 
 import CrimeLinkLogo from "../components/CrimeLinkLogo";
 
+// The three documented demo roles. Credentials deliberately live ONLY on the
+// server: the quick sign-in calls POST /auth/demo/login with the badge
+// number, and the backend authenticates its own demo account table through
+// the normal token machinery (rate limited, lockout-aware, audited).
 const DEMO_ACCOUNTS = [
   {
     id: "DEMO-ADMIN",
     label: "Admin",
     role: "ADMIN",
     badge: "DEMO-ADMIN",
-    password: "DemoAdmin@2026",
     description: "Complete operational view + administration",
   },
   {
@@ -20,7 +23,6 @@ const DEMO_ACCOUNTS = [
     label: "Investigator",
     role: "INVESTIGATOR",
     badge: "DEMO-INVESTIGATOR",
-    password: "DemoInvestigator@2026",
     description: "Investigate and review — CASE → PEOPLE → RELATIONSHIPS → EVIDENCE → ACTION",
   },
   {
@@ -28,7 +30,6 @@ const DEMO_ACCOUNTS = [
     label: "Viewer",
     role: "VIEWER",
     badge: "DEMO-VIEWER",
-    password: "DemoViewer@2026",
     description: "Read-only review + Investigator Activity",
   },
 ];
@@ -41,7 +42,7 @@ export default function Login() {
   const [fullName, setFullName] = useState("");
   const [station, setStation] = useState("");
   const [jurisdiction, setJurisdiction] = useState("SYN-DEV");
-  const { signIn, bootstrap, busy, error } = useAuth();
+  const { signIn, quickSignIn, bootstrap, busy, error } = useAuth();
   const navigate = useNavigate();
   const lang = currentLang();
 
@@ -79,13 +80,8 @@ export default function Login() {
   }
 
   async function handleDemoLogin(account: typeof DEMO_ACCOUNTS[0]) {
-    setBadge(account.badge);
-    setPassword(account.password);
-    // Auto-submit after populating
-    setTimeout(async () => {
-      const ok = await signIn(account.badge, account.password);
-      if (ok) navigate("/cases", { replace: true });
-    }, 100);
+    const ok = await quickSignIn(account.badge);
+    if (ok) navigate("/cases", { replace: true });
   }
 
   const setup = mode === "setup";

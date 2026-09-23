@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app import runtime
 from app.api.router import api_router
 from app.config import get_settings
 from app.db.session import dispose_engines, init_db
@@ -39,11 +40,61 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIST = BACKEND_ROOT.parent / "frontend" / "dist"
 
 
+def _ensure_writable_directories(settings) -> None:
+    """Create the workspace directories, surviving a read-only bundle root.
+
+    On serverless platforms only ``/tmp`` is writable; a deployment whose
+    ``CRIMELINK_DATA_DIR`` still points inside the (read-only) function bundle
+    would otherwise die during startup — which on Vercel poisons the whole
+    instance (``FUNCTION_INVOCATION_FAILED`` for every later request). When
+    directory creation fails on a serverless runtime, the transient workspace
+    roots are re-pointed under ``/tmp`` with a loud warning and startup
+    continues. Everywhere else the failure stays fatal, exactly as before.
+    """
+    try:
+        settings.ensure_directories()
+        return
+    except OSError as exc:
+        if not runtime.running_on_serverless():
+            raise
+        log.warning(
+            "startup.data_dir_unwritable",
+            error=str(exc),
+            data_dir=str(settings.data_dir),
+            detail="re-pointing transient workspace directories under /tmp",
+        )
+        fallback = Path("/tmp") / "crimelink-data"
+        object.__setattr__(settings, "data_dir", fallback)
+        object.__setattr__(settings, "object_store_dir", Path("/tmp") / "crimelink-objects")
+        object.__setattr__(
+            settings, "graph_snapshot_path", fallback / "graph.json"
+        )
+        settings.ensure_directories()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.environment != "dev")
-    settings.ensure_directories()
+    _ensure_writable_directories(settings)
+
+    # Serverless runtimes (Vercel) only define their request handler after a
+    # successful lifespan: a startup crash does not fail one boot, it turns
+    # EVERY later invocation on that instance into 500
+    # FUNCTION_INVOCATION_FAILED. A transient database/proxy blip during a cold
+    # start must therefore degrade the instance, not kill it — requests then
+    # answer with the normal error contract (and the next cold start retries
+    # the full initialization). Outside serverless the historical fail-fast
+    # behaviour is kept verbatim: a broken configuration should crash a
+    # container at boot, not mid-investigation.
+    tolerant = runtime.running_on_serverless()
+    degraded: list[str] = []
+
+    def _guard(step: str, exc: BaseException) -> None:
+        if not tolerant:
+            raise exc
+        degraded.append(f"{step}: {type(exc).__name__}: {exc}")
+        log.error("startup.step_failed_degraded", step=step, error=str(exc))
 
     # Alembic owns the schema.  The application and the deploy hook run the very
     # same upgrade (`python -m app.db.upgrade`, for example from a deployment
@@ -52,21 +103,60 @@ async def lifespan(app: FastAPI):
     # and a pre-Alembic database is adopted on first start.  Once the database is
     # at head this is a version-table read; it runs off the event loop because
     # Alembic is synchronous.
-    from app.db.upgrade import upgrade_database
-
-    await asyncio.to_thread(upgrade_database, settings)
-    await init_db()
-
-    from app.container import get_container
-
-    container = get_container()
-    # Touch these so a broken configuration fails at boot, not mid-investigation.
-    _ = container.object_store
-    _ = container.graph_store
     try:
-        container.broker.health()
+        from app.db.upgrade import upgrade_database
+
+        await asyncio.to_thread(upgrade_database, settings)
     except Exception as exc:  # noqa: BLE001
-        log.warning("startup.broker_unavailable", error=str(exc))
+        _guard("schema_upgrade", exc)
+
+    try:
+        await init_db()
+    except Exception as exc:  # noqa: BLE001
+        _guard("init_db", exc)
+
+    try:
+        from app.container import get_container
+
+        container = get_container()
+        # Touch these so a broken configuration is visible at boot. On a
+        # serverless runtime a broken adapter degrades only the features that
+        # need it (the documented failure table: "Neo4j unavailable — case
+        # metadata still available"), instead of taking the whole API down.
+        try:
+            _ = container.object_store
+        except Exception as exc:  # noqa: BLE001
+            _guard("object_store", exc)
+        try:
+            _ = container.graph_store
+        except Exception as exc:  # noqa: BLE001
+            _guard("graph_store", exc)
+        try:
+            container.broker.health()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("startup.broker_unavailable", error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        _guard("container", exc)
+
+    # Metadata-only self-repair: guarantee the documented contract that the
+    # three demo roles can sign in and that existing investigative data is
+    # resolvable through an active dataset. Never fatal, never touches data
+    # rows, idempotent — a healthy database pays two small queries.
+    try:
+        from app.datasets.repair import ensure_demo_users, repair_active_dataset
+        from app.db.session import async_session
+
+        async with async_session() as session:
+            repair = await repair_active_dataset(session)
+            created = await ensure_demo_users(session)
+        if repair.get("status") != "ok" or created:
+            log.warning(
+                "startup.metadata_repair",
+                repair=repair,
+                users_created=created,
+            )
+    except Exception as exc:  # noqa: BLE001
+        _guard("metadata_repair", exc)
 
     log.info(
         "crimelink.started",
@@ -76,15 +166,25 @@ async def lifespan(app: FastAPI):
         graph=settings.effective_graph_backend,
         store=settings.effective_object_store_backend,
         broker=settings.effective_broker_backend,
+        serverless=tolerant,
+        degraded=degraded or None,
     )
     yield
-    graph_store = get_container().graph_store
-    if hasattr(graph_store, "close"):
-        graph_store.close()
-    await dispose_engines()
-    from app.api.v1.jobs import dispose_auth_engine
+    try:
+        from app.container import get_container as _get_container
 
-    await dispose_auth_engine()
+        graph_store = _get_container().graph_store
+        if hasattr(graph_store, "close"):
+            graph_store.close()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("shutdown.graph_close_failed", error=str(exc))
+    try:
+        await dispose_engines()
+        from app.api.v1.jobs import dispose_auth_engine
+
+        await dispose_auth_engine()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("shutdown.dispose_failed", error=str(exc))
     log.info("crimelink.stopped")
 
 

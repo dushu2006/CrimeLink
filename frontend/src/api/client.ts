@@ -421,6 +421,29 @@ export async function login(badgeNumber: string, password: string): Promise<Sess
   return session;
 }
 
+/**
+ * One-click sign-in for the three documented demo roles.
+ *
+ * The backend owns the demo account table and issues real tokens for the
+ * fixed badge set — no password ever ships in the frontend bundle. Same
+ * session contract as {@link login}; fails with the normal ApiError contract
+ * when quick sign-in is disabled on the deployment or the account is missing.
+ */
+export async function demoLogin(badgeNumber: string): Promise<Session> {
+  const response = await raw("/auth/demo/login", {
+    method: "POST",
+    body: JSON.stringify({ badge_number: badgeNumber }),
+  }, null);
+  const payload = await parse(response);
+  if (!response.ok) {
+    const { code, message, fields } = messageFrom(payload, response.status);
+    throw new ApiError(response.status, code, message, fields);
+  }
+  const session = payload as Session;
+  tokenStore.save(session);
+  return session;
+}
+
 export async function logout(): Promise<void> {
   const refresh = tokenStore.refresh;
   if (refresh) {

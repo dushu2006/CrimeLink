@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
+from app import runtime
 from app.config import Settings, get_settings
 from app.logging import get_logger
 
@@ -126,15 +127,62 @@ def reset_engine_state(*, clear_forced_url: bool = False) -> None:
         _forced_url = None
 
 
+def _postgres_pool_sizes(settings: Settings) -> tuple[int, int]:
+    """Pool sizes for this process, capped down on serverless unless configured.
+
+    Every serverless instance holds its own pool, and the platform decides how
+    many instances run. The workstation defaults (10 + 20 connections per
+    instance) exhaust the connection budget of managed PostgreSQL providers
+    within a handful of concurrent instances — after which *new* cold starts
+    cannot connect at all and die during startup. When the operator has set
+    the pool variables explicitly (``CRIMELINK_POSTGRES_POOL_SIZE`` /
+    ``..._MAX_OVERFLOW``) that choice is respected verbatim; otherwise a
+    serverless process falls back to the small ``*_serverless_*`` defaults.
+    """
+    pool_size = settings.postgres_pool_size
+    max_overflow = settings.postgres_max_overflow
+    if runtime.running_on_serverless():
+        explicit = settings.model_fields_set
+        if "postgres_pool_size" not in explicit:
+            pool_size = settings.postgres_serverless_pool_size
+        if "postgres_max_overflow" not in explicit:
+            max_overflow = settings.postgres_serverless_max_overflow
+    return pool_size, max_overflow
+
+
+def _postgres_connect_args(settings: Settings, *, sync: bool) -> dict[str, Any]:
+    """Bounded connection/statement timeouts for the PostgreSQL drivers.
+
+    Serverless invocations are killed by the platform long before an unbounded
+    TCP handshake or a black-holed query would fail on its own; bounding both
+    turns "function timed out / crashed" into an ordinary, reportable database
+    error the API can answer with its normal error contract.
+    """
+    connect_timeout = max(1, int(settings.postgres_connect_timeout_s))
+    if sync:
+        # psycopg2 speaks libpq: connect_timeout is in seconds.
+        return {"connect_timeout": connect_timeout}
+    # asyncpg: `timeout` bounds connection establishment, `command_timeout`
+    # bounds every statement executed through the pool.
+    return {
+        "timeout": settings.postgres_connect_timeout_s,
+        "command_timeout": settings.postgres_command_timeout_s,
+    }
+
+
 def _async_engine_kwargs(url: str, settings: Settings) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
+        pool_size, max_overflow = _postgres_pool_sizes(settings)
         kwargs.update(
-            pool_size=settings.postgres_pool_size,
-            max_overflow=settings.postgres_max_overflow,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            connect_args=_postgres_connect_args(settings, sync=False),
         )
+        if settings.postgres_pool_recycle_s and settings.postgres_pool_recycle_s > 0:
+            kwargs["pool_recycle"] = settings.postgres_pool_recycle_s
     return kwargs
 
 
@@ -169,6 +217,18 @@ def get_sync_engine(settings: Settings | None = None) -> Any:
         kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
         if url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False}
+        else:
+            # Same bounds as the async engine: the sync engine runs Alembic,
+            # metrics refreshes and inline job work — a hung connect there
+            # must fail the request, not the serverless invocation.
+            pool_size, max_overflow = _postgres_pool_sizes(settings)
+            kwargs.update(
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+                connect_args=_postgres_connect_args(settings, sync=True),
+            )
+            if settings.postgres_pool_recycle_s and settings.postgres_pool_recycle_s > 0:
+                kwargs["pool_recycle"] = settings.postgres_pool_recycle_s
         _sync_engine = create_engine(url, **kwargs)
         if url.startswith("sqlite"):
             _configure_sqlite_pragmas(_sync_engine, sync=True)

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   completeSetup,
+  demoLogin as apiDemoLogin,
   login as apiLogin,
   logout as apiLogout,
   tokenStore,
@@ -14,6 +15,7 @@ interface AuthState {
   error: string | null;
   busy: boolean;
   signIn: (badge: string, password: string) => Promise<boolean>;
+  quickSignIn: (badge: string) => Promise<boolean>;
   bootstrap: (payload: SetupPayload) => Promise<boolean>;
   signOut: () => Promise<void>;
   hydrate: () => void;
@@ -27,6 +29,17 @@ export const useAuth = create<AuthState>((set) => ({
     set({ busy: true, error: null });
     try {
       const session = await apiLogin(badge, password);
+      set({ session, busy: false });
+      return true;
+    } catch (error) {
+      set({ busy: false, error: error instanceof Error ? error.message : "Sign-in failed." });
+      return false;
+    }
+  },
+  async quickSignIn(badge) {
+    set({ busy: true, error: null });
+    try {
+      const session = await apiDemoLogin(badge);
       set({ session, busy: false });
       return true;
     } catch (error) {

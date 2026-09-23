@@ -114,6 +114,27 @@ class Settings(BaseSettings):
     postgres_dsn_sync: str = runtime.DEFAULT_POSTGRES_DSN_SYNC
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
+    #: Seconds an asyncpg connection attempt may take before failing. Managed
+    #: PostgreSQL (Supabase etc.) occasionally stalls handshakes; without a
+    #: bound a serverless cold start hangs until the platform kills it.
+    postgres_connect_timeout_s: float = 10.0
+    #: Per-statement timeout for the async engine (asyncpg ``command_timeout``).
+    #: Generous enough for graph projection and import batches, bounded so a
+    #: black-holed connection can never pin a serverless invocation forever.
+    postgres_command_timeout_s: float = 120.0
+    #: Recycle pooled PostgreSQL connections after this many seconds. Warm
+    #: serverless instances outlive the idle-connection limit of managed
+    #: proxies (Supabase/Supavisor drop idle clients); recycling plus the
+    #: existing ``pool_pre_ping`` means a request never inherits a connection
+    #: the server already closed. ``-1`` disables recycling.
+    postgres_pool_recycle_s: int = 300
+    #: On serverless platforms each function instance holds its own pool and
+    #: the platform may run many instances; the defaults above (10+20 per
+    #: instance) exhaust managed-PostgreSQL connection limits. When the
+    #: operator has NOT set the pool variables explicitly, serverless runs use
+    #: these smaller values instead. Explicit configuration always wins.
+    postgres_serverless_pool_size: int = 2
+    postgres_serverless_max_overflow: int = 3
 
     neo4j_uri: str = runtime.DEFAULT_NEO4J_URI
     neo4j_user: str = "neo4j"
@@ -148,6 +169,13 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 30
     rate_limit_per_minute: int = 100
     rate_limit_auth_per_minute: int = 10
+    #: The login screen offers the three documented demo accounts (Admin /
+    #: Investigator / Viewer) as one-click quick sign-in so no password ever
+    #: ships inside the frontend bundle. The backend endpoint authenticates
+    #: the fixed demo badges through the normal token machinery and audits the
+    #: sign-in. Operators who do not want the hosted demo accounts exposed on
+    #: their deployment set ``CRIMELINK_DEMO_QUICK_LOGIN_ENABLED=false``.
+    demo_quick_login_enabled: bool = True
     cors_origins: str | list[str] = Field(default_factory=lambda: ["*"])
 
     # ------------------------------------------------------------------- nlp

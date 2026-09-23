@@ -57,10 +57,41 @@ HERO_CASE_ID = "case-d2-000"
 HERO_EVIDENCE_ID = "doc-d2-0000"
 HERO_INVESTIGATION_ID = "INV-0000"
 
+#: The three documented demo accounts (Admin / Investigator / Viewer). This is
+#: the canonical in-app definition: the verification pass below checks badge
+#: numbers and roles, ``app.datasets.repair`` (re)creates missing accounts from
+#: these specs, and the backend quick sign-in endpoint authenticates exactly
+#: these badges. Values match ``scripts/seed_demo_v2.py`` — the seed remains
+#: the authoritative creator; this table lets the running application keep the
+#: documented three-role contract without shipping passwords in the frontend.
 DEMO_USERS = [
-    {"badge_number": "DEMO-ADMIN", "role": Role.ADMIN},
-    {"badge_number": "DEMO-INVESTIGATOR", "role": Role.INVESTIGATOR},
-    {"badge_number": "DEMO-VIEWER", "role": Role.VIEWER},
+    {
+        "id": "demo-user-admin",
+        "badge_number": "DEMO-ADMIN",
+        "full_name": "Demo Admin",
+        "password": "DemoAdmin@2026",
+        "role": Role.ADMIN,
+        "station_id": "STATION-01",
+        "jurisdiction_id": "METRO-CENTRAL",
+    },
+    {
+        "id": "demo-user-inv",
+        "badge_number": "DEMO-INVESTIGATOR",
+        "full_name": "Inspector Priya Sharma",
+        "password": "DemoInvestigator@2026",
+        "role": Role.INVESTIGATOR,
+        "station_id": "STATION-01",
+        "jurisdiction_id": "METRO-CENTRAL",
+    },
+    {
+        "id": "demo-user-viewer",
+        "badge_number": "DEMO-VIEWER",
+        "full_name": "Demo Viewer",
+        "password": "DemoViewer@2026",
+        "role": Role.VIEWER,
+        "station_id": "STATION-01",
+        "jurisdiction_id": "METRO-CENTRAL",
+    },
 ]
 
 EXPECTED_CASE_NUMBERS = [f"CR-{2001 + i}" for i in range(20)]
