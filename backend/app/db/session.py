@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import Enum as SAEnum, create_engine, event, inspect, text
 from sqlalchemy.dialects import sqlite as sqlite_dialect
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -43,12 +44,38 @@ def _with_driver(url: str, driver: str) -> str:
     return url
 
 
+def _asyncpg_ssl_option(url: str) -> str:
+    """Carry a libpq ``sslmode`` query parameter over to asyncpg's ``ssl`` option.
+
+    Managed PostgreSQL providers hand out libpq-style DSNs
+    (``...?sslmode=require``).  psycopg2 speaks libpq, so the sync DSN works as
+    given, but SQLAlchemy forwards URL query parameters to ``asyncpg.connect()``
+    as keyword arguments and asyncpg spells this option ``ssl`` — with
+    ``sslmode`` the very first async connection fails with ``TypeError:
+    connect() got an unexpected keyword argument 'sslmode'`` (after the engine
+    object was already created, so the DSN otherwise looks fine).  asyncpg's
+    ``ssl`` accepts the same libpq mode names, so the value is kept as-is; an
+    explicit ``ssl`` already present in the URL wins.  URLs without ``sslmode``
+    are returned unchanged.
+    """
+    if "sslmode" not in url:
+        return url
+    parsed = make_url(url)
+    sslmode = parsed.query.get("sslmode")
+    if sslmode is None:
+        return url
+    parsed = parsed.difference_update_query(["sslmode"])
+    if "ssl" not in parsed.query:
+        parsed = parsed.update_query_dict({"ssl": sslmode})
+    return parsed.render_as_string(hide_password=False)
+
+
 def async_url(settings: Settings | None = None) -> str:
     settings = settings or get_settings()
     if _forced_url:
         return _forced_url
     if settings.effective_relational_backend == "postgres":
-        return _with_driver(settings.postgres_dsn, "asyncpg")
+        return _asyncpg_ssl_option(_with_driver(settings.postgres_dsn, "asyncpg"))
     return settings.sqlite_url
 
 
