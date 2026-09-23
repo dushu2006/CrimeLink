@@ -212,7 +212,11 @@ All 24 AI retrieval tests pass.
 
 ## Why Not Vector RAG Yet?
 
-Deterministic retrieval (graph + metadata + keyword) already gives 10x reduction in doc chars (150k→15k) and 83% reduction in tokens for entity-specific queries (47k→5.3k) with nodes 300→20 (from `docs/AI_LATENCY_INVESTIGATION.md`).
+Deterministic retrieval (graph + metadata + keyword) bounds the evidence package before
+an AI call, reducing the risk of sending an entire case when an entity-specific
+question can be answered from a smaller set. The configured node, edge, and document
+budgets remain the source of truth; measure current latency with the load-test plan
+rather than relying on a checked-in historical run.
 
 Adding vector DB before fixing deterministic retrieval would just add latency and cost without solving the core problem: giving LLM smallest sufficient evidence set.
 

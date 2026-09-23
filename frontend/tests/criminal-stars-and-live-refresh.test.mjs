@@ -90,8 +90,7 @@ test("network position never earns the star", () => {
   assert.equal(LABELS.isConfirmedCriminal(hub), false);
 });
 
-test("the star, the red fill and the amber ring all key off the same flag", () => {
-  assert.match(GRAPH, /ele\.data\("is_criminal"\) \? `★\\n\$\{name\}` : name/);
+test("the criminal visual treatment and API flag use the same source", () => {
   assert.match(
     GRAPH,
     /"background-color": \(ele: any\) =>\s*\n?\s*ele\.data\("is_criminal"\) \? CRIMINAL_FILL : PERSON_FILL/,

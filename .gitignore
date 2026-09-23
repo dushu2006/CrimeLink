@@ -24,9 +24,9 @@ parts/
 sdist/
 var/
 
-# Timestamped evaluation runs are regenerable; the latest run plus its scorecard
-# are the artefacts worth keeping in the tree.
-backend/evals/investigative_quality/results/eval_*.json
+# Evaluation outputs are regenerable and stay local to the evaluation run.
+backend/evals/investigative_quality/results/*.json
+backend/evals/investigative_quality/results/*.md
 wheels/
 share/python-wheels/
 *.egg-info/
@@ -159,15 +159,40 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
-# Environments
+# Environments and local secrets
 .env
+.env.local
+.env.*.local
 .envrc
-.venv
+.venv/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Dependency and generated output
+node_modules/
+frontend/node_modules/
+.vercel/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.pytest_cache/
+.coverage/
+coverage/
+dist/
+build/
+logs/
+*.log
+.tmp/
+tmp/
+
+# IDE and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 
 # Local external corpus data
 #backend/CrimeLink_Synthetic_Corpus_v1/

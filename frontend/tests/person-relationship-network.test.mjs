@@ -99,10 +99,9 @@ test("only PERSON nodes are pushed onto the person canvas", () => {
   assert.doesNotMatch(GRAPH, /label: String\(node\.label\)\.toUpperCase\(\)/);
 });
 
-test("the star is driven only by the authoritative criminal flag", () => {
-  // The star is part of the label, gated only on the authoritative flag (and on
-  // the zoom level, which hides *all* labels — never the star alone).
-  assert.match(GRAPH, /ele\.data\("is_criminal"\) \? `★\\n\$\{name\}` : name/);
+test("criminal visual treatment is driven only by the authoritative flag", () => {
+  // The fill and border are gated only on the authoritative flag; the zoom
+  // level hides all labels together and never changes criminal status.
   assert.match(GRAPH, /"background-color": \(ele: any\) =>\s*\n?\s*ele\.data\("is_criminal"\) \? CRIMINAL_FILL : PERSON_FILL/);
   assert.match(GRAPH, /CRIMINAL_BORDER = "#F59E0B"/);
   // Person nodes stay circles so the star can't be confused with a shape change.

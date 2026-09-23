@@ -114,4 +114,4 @@ and continue to show provenance links and human-review boundaries.
   PostgreSQL/Neo4j/MinIO installation has not been executed in this checkout.
 - The npm audit still reports moderate React Router v6 advisories whose fix is
   a breaking React Router v7 upgrade; the application remains on v6 to avoid an
-  untested framework migration. See the final verification report.
+  untested framework migration. Use the repository verification commands for the current validation state.
