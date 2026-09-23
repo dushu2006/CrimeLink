@@ -15,7 +15,6 @@ RUN apt-get update \
 
 WORKDIR /install
 COPY pyproject.toml ./
-COPY README.md ./
 # The package lives in ./app; ship it so a wheel build sees the real layout.
 COPY app ./app
 

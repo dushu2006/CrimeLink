@@ -2,7 +2,11 @@
 name = "crimelink-backend"
 version = "1.0.0"
 description = "CrimeLink — AI-assisted criminal network analysis platform (backend)"
-requires-python = ">=3.11"
+# Vercel supports Python 3.12–3.14, but the pinned asyncpg and psycopg2-binary
+# releases used by this application do not publish Python 3.14 wheels.  Keep
+# the application on the newest compatible Vercel runtime (3.13); local and
+# Docker development remain compatible with Python 3.11.
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
   "fastapi==0.115.6",
@@ -59,6 +63,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+# Explicit Vercel entrypoint for the backend service.  The same ASGI instance
+# is also exposed as app.main:app for uvicorn and local tooling.
+[tool.vercel]
+entrypoint = "app.main:app"
 
 
 [tool.pytest.ini_options]
