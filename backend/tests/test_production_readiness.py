@@ -30,7 +30,6 @@ from app.db.session import (
 )
 from app.errors import ServiceUnavailableError
 
-
 # --------------------------------------------------------------------------- #
 # 1. Serverless detection and PostgreSQL pool/timeout bounds
 # --------------------------------------------------------------------------- #
@@ -195,8 +194,8 @@ async def test_repair_noop_when_active_exists(db):
 
 
 async def test_repair_reactivates_ready_dataset(db):
-    from app.db.models import Dataset
     from app.datasets.repair import repair_active_dataset
+    from app.db.models import Dataset
 
     db.add(_dataset_row("pr-repair-ready"))
     await db.commit()
@@ -219,8 +218,8 @@ async def test_repair_prefers_demo_dataset(db):
 
 
 async def test_repair_never_promotes_non_ready_dataset(db):
-    from app.db.models import Dataset
     from app.datasets.repair import repair_active_dataset
+    from app.db.models import Dataset
 
     db.add(_dataset_row("pr-repair-failed", status="FAILED"))
     await db.commit()
@@ -232,9 +231,9 @@ async def test_repair_never_promotes_non_ready_dataset(db):
 
 async def test_repair_recovers_registration_from_data_rows(db):
     """Data rows prove the dataset exists; only the registration is created."""
+    from app.datasets.repair import repair_active_dataset
     from app.db.base import new_uuid
     from app.db.models import Dataset, DatasetFile
-    from app.datasets.repair import repair_active_dataset
 
     orphan = "pr-orphan-ds"
     db.add(
@@ -293,8 +292,8 @@ async def test_repair_reports_honestly_on_empty_database(db):
 async def test_ensure_demo_users_is_idempotent(db):
     from sqlalchemy import select
 
-    from app.db.models import User
     from app.datasets.repair import ensure_demo_users
+    from app.db.models import User
 
     first = await ensure_demo_users(db)
     await db.commit()
@@ -398,6 +397,7 @@ def manifest_dataset(container):
     autouse ``_no_leaked_cases`` cleanup removes the dataset and every
     dataset-owned row afterwards.
     """
+    from app.datasets.registry import set_only_active_sync
     from app.db.base import new_uuid
     from app.db.models import (
         Case,
@@ -407,7 +407,6 @@ def manifest_dataset(container):
         SourceReference,
     )
     from app.db.session import sync_session
-    from app.datasets.registry import set_only_active_sync
     from app.domain.enums import CaseStatus, DocumentType
     from app.domain.provenance import content_hash
 

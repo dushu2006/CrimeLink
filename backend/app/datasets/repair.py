@@ -35,6 +35,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.datasets import registry
 from app.db.base import new_uuid, utcnow
 from app.db.models import (
     Case,
@@ -45,7 +46,6 @@ from app.db.models import (
     User,
 )
 from app.logging import get_logger
-from app.datasets import registry
 
 log = get_logger("crimelink.datasets.repair")
 

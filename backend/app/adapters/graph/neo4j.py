@@ -41,6 +41,7 @@ from app.domain.enums import (
     is_document_artifact_node,
 )
 from app.domain.models import CaseGraphSnapshot, GraphEdge, GraphNode, MergeResult
+from app.errors import ServiceUnavailableError
 from app.logging import get_logger
 from app.ports.stores import GraphPayload
 
@@ -50,6 +51,8 @@ try:  # the driver is only importable where it is installed
     from neo4j import GraphDatabase, basic_auth  # type: ignore
     from neo4j.exceptions import (  # type: ignore
         ServiceUnavailable as Neo4jServiceUnavailable,
+    )
+    from neo4j.exceptions import (
         SessionExpired as Neo4jSessionExpired,
     )
 except ImportError:  # pragma: no cover - production image always has it
@@ -57,8 +60,6 @@ except ImportError:  # pragma: no cover - production image always has it
     basic_auth = None  # type: ignore
     Neo4jServiceUnavailable = None  # type: ignore
     Neo4jSessionExpired = None  # type: ignore
-
-from app.errors import ServiceUnavailableError
 
 GRAPH_UNAVAILABLE_MESSAGE = (
     "The graph database (Neo4j) is unreachable. Graph views are temporarily "
@@ -267,7 +268,7 @@ class Neo4jGraphStore:
                 self.settings.neo4j_uri,
                 auth=basic_auth(self.settings.neo4j_user, self.settings.neo4j_password),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # A malformed URI (leftover placeholder, wrong scheme) raises
             # ValueError here. Surface it as the same 503 contract as an
             # unreachable server so a broken graph degrades the graph pages
@@ -327,7 +328,7 @@ class Neo4jGraphStore:
         try:
             with self._driver.session(database=self.settings.neo4j_database) as session:
                 return session.execute_write(fn, *args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if _is_connectivity_failure(exc):
                 raise _unavailable(exc) from exc
             raise
@@ -336,7 +337,7 @@ class Neo4jGraphStore:
         try:
             with self._driver.session(database=self.settings.neo4j_database) as session:
                 return session.execute_read(fn, *args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if _is_connectivity_failure(exc):
                 raise _unavailable(exc) from exc
             raise
