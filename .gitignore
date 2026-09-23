@@ -161,6 +161,7 @@ activemq-data/
 
 # Environments and local secrets
 .env
+.env.vercel
 .env.local
 .env.*.local
 .envrc
