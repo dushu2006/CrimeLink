@@ -253,9 +253,16 @@ def build_edge(
         properties[key] = value
     if case_scope:
         properties["case_ids"] = case_scope
+    graph_key_by_canonical = graph_key_by_canonical or {}
     return GraphEdge(
-        source_key=node_key(dataset_id, relationship.source_canonical_id),
-        target_key=node_key(dataset_id, relationship.target_canonical_id),
+        source_key=graph_key_by_canonical.get(
+            relationship.source_canonical_id,
+            node_key(dataset_id, relationship.source_canonical_id),
+        ),
+        target_key=graph_key_by_canonical.get(
+            relationship.target_canonical_id,
+            node_key(dataset_id, relationship.target_canonical_id),
+        ),
         rel_type=rel_type,
         properties=properties,
         discriminator=relationship.edge_key,
