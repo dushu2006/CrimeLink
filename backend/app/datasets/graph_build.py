@@ -43,13 +43,30 @@ BATCH = 1000
 _VALID_LABELS = {e.value for e in EntityType} | {"Case"}
 
 
-def node_key(dataset_id: str, canonical_id: str) -> str:
-    """Provenance key of a projected node.
+HARD_GRAPH_ID_TYPES = {
+    sm.PHONE,
+    sm.VEHICLE,
+    sm.BANK_ACCOUNT,
+}
 
-    Namespaced by dataset so two datasets that both contain ``PERSON:PERSON_1``
-    can never collide into one node.
-    """
+
+def node_key(dataset_id: str, canonical_id: str) -> str:
+    """Provenance key of a projected node for non-identifier entities."""
     return f"ds:{dataset_id}:{canonical_id}"
+
+
+def entity_graph_key(dataset_id: str, entity: DatasetEntity) -> str:
+    """Return the graph identity for a canonical entity.
+
+    Hard identifiers are physically unique and therefore must collapse to one
+    graph node across source files. The canonical PostgreSQL layer may contain
+    multiple rows for the same identifier because each row retains its own
+    provenance. The graph is the resolved view, so Phone/Vehicle/BankAccount
+    identity is based on the normalized identifier within the dataset.
+    """
+    if entity.entity_type in HARD_GRAPH_ID_TYPES and entity.normalized_value:
+        return f"ds:{dataset_id}:{entity.entity_type}:{entity.normalized_value}"
+    return node_key(dataset_id, entity.canonical_id)
 
 
 def _graph_label(entity_type: str) -> str | None:
