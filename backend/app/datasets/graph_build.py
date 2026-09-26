@@ -381,6 +381,11 @@ async def project_dataset(
     )
 
     fallback_doc_id = f"dataset:{dataset_id}"
+    graph_key_by_canonical = {
+        entity.canonical_id: entity_graph_key(dataset_id, entity)
+        for entity in entity_rows
+        if entity.entity_type != sm.CASE and sm.is_graph_eligible(entity.entity_type)
+    }
     nodes_written = 0
     skipped_entities = 0
     batch: list[GraphNode] = []
