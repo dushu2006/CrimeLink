@@ -118,3 +118,20 @@ def test_stable_dataset_pseudonym_and_source_identifier_minimization():
     assert "Secret Name" not in repr(safe_nodes)
     assert "+919999999999" not in repr(safe_nodes)
     assert "real-document-id" not in repr(safe_edges)
+
+def test_hard_identifier_graph_identity_collapses_duplicate_vehicle_rows():
+    from app.datasets.graph_build import entity_graph_key
+
+    first = SimpleNamespace(
+        canonical_id="VEHICLE:row-001",
+        entity_type=sm.VEHICLE,
+        normalized_value="AP 39 JK 2086",
+    )
+    second = SimpleNamespace(
+        canonical_id="VEHICLE:row-987",
+        entity_type=sm.VEHICLE,
+        normalized_value="AP 39 JK 2086",
+    )
+    assert entity_graph_key("dataset-1", first) == entity_graph_key("dataset-1", second)
+    assert entity_graph_key("dataset-1", first) != entity_graph_key("dataset-2", first)
+
