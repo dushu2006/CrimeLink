@@ -275,7 +275,7 @@ async def import_dataset_from_path(
         # The source stays where it is: copying a multi-gigabyte corpus into
         # the workspace to read it once wastes disk for no benefit.
         copy_inputs=bool(payload.get("copy_inputs", False)),
-        jurisdiction_id=str(payload.get("jurisdiction_id") or DEFAULT_JURISDICTION),
+        jurisdiction_id=str(payload.get("jurisdiction_id") or principal.jurisdiction_id or DEFAULT_JURISDICTION),
         created_by=principal.id,
     )
 
