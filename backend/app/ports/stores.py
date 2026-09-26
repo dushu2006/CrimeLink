@@ -188,3 +188,17 @@ class ObjectStore(Protocol):
     def presigned_url(self, bucket: str, key: str, expires_s: int) -> str: ...
 
     def list_keys(self, bucket: str, prefix: str = "") -> list[str]: ...
+
+    def delete(self, bucket: str, key: str) -> bool:
+        """Remove one object, returning whether anything was deleted.
+
+        The only caller is dataset retirement: when a dataset is replaced, the
+        objects it owns are removed so a limited-capacity deployment actually
+        reclaims the space.  Write-once semantics are unchanged for live data —
+        ``put`` still refuses to replace different bytes — and the caller is
+        what guarantees a key no retained record references.  Implementations
+        that cannot delete (object lock, read-only mount) return ``False``
+        rather than raising: retirement must not fail because storage could not
+        be reclaimed.
+        """
+        ...

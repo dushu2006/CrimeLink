@@ -354,11 +354,25 @@ async def run_dataset_import(
     The dataset row is created by the pipeline, so the job's ``dataset_id`` is
     attached as soon as it exists -- otherwise a user watching the job would
     have no way to navigate to the dataset it is building.
+
+    Whatever happens, the temporary directories the HTTP upload was staged into
+    are removed on the way out: the pipeline has already copied them into the
+    dataset's own workspace, so on a limited-capacity deployment the duplicate
+    is pure waste — and a *failed* import must not leave its staged copy behind
+    either.  Operator-supplied paths are never touched (the cleanup only accepts
+    directories inside the staging root).
     """
+    from app.datasets import retirement
     from app.datasets.pipeline import run_import
 
-    async with async_session() as session:
-        report = await run_import(session, sources, options, progress=reporter)
+    try:
+        async with async_session() as session:
+            report = await run_import(session, sources, options, progress=reporter)
+    finally:
+        try:
+            retirement.cleanup_upload_staging(sources)
+        except Exception as exc:  # noqa: BLE001 - staging cleanup is best-effort
+            log.warning("dataset_jobs.staging_cleanup_failed", error=str(exc))
 
     if report.dataset_id:
         await reporter.attach_dataset(report.dataset_id)

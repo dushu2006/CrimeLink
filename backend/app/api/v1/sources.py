@@ -1129,7 +1129,11 @@ async def get_reference(
     if ref is None:
         raise NotFoundError("Source reference not found.")
 
-    case = await case_service.require_case(session, scope, ref.case_id)
+    # ``SourceReference.case_id`` is NULL when the row it points at could not
+    # be associated with a case (dataset-level resource, ambiguous document).
+    # Authorise the reference itself; report the case as absent rather than
+    # inventing one.
+    case = await case_service.require_case_for_record(session, scope, ref)
     document = await session.get(CaseDocument, ref.doc_id)
 
     root = await _dataset_root(session, ref.dataset_id)
@@ -1168,7 +1172,9 @@ async def get_reference(
         "preview_url": f"/api/v1/sources/preview?path={quote(ref.origin_file, safe='/')}",
         # Signed raw bytes stay INVESTIGATOR/ADMIN-only (see _may_open_raw_sources).
         "raw_url": _raw_url_for(principal, ref.origin_file.split("#", 1)[0]),
-        "case": {"id": case.id, "case_number": case.case_number},
+        "case": (
+            {"id": case.id, "case_number": case.case_number} if case is not None else None
+        ),
         "document": (
             {
                 "id": document.id,
@@ -1193,7 +1199,7 @@ async def document_references(
     document = await session.get(CaseDocument, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    await case_service.require_case(session, scope, document.case_id)
+    await case_service.require_case_for_record(session, scope, document)
 
     total = (
         await session.execute(
@@ -1238,7 +1244,11 @@ async def lookup_reference(
     allowed = []
     for ref in rows:
         try:
-            await case_service.require_case(session, scope, ref.case_id)
+            # Refuses references the caller may not see (another jurisdiction,
+            # a replaced dataset) and admits unassigned ones belonging to the
+            # active dataset -- a NULL case is a legitimate state, not a
+            # reason to hide the provenance row.
+            await case_service.require_case_for_record(session, scope, ref)
         except Exception:
             continue
         allowed.append(_reference_row(ref))

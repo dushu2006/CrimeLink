@@ -59,6 +59,15 @@ class MinioObjectStore:
             secure=self.settings.minio_secure,
             http_client=self._build_http_client(),
         )
+        # The buckets this store owns.  (This assignment used to sit below a
+        # ``return`` inside the static ``_build_http_client``, where it was
+        # unreachable: ``_buckets`` never existed, ``ensure_buckets`` raised
+        # AttributeError at boot, and MinIO buckets were never created.)
+        self._buckets = (
+            self.settings.minio_bucket_documents,
+            self.settings.minio_bucket_derived,
+            self.settings.minio_bucket_audit_anchor,
+        )
 
     @staticmethod
     def _build_http_client():
@@ -69,11 +78,6 @@ class MinioObjectStore:
             return urllib3.PoolManager(timeout=timeout, maxsize=4, retries=False)
         except ImportError:  # pragma: no cover - minio requires urllib3
             return None
-        self._buckets = (
-            self.settings.minio_bucket_documents,
-            self.settings.minio_bucket_derived,
-            self.settings.minio_bucket_audit_anchor,
-        )
 
     def ensure_buckets(self) -> None:
         for bucket in self._buckets:
@@ -142,6 +146,41 @@ class MinioObjectStore:
             return [obj.object_name for obj in self._client.list_objects(bucket, prefix=prefix)]
         except S3Error:  # pragma: no cover
             return []
+
+    def delete(self, bucket: str, key: str) -> bool:
+        """Remove one object; returns whether anything was actually deleted.
+
+        Object lock / bucket retention is the deployment's stronger control
+        (see the module docstring): when it is enabled S3 refuses this call and
+        the object stays, which is reported honestly rather than swallowed.
+        Scoped removal — never a key a retained record still references — is
+        the caller's job (``app/datasets/retirement.py``).
+        """
+        try:
+            existed = self.stat(bucket, key) is not None
+        except Exception:  # noqa: BLE001 - a probe failure must not block removal
+            existed = True
+        try:
+            self._client.remove_object(bucket, key)
+        except S3Error as exc:
+            code = str(getattr(exc, "code", "") or "")
+            if code in {"NoSuchKey", "NoSuchBucket"}:
+                return False
+            log.warning(
+                "object.delete_failed", bucket=bucket, key=key, error=self._describe_s3_error(exc)
+            )
+            return False
+        except Exception as exc:  # noqa: BLE001 - connectivity, credentials
+            log.warning(
+                "object.delete_failed",
+                bucket=bucket,
+                key=key,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+        if existed:
+            log.info("object.delete", bucket=bucket, key=key)
+        return existed
 
     # --------------------------------------------------------------- health
     def health_check(self) -> tuple[bool, str, str | None]:

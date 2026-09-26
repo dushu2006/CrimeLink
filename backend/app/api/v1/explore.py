@@ -166,7 +166,10 @@ async def document_detail(
     document = await session.get(CaseDocument, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    case = await case_service.require_case(session, scope, document.case_id)
+    # A dataset-level or ambiguous document has no case (``case_id IS NULL``):
+    # it is authorised against the active dataset and reported unassigned,
+    # never forced into a case it does not belong to.
+    case = await case_service.require_case_for_record(session, scope, document)
 
     reference_total = (
         await session.execute(
@@ -202,7 +205,11 @@ async def document_detail(
 
     return {
         "id": document.id,
-        "case": {"id": case.id, "case_number": case.case_number, "title": case.title},
+        "case": (
+            {"id": case.id, "case_number": case.case_number, "title": case.title}
+            if case is not None
+            else None
+        ),
         "filename": document.filename,
         "document_type": document.document_type.value,
         "ingestion_status": document.ingestion_status.value,
