@@ -257,6 +257,15 @@ async def run_import(
                 f"Reconciled {folded} placeholder records against identifiers "
                 "defined elsewhere in the dataset"
             )
+        # Converge repeated hard identifiers before they are persisted. A
+        # phone/vehicle/account value may arrive under different source IDs,
+        # but the graph ontology intentionally models each normalized value as
+        # one node under its uniqueness constraint.
+        hard_identifier_merges = normalizer.dedupe_hard_identifiers()
+        if hard_identifier_merges:
+            report.warnings.append(
+                f"Merged {hard_identifier_merges} duplicate hard identifiers by normalized value"
+            )
         # Entity resolution is complete before graph construction. Shared
         # identifiers are explicit derived leads, never implicit person links.
         shared_relationships = normalizer.result.derive_shared_identifier_relationships()
