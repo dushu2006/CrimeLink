@@ -466,6 +466,7 @@ async def project_dataset(
                     relationship,
                     fallback_doc_id=fallback_doc_id,
                     fallback_case_ids=derived_case_ids,
+                    graph_key_by_canonical=graph_key_by_canonical,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - domain validation raises several types
