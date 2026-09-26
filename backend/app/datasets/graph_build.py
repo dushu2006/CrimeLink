@@ -194,7 +194,7 @@ def build_node(
         properties["origin"] = provenance
     properties["search_text"] = _search_text(display, entity)
     return GraphNode(
-        provenance_key=node_key(dataset_id, entity.canonical_id),
+        provenance_key=entity_graph_key(dataset_id, entity),
         label=label,
         properties=properties,
     )
