@@ -135,3 +135,19 @@ def test_hard_identifier_graph_identity_collapses_duplicate_vehicle_rows():
     assert entity_graph_key("dataset-1", first) == entity_graph_key("dataset-1", second)
     assert entity_graph_key("dataset-1", first) != entity_graph_key("dataset-2", first)
 
+def test_hard_identifier_graph_identity_collapses_duplicate_account_rows():
+    from app.datasets.graph_build import entity_graph_key
+
+    first = SimpleNamespace(
+        canonical_id="ACCOUNT:row-001",
+        entity_type=sm.ACCOUNT,
+        normalized_value="001122334455",
+    )
+    second = SimpleNamespace(
+        canonical_id="ACCOUNT:row-987",
+        entity_type=sm.ACCOUNT,
+        normalized_value="001122334455",
+    )
+    assert entity_graph_key("dataset-1", first) == entity_graph_key("dataset-1", second)
+    assert entity_graph_key("dataset-1", first) != entity_graph_key("dataset-2", first)
+
