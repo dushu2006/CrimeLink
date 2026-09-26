@@ -41,6 +41,7 @@ from typing import Deque, Any
 
 from fastapi import Request
 
+from app import runtime
 from app.config import Settings, get_settings
 from app.errors import RateLimitError
 from app.security.net import client_ip
@@ -93,6 +94,38 @@ def _get_redis_client(settings: Settings) -> Any | None:
     # Embedded profile uses inline broker and has no Redis — fallback immediately
     if settings.effective_broker_backend == "inline":
         return None
+
+    # On Vercel / serverless the default compose hostname `redis` never resolves.
+    # If the URL still points at that hostname and we are on serverless, treat
+    # it as "no Redis configured" instead of hammering DNS and logging
+    # `rate_limit.redis_unavailable` on every request. This is the separate
+    # Redis misconfiguration noted in the incident: `redis://redis:6379/0` vs
+    # intended inline broker. Explicit managed Redis (rediss://...) still works.
+    if runtime.running_on_serverless():
+        redis_url = getattr(settings, "redis_url", "") or ""
+        # The compose hostname is exactly `redis` (or `redis:port`). Any URL
+        # containing `@redis:` or `//redis:` / `//redis/` is the default.
+        # We check the host part, not just substring, to avoid false positives.
+        try:
+            from urllib.parse import urlsplit
+
+            host = (urlsplit(redis_url).hostname or "").lower()
+            if host == "redis" or host == "":
+                # Empty host can happen with malformed URL; treat as no redis
+                # only on serverless where we already default broker to inline.
+                # If host is exactly the compose name, skip Redis attempt.
+                if host == "redis":
+                    return None
+        except Exception:
+            pass
+        # Also, if the broker was forced to celery but redis_url is still the
+        # default localhost/compose value and no explicit redis env was set,
+        # avoid the noisy failure on serverless.
+        if "redis_url" not in settings.model_fields_set:
+            # Not explicitly set by operator — likely the default
+            # `redis://localhost:6379/0` or `redis://redis:6379/0`
+            if "localhost" in redis_url or "redis:6379" in redis_url:
+                return None
 
     with _redis_client_lock:
         if _redis_client is not None:

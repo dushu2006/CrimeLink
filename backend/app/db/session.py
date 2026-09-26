@@ -7,8 +7,10 @@ Both point at the same database and the same models, and both are created from
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
@@ -23,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app import runtime
 from app.config import Settings, get_settings
@@ -35,6 +38,25 @@ _async_sessionmaker: async_sessionmaker[AsyncSession] | None = None
 _sync_engine: Any | None = None
 _sync_sessionmaker: sessionmaker[Session] | None = None
 _forced_url: str | None = None
+
+# Serverless concurrency guard: Layerbase `max_client_conn` is tiny (e.g. 10).
+# Even with NullPool (no idle), a burst of concurrent checkouts from one
+# Fluid instance can exceed the global limit. A small per-process semaphore
+# caps concurrent DB sessions so N instances * 3 still fits. The limit is
+# deliberately small (3) and only active on serverless; normal deployments
+# keep the full pool.
+_serverless_async_semaphore: asyncio.Semaphore | None = None
+_serverless_async_semaphore_lock = threading.Lock()
+_serverless_sync_semaphore = threading.Semaphore(3)
+
+
+def _get_serverless_async_semaphore() -> asyncio.Semaphore:
+    global _serverless_async_semaphore
+    if _serverless_async_semaphore is None:
+        with _serverless_async_semaphore_lock:
+            if _serverless_async_semaphore is None:
+                _serverless_async_semaphore = asyncio.Semaphore(3)
+    return _serverless_async_semaphore
 
 
 def _with_driver(url: str, driver: str) -> str:
@@ -175,14 +197,28 @@ def _async_engine_kwargs(url: str, settings: Settings) -> dict[str, Any]:
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        pool_size, max_overflow = _postgres_pool_sizes(settings)
-        kwargs.update(
-            pool_size=pool_size,
-            max_overflow=max_overflow,
-            connect_args=_postgres_connect_args(settings, sync=False),
-        )
-        if settings.postgres_pool_recycle_s and settings.postgres_pool_recycle_s > 0:
-            kwargs["pool_recycle"] = settings.postgres_pool_recycle_s
+        connect_args = _postgres_connect_args(settings, sync=False)
+        if runtime.running_on_serverless():
+            # Serverless (Vercel Fluid) keeps the process warm across many
+            # concurrent invocations. A pooled engine holds idle connections
+            # that count against the managed-PG `max_client_conn` budget even
+            # when no request is active. With 2+ engines (async + sync +
+            # dedicated auth) and N instances, even the small 2+3 default
+            # exhausts Layerbase. NullPool opens a connection per checkout and
+            # closes it immediately on return, so no idle slot is ever held.
+            kwargs.update(
+                poolclass=NullPool,
+                connect_args=connect_args,
+            )
+        else:
+            pool_size, max_overflow = _postgres_pool_sizes(settings)
+            kwargs.update(
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+                connect_args=connect_args,
+            )
+            if settings.postgres_pool_recycle_s and settings.postgres_pool_recycle_s > 0:
+                kwargs["pool_recycle"] = settings.postgres_pool_recycle_s
     return kwargs
 
 
@@ -221,14 +257,21 @@ def get_sync_engine(settings: Settings | None = None) -> Any:
             # Same bounds as the async engine: the sync engine runs Alembic,
             # metrics refreshes and inline job work — a hung connect there
             # must fail the request, not the serverless invocation.
-            pool_size, max_overflow = _postgres_pool_sizes(settings)
-            kwargs.update(
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                connect_args=_postgres_connect_args(settings, sync=True),
-            )
-            if settings.postgres_pool_recycle_s and settings.postgres_pool_recycle_s > 0:
-                kwargs["pool_recycle"] = settings.postgres_pool_recycle_s
+            connect_args = _postgres_connect_args(settings, sync=True)
+            if runtime.running_on_serverless():
+                kwargs.update(
+                    poolclass=NullPool,
+                    connect_args=connect_args,
+                )
+            else:
+                pool_size, max_overflow = _postgres_pool_sizes(settings)
+                kwargs.update(
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    connect_args=connect_args,
+                )
+                if settings.postgres_pool_recycle_s and settings.postgres_pool_recycle_s > 0:
+                    kwargs["pool_recycle"] = settings.postgres_pool_recycle_s
         _sync_engine = create_engine(url, **kwargs)
         if url.startswith("sqlite"):
             _configure_sqlite_pragmas(_sync_engine, sync=True)
@@ -280,15 +323,33 @@ def get_sync_sessionmaker() -> sessionmaker[Session]:
 
 @asynccontextmanager
 async def async_session() -> AsyncIterator[AsyncSession]:
-    session = get_async_sessionmaker()()
-    try:
-        yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
+    # On serverless, cap concurrent DB checkouts to avoid bursting past
+    # Layerbase `max_client_conn`. NullPool already avoids idle, but a burst
+    # of 20 concurrent requests would still try 20 connections at once.
+    # The semaphore queues extra requests inside the instance instead of
+    # failing them at the PG server.
+    if runtime.running_on_serverless():
+        sem = _get_serverless_async_semaphore()
+        async with sem:
+            session = get_async_sessionmaker()()
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+    else:
+        session = get_async_sessionmaker()()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
@@ -298,15 +359,28 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 @contextmanager
 def sync_session() -> Iterator[Session]:
-    session = get_sync_sessionmaker()()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    if runtime.running_on_serverless():
+        # Same guard for sync paths (inline jobs, metrics, etc.)
+        with _serverless_sync_semaphore:
+            session = get_sync_sessionmaker()()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
+    else:
+        session = get_sync_sessionmaker()()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
 
 async def init_db() -> None:
