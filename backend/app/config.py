@@ -154,8 +154,11 @@ class Settings(BaseSettings):
     #: instance) exhaust managed-PostgreSQL connection limits. When the
     #: operator has NOT set the pool variables explicitly, serverless runs use
     #: these smaller values instead. Explicit configuration always wins.
-    postgres_serverless_pool_size: int = 2
-    postgres_serverless_max_overflow: int = 3
+    #: Further, serverless now uses NullPool (no idle connections) to avoid
+    #: holding `max_client_conn` slots on Layerbase; these numbers are the
+    #: fallback when pooling is explicitly requested.
+    postgres_serverless_pool_size: int = 1
+    postgres_serverless_max_overflow: int = 0
 
     # Neo4j connection.  Each field accepts the ``CRIMELINK_``-prefixed name
     # (highest priority) **and** the bare names used by Neo4j's own tooling and
@@ -697,6 +700,15 @@ class Settings(BaseSettings):
 
     @property
     def effective_broker_backend(self) -> str:
+        # On Vercel / serverless the default production broker (celery+redis)
+        # is not available unless the operator explicitly provides Redis URLs.
+        # The judge-focused deployment is documented to use inline. If the
+        # operator did not set broker_backend explicitly, default to inline on
+        # serverless to avoid trying redis://redis:6379/0 and spamming
+        # `rate_limit.redis_unavailable` warnings. Explicit `celery` still wins.
+        if runtime.running_on_serverless():
+            if self.broker_backend == "auto" and "broker_backend" not in self.model_fields_set:
+                return "inline"
         return runtime.resolve_backend(
             self.broker_backend,
             profile=self.profile,
