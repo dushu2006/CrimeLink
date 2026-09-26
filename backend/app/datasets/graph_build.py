@@ -467,7 +467,9 @@ async def project_dataset(
         "relationships_considered": len(rel_rows),
         "entities_skipped": skipped_entities,
         "relationships_skipped": skipped_edges,
-        "cases": len(cases),
+        # Keep graph job reporting aligned with the real investigative cases;
+        # the synthetic ALL container is dataset plumbing, not a case.
+        "cases": sum(1 for case in cases if case.dataset_case_key != "ALL"),
         "graph": store.stats(),
     }
     log.info("graph_build.completed", dataset_id=dataset_id, **{
