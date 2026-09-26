@@ -484,6 +484,7 @@ class Neo4jGraphStore:
             )
             existing = {r["pk"]: r["props"] for r in rows}
             by_label: dict[str, list[dict[str, Any]]] = {}
+            seen_domain_keys: dict[tuple[str, str, str], str] = {}
             for node in batch:
                 props = {k: _safe(v) for k, v in node.properties.items()}
                 props.setdefault("confidence", 1.0)
@@ -497,6 +498,14 @@ class Neo4jGraphStore:
                 unique_prop = self._domain_unique_property(node.label)
                 unique_value = props.get(unique_prop) if unique_prop else None
                 if unique_prop and unique_value not in (None, ""):
+                    batch_key = (node.label, unique_prop, str(unique_value))
+                    prior_pk = seen_domain_keys.get(batch_key)
+                    if prior_pk is not None and prior_pk != node.provenance_key:
+                        raise ValueError(
+                            f"Duplicate {node.label} domain key {unique_prop}="
+                            f"{unique_value!r} in the same dataset projection"
+                        )
+                    seen_domain_keys[batch_key] = node.provenance_key
                     conflict = tx.run(
                         f"MATCH (n:{node.label} {{{unique_prop}: $value}}) "
                         "WHERE coalesce(n.provenance_key, '') <> $pk "
