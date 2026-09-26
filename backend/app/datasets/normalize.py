@@ -412,7 +412,19 @@ class Normalizer:
     ) -> str | None:
         """Create or refresh an entity, returning its canonical id."""
         key = (natural_id or "").strip()
-        if key:
+        normalized = str(normalized_value or "").strip()
+        # Hard identifiers are unique by their normalized value. Source
+        # exports often repeat the same phone number, vehicle plate, or
+        # account number under different row IDs. The graph ontology already
+        # enforces uniqueness for these identifiers, so canonicalization must
+        # converge them before persistence rather than letting Neo4j reject a
+        # later projection.
+        hard_identifier_types = {sm.PHONE, sm.VEHICLE, sm.ACCOUNT}
+        if entity_type in hard_identifier_types and normalized:
+            canonical = self._alias.get(f"{entity_type}|{normalized}")
+            if not canonical:
+                canonical = _derived_id(entity_type, normalized)
+        elif key:
             canonical = cid(entity_type, key)
         elif normalized_value:
             canonical = _derived_id(entity_type, normalized_value)
