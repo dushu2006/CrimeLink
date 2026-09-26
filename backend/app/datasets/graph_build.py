@@ -206,6 +206,7 @@ def build_edge(
     *,
     fallback_doc_id: str,
     fallback_case_ids: Sequence[str] = (),
+    graph_key_by_canonical: dict[str, str] | None = None,
 ) -> GraphEdge:
     rel_type = _graph_rel(relationship.rel_type)
     if rel_type is None:
