@@ -447,7 +447,7 @@ async def project_dataset(
             skipped_edges += 1
             continue
         if target_type == sm.CASE:
-            edge = _case_edge(dataset_id, relationship, case_by_key, fallback_doc_id)
+            edge = _case_edge(dataset_id, relationship, case_by_key, fallback_doc_id, graph_key_by_canonical)
             if edge is not None:
                 case_edges.append(edge)
             else:
