@@ -112,6 +112,19 @@ def _models_with(column: str) -> list:
     ]
 
 
+
+# --------------------------------------------------------------------------- #
+# Active dataset console contract
+# --------------------------------------------------------------------------- #
+
+async def test_dataset_listing_is_single_active_workspace(client, admin_headers, replaced):
+    listing = client.get("/api/v1/datasets", headers=admin_headers)
+    assert listing.status_code == 200, listing.text
+    items = listing.json()["items"]
+    assert len(items) == 1, items
+    assert items[0]["id"] == replaced["second"]
+    assert items[0]["is_active"] is True
+
 # --------------------------------------------------------------------------- #
 # Corpus building and state inspection
 # --------------------------------------------------------------------------- #
