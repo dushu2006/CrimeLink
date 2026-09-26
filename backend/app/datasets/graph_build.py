@@ -43,13 +43,30 @@ BATCH = 1000
 _VALID_LABELS = {e.value for e in EntityType} | {"Case"}
 
 
-def node_key(dataset_id: str, canonical_id: str) -> str:
-    """Provenance key of a projected node.
+HARD_GRAPH_ID_TYPES = {
+    sm.PHONE,
+    sm.VEHICLE,
+    sm.BANK_ACCOUNT,
+}
 
-    Namespaced by dataset so two datasets that both contain ``PERSON:PERSON_1``
-    can never collide into one node.
-    """
+
+def node_key(dataset_id: str, canonical_id: str) -> str:
+    """Provenance key of a projected node for non-identifier entities."""
     return f"ds:{dataset_id}:{canonical_id}"
+
+
+def entity_graph_key(dataset_id: str, entity: DatasetEntity) -> str:
+    """Return the graph identity for a canonical entity.
+
+    Hard identifiers are physically unique and therefore must collapse to one
+    graph node across source files. The canonical PostgreSQL layer may contain
+    multiple rows for the same identifier because each row retains its own
+    provenance. The graph is the resolved view, so Phone/Vehicle/BankAccount
+    identity is based on the normalized identifier within the dataset.
+    """
+    if entity.entity_type in HARD_GRAPH_ID_TYPES and entity.normalized_value:
+        return f"ds:{dataset_id}:{entity.entity_type}:{entity.normalized_value}"
+    return node_key(dataset_id, entity.canonical_id)
 
 
 def _graph_label(entity_type: str) -> str | None:
@@ -177,7 +194,7 @@ def build_node(
         properties["origin"] = provenance
     properties["search_text"] = _search_text(display, entity)
     return GraphNode(
-        provenance_key=node_key(dataset_id, entity.canonical_id),
+        provenance_key=entity_graph_key(dataset_id, entity),
         label=label,
         properties=properties,
     )
@@ -189,6 +206,7 @@ def build_edge(
     *,
     fallback_doc_id: str,
     fallback_case_ids: Sequence[str] = (),
+    graph_key_by_canonical: dict[str, str] | None = None,
 ) -> GraphEdge:
     rel_type = _graph_rel(relationship.rel_type)
     if rel_type is None:
@@ -235,9 +253,16 @@ def build_edge(
         properties[key] = value
     if case_scope:
         properties["case_ids"] = case_scope
+    graph_key_by_canonical = graph_key_by_canonical or {}
     return GraphEdge(
-        source_key=node_key(dataset_id, relationship.source_canonical_id),
-        target_key=node_key(dataset_id, relationship.target_canonical_id),
+        source_key=graph_key_by_canonical.get(
+            relationship.source_canonical_id,
+            node_key(dataset_id, relationship.source_canonical_id),
+        ),
+        target_key=graph_key_by_canonical.get(
+            relationship.target_canonical_id,
+            node_key(dataset_id, relationship.target_canonical_id),
+        ),
         rel_type=rel_type,
         properties=properties,
         discriminator=relationship.edge_key,
@@ -356,6 +381,11 @@ async def project_dataset(
     )
 
     fallback_doc_id = f"dataset:{dataset_id}"
+    graph_key_by_canonical = {
+        entity.canonical_id: entity_graph_key(dataset_id, entity)
+        for entity in entity_rows
+        if entity.entity_type != sm.CASE and sm.is_graph_eligible(entity.entity_type)
+    }
     nodes_written = 0
     skipped_entities = 0
     batch: list[GraphNode] = []
@@ -417,7 +447,7 @@ async def project_dataset(
             skipped_edges += 1
             continue
         if target_type == sm.CASE:
-            edge = _case_edge(dataset_id, relationship, case_by_key, fallback_doc_id)
+            edge = _case_edge(dataset_id, relationship, case_by_key, fallback_doc_id, graph_key_by_canonical)
             if edge is not None:
                 case_edges.append(edge)
             else:
@@ -436,6 +466,7 @@ async def project_dataset(
                     relationship,
                     fallback_doc_id=fallback_doc_id,
                     fallback_case_ids=derived_case_ids,
+                    graph_key_by_canonical=graph_key_by_canonical,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - domain validation raises several types
@@ -481,6 +512,7 @@ def _case_edge(
     relationship: DatasetRelationship,
     case_by_key: dict[str, Case],
     fallback_doc_id: str,
+    graph_key_by_canonical: dict[str, str] | None = None,
 ) -> GraphEdge | None:
     """Link an entity to a real ``Case`` node rather than a canonical stub."""
     case_key = relationship.target_canonical_id.split(":", 1)[-1]
@@ -500,7 +532,7 @@ def _case_edge(
     }
     try:
         return GraphEdge(
-            source_key=node_key(dataset_id, relationship.source_canonical_id),
+            source_key=(graph_key_by_canonical or {}).get(relationship.source_canonical_id, node_key(dataset_id, relationship.source_canonical_id)),
             target_key=f"case:{case.id}",
             rel_type="PARTICIPATED_IN",
             properties=properties,
