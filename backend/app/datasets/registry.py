@@ -369,7 +369,11 @@ async def dataset_stats(session: AsyncSession, dataset_id: str) -> dict[str, Any
             DatasetRelationship, DatasetRelationship.dataset_id == dataset_id
         ),
         "relationships_by_type": {str(k): int(v) for k, v in sorted(by_rel_rows)},
-        "cases": await count(Case, Case.dataset_id == dataset_id),
+        "cases": await count(
+            Case,
+            Case.dataset_id == dataset_id,
+            Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"),
+        ),
         "documents": await count(
             CaseDocument,
             CaseDocument.dataset_id == dataset_id,

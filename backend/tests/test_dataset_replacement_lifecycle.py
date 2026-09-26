@@ -543,14 +543,15 @@ async def test_a_rolled_back_activation_destroys_no_storage(
 # --------------------------------------------------------------------------- #
 
 
-async def test_a_dataset_that_was_never_active_is_not_a_replacement_casualty(
+async def test_a_successful_replacement_cleans_stale_inactive_candidates(
     tmp_path, container, store, bucket
 ):
-    """What a replacement retires is the dataset it *replaces*.
+    """A successful replacement leaves one operational corpus, not old candidates.
 
-    An imported-but-never-activated corpus is a candidate the operator may
-    still activate; deleting it as a side effect of switching the haystack
-    would destroy data nobody replaced.
+    The limited-capacity deployment deliberately cleans stale datasets left by
+    earlier uploads as part of the same dependency-ordered retirement path.
+    The registration row may remain for lifecycle history, but its corpus data,
+    graph projection, workspace and owned evidence bytes are reclaimed.
     """
     old_report = await _import(tmp_path / "old", "Old corpus", OLD_FOLDER, OLD_FILES)
     assert old_report.error is None, old_report.error
@@ -560,18 +561,22 @@ async def test_a_dataset_that_was_never_active_is_not_a_replacement_casualty(
     )
     assert candidate.error is None, candidate.error
     candidate_before = await _dataset_state(candidate.dataset_id)
+    assert candidate_before is not None
+    assert candidate_before["cases"] > 0
 
     new_report = await _import(tmp_path / "new", "New corpus", NEW_FOLDER, NEW_FILES)
     assert new_report.error is None, new_report.error
 
     candidate_after = await _dataset_state(candidate.dataset_id)
-    assert candidate_after is not None, "an inactive candidate was deleted"
-    assert candidate_after["cases"] == candidate_before["cases"]
-    assert candidate_after["documents"] == candidate_before["documents"]
+    assert candidate_after is not None, "the dataset registration is retained as lifecycle history"
     assert candidate_after["is_active"] is False
-    assert Path(candidate_after["root_path"]).is_dir() is True
-    assert store.exists(bucket, "CandidateCorpus/notes/new_brief.txt") is True
-    # The dataset that *was* active is still the one that got retired.
+    assert candidate_after["cases"] == 0
+    assert candidate_after["documents"] == 0
+    assert candidate_after["entities"] == 0
+    assert candidate_after["files"] == 0
+    assert Path(candidate_after["root_path"]).exists() is False
+    assert store.exists(bucket, "CandidateCorpus/notes/new_brief.txt") is False
+
     retired = await _dataset_state(old_report.dataset_id)
     assert retired is not None and retired["is_active"] is False
     assert retired["cases"] == 0 and retired["documents"] == 0
@@ -775,12 +780,8 @@ async def test_the_activate_endpoint_reports_what_was_retired(
         _wait_for_job(client, headers, job_id)
 
     listing = client.get("/api/v1/datasets", headers=headers).json()["items"]
-    assert [item["id"] for item in listing if item["is_active"]] == [new_report.dataset_id]
-    retired_row = next(
-        (item for item in listing if item["id"] == old_report.dataset_id), None
-    )
-    assert retired_row is not None, "the retired dataset stays visible as history"
-    assert retired_row["is_active"] is False
+    assert [item["id"] for item in listing] == [new_report.dataset_id]
+    assert all(item["is_active"] for item in listing)
 
     # Identity survived the replacement: the same badge still authenticates.
     assert _login(client, "ADM-0001", PASSWORD)

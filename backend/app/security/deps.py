@@ -23,7 +23,7 @@ from typing import Any
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.service import audit_service
@@ -147,6 +147,23 @@ class JurisdictionScope:
         if jurisdiction_id not in self.allowed_jurisdictions:
             raise JurisdictionDeniedError()
 
+    def has_global_case_scope(self) -> bool:
+        """Whether this principal may administer cases across jurisdictions.
+
+        Dataset imports are corpus-level administrative data. The privileged
+        roles already allowed to create/manage cases outside their own
+        jurisdiction must also be able to read the imported cases; otherwise
+        an imported corpus can report real cases in the Dataset console while
+        the Cases page hides every one of them behind the administrator's
+        home jurisdiction.
+        """
+        return self.principal.role in {
+            Role.ADMIN,
+            Role.STATION_ADMIN,
+            Role.DISTRICT_ADMIN,
+            Role.SUPER_ADMIN,
+        }
+
     def assert_case(self, case: Case | None) -> Case:
         """Raise ``JurisdictionDeniedError`` (surfaced as 404) if out of scope."""
         if case is None:
@@ -157,6 +174,8 @@ class JurisdictionScope:
             and self.expected_dataset_id != case.dataset_id
         ):
             raise NotFoundError("This case belongs to a dataset that is no longer active.")
+        if self.has_global_case_scope():
+            return case
         jurisdiction = (
             case.jurisdiction_id.value
             if hasattr(case.jurisdiction_id, "value")
@@ -170,6 +189,9 @@ class JurisdictionScope:
 
     def case_filter(self):
         """SQL expression restricting a case query to the caller's scope."""
+        if self.has_global_case_scope():
+            return true()
+
         jurisdiction = Case.jurisdiction_id
         return or_(
             jurisdiction.in_(sorted(self.allowed_jurisdictions)),

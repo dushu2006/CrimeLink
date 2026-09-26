@@ -148,3 +148,12 @@ class TestConstraintLabelScope:
         assert "plate_uniq" in constraint_text
         assert "acct_uniq" in constraint_text
         assert "case_uniq" in constraint_text
+
+class TestDomainConflictHandling:
+    """Legacy domain-key conflicts must be handled before MERGE hits a global constraint."""
+
+    def test_domain_unique_properties_are_explicit(self):
+        assert Neo4jGraphStore._domain_unique_property(EntityType.PHONE.value) == "number"
+        assert Neo4jGraphStore._domain_unique_property(EntityType.VEHICLE.value) == "plate"
+        assert Neo4jGraphStore._domain_unique_property(EntityType.BANK_ACCOUNT.value) == "number"
+        assert Neo4jGraphStore._domain_unique_property(EntityType.PERSON.value) is None

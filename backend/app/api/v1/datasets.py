@@ -82,9 +82,17 @@ async def list_datasets(
     principal: Principal = Depends(get_principal),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict:
-    """Every dataset the platform knows about, newest first."""
-    datasets = await registry.list_datasets(session, limit=limit)
-    return {"items": [registry.dataset_row(dataset) for dataset in datasets]}
+    """Return the single operational dataset.
+
+    Dataset registration rows may remain internally for audit/job history, but
+    the Administration console is intentionally a one-dataset workspace.
+    Retired/failed predecessors are not operational choices after a successful
+    replacement and therefore are not returned by this endpoint.
+    """
+    dataset = await registry.active_dataset(session)
+    if dataset is None:
+        return {"items": []}
+    return {"items": [registry.dataset_row(dataset, await registry.dataset_stats(session, dataset.id))]}
 
 
 @router.get("/active")

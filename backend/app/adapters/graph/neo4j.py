@@ -455,6 +455,21 @@ class Neo4jGraphStore:
         return self._version
 
     # ---------------------------------------------------------------- writes
+    @staticmethod
+    def _domain_unique_property(label: str) -> str | None:
+        """Return the legacy domain key guarded by a global uniqueness constraint.
+
+        The graph is now dataset-scoped through provenance_key and dataset_id.
+        Older projections, however, may contain an untagged Phone/Vehicle/
+        BankAccount node. Such a legacy node can block a clean replacement even
+        though it is no longer part of the active dataset.
+        """
+        return {
+            EntityType.PHONE.value: "number",
+            EntityType.VEHICLE.value: "plate",
+            EntityType.BANK_ACCOUNT.value: "number",
+        }.get(label)
+
     def upsert_nodes(self, nodes: Iterable[GraphNode]) -> int:
         batch = [node for node in nodes if not is_document_artifact_node(node)]
         if not batch:
@@ -469,14 +484,57 @@ class Neo4jGraphStore:
             )
             existing = {r["pk"]: r["props"] for r in rows}
             by_label: dict[str, list[dict[str, Any]]] = {}
+            seen_domain_keys: dict[tuple[str, str, str], str] = {}
             for node in batch:
                 props = {k: _safe(v) for k, v in node.properties.items()}
                 props.setdefault("confidence", 1.0)
                 props.setdefault("is_active", True)
-                # Artifact nodes never reach this method (they are filtered
-                # above), so a default of False can only ever record the truth —
-                # and it keeps the property key present for the projections.
                 props.setdefault("is_document_artifact", False)
+
+                # Neo4j's legacy domain constraints (phone_uniq, plate_uniq,
+                # acct_uniq) are global, while CrimeLink's graph projection is
+                # dataset-scoped. A retired/legacy node with the same domain key
+                # must not prevent a replacement from being projected.
+                unique_prop = self._domain_unique_property(node.label)
+                unique_value = props.get(unique_prop) if unique_prop else None
+                if unique_prop and unique_value not in (None, ""):
+                    batch_key = (node.label, unique_prop, str(unique_value))
+                    prior_pk = seen_domain_keys.get(batch_key)
+                    if prior_pk is not None and prior_pk != node.provenance_key:
+                        raise ValueError(
+                            f"Duplicate {node.label} domain key {unique_prop}="
+                            f"{unique_value!r} in the same dataset projection"
+                        )
+                    seen_domain_keys[batch_key] = node.provenance_key
+                    conflict = tx.run(
+                        f"MATCH (n:{node.label} {{{unique_prop}: $value}}) "
+                        "WHERE coalesce(n.provenance_key, '') <> $pk "
+                        "RETURN elementId(n) AS element_id, n.dataset_id AS dataset_id, "
+                        "n.provenance_key AS provenance_key LIMIT 1",
+                        value=unique_value,
+                        pk=node.provenance_key,
+                    ).single()
+                    if conflict is not None:
+                        conflict_dataset = conflict["dataset_id"]
+                        if conflict_dataset is None or conflict_dataset != props.get("dataset_id"):
+                            # This is either a legacy untagged projection or a
+                            # projection from a dataset that is no longer the
+                            # active corpus. It is safe to evict here because
+                            # the incoming node is the authoritative projection
+                            # for the current dataset and the graph is rebuilt
+                            # exclusively for that dataset.
+                            tx.run(
+                                "MATCH (n) WHERE elementId(n) = $element_id "
+                                "DETACH DELETE n",
+                                element_id=conflict["element_id"],
+                            )
+                        else:
+                            raise ValueError(
+                                f"Conflicting {node.label} domain key {unique_prop}="
+                                f"{unique_value!r} already belongs to another node in "
+                                f"dataset {conflict_dataset}"
+                            )
+
                 current = existing.get(node.provenance_key)
                 if current:
                     merged = _merge_node_props(dict(current), props)
