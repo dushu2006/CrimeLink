@@ -13,7 +13,9 @@ import { Badge, Empty, ErrorState, Spinner } from "../components/Status";
 
 export interface DocumentRow {
   id: string;
-  case_id: string;
+  // Nullable by design: dataset-level documents are attached to the dataset,
+  // not to a case (the pipeline never assigns them to the container case).
+  case_id: string | null;
   case_number: string | null;
   filename: string;
   document_type: string;

@@ -67,6 +67,82 @@ async def create_case(
     return case
 
 
+#: ``dataset_case_key`` of the synthetic dataset container case, created by
+#: ``datasets/pipeline.py::_materialise_cases`` for every import.
+_CONTAINER_CASE_KEY = "ALL"
+
+
+def _real_case_exclusions() -> list:
+    """Clauses that identify synthetic container cases.
+
+    The natural key is authoritative; the number patterns are belt and
+    braces for hand-edited rows from older imports.
+    """
+    return [
+        Case.dataset_case_key.is_(None) | (Case.dataset_case_key != _CONTAINER_CASE_KEY),
+        ~Case.case_number.like("%(unassigned records)%"),
+        ~Case.case_number.like("%(all records)%"),
+    ]
+
+
+async def _sole_container_case(session: AsyncSession) -> Case | None:
+    """The container case, visible only while it is the active dataset's sole case.
+
+    Every import materialises a container case so dataset-level records
+    (records no case claims) have a home — see
+    ``datasets/pipeline.py::_materialise_cases``.  It is not a real case:
+
+    * when the dataset also holds real cases, listings show those and the
+      container stays hidden (unchanged behaviour);
+    * when it is the **only** case of the active dataset, it must be visible:
+      otherwise a case-less corpus (a phone directory, a bank customer list —
+      the production "Upload of 577 files v1" dataset) surfaces as
+      "No cases available" / "Could not resolve the active case" while the
+      admin console happily lists the very case that is there.  That
+      divergence is the production inconsistency this method removes.
+
+    The container is dataset-level data: every role of the deployment shares
+    the same dataset, so the *dataset* boundary — not the jurisdiction
+    boundary, which applies to real cases — decides its visibility.  (In the
+    production deployment the import carries jurisdiction SYN-DEV while the
+    demo accounts sit in METRO-CENTRAL; jurisdiction-filtering the container
+    made the whole app empty for everyone while the admin tab showed the
+    case.)
+    """
+    real_count = (
+        await session.execute(
+            select(func.count(Case.id))
+            .where(await registry.visibility_filter(session, Case))
+            .where(*_real_case_exclusions())
+        )
+    ).scalar() or 0
+    if real_count:
+        return None
+    return (
+        await session.execute(
+            select(Case)
+            .where(await registry.visibility_filter(session, Case))
+            .where(Case.dataset_case_key == _CONTAINER_CASE_KEY)
+            .order_by(Case.created_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+
+async def is_sole_container_case(session: AsyncSession, case_id: str) -> bool:
+    """True when *case_id* is the container case of a case-less dataset.
+
+    The single predicate every case-scoped read (documents, graph, timeline)
+    uses to decide whether dataset-level rows (``case_id IS NULL``) belong to
+    that "case" — see :func:`_sole_container_case`.
+    """
+    case = await session.get(Case, case_id)
+    if case is None or case.dataset_case_key != _CONTAINER_CASE_KEY:
+        return False
+    sole = await _sole_container_case(session)
+    return sole is not None and sole.id == case.id
+
+
 async def list_cases(
     session: AsyncSession, scope: JurisdictionScope, *, limit: int = 100, offset: int = 0
 ) -> list[Case]:
@@ -77,6 +153,10 @@ async def list_cases(
     Without the second one, replacing a dataset left the previous import's
     cases listed here -- present in the table, absent from the graph, and
     restored by every browser refresh.
+
+    When the active dataset contains no real case, the synthetic container
+    case stands in (see :func:`_sole_container_case`), so a case-less corpus
+    resolves to a working dashboard instead of "No cases available".
     """
     active = await registry.active_dataset_id(session)
     if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
@@ -86,14 +166,17 @@ async def list_cases(
         select(Case)
         .where(scope.case_filter())
         .where(await registry.visibility_filter(session, Case))
-        .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
-        .where(~Case.case_number.like("%(unassigned records)%"))
-        .where(~Case.case_number.like("%(all records)%"))
+        .where(*_real_case_exclusions())
         .order_by(Case.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    return list((await session.execute(stmt)).scalars().all())
+    cases = list((await session.execute(stmt)).scalars().all())
+    if not cases:
+        container = await _sole_container_case(session)
+        if container is not None:
+            cases = [container]
+    return cases
 
 
 async def visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> set[str]:
@@ -115,12 +198,15 @@ async def visible_case_ids(session: AsyncSession, scope: JurisdictionScope) -> s
             select(Case.id)
             .where(scope.case_filter())
             .where(await registry.visibility_filter(session, Case))
-            .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
-            .where(~Case.case_number.like("%(unassigned records)%"))
-            .where(~Case.case_number.like("%(all records)%"))
+            .where(*_real_case_exclusions())
         )
     ).scalars()
-    return set(rows)
+    ids = set(rows)
+    if not ids:
+        container = await _sole_container_case(session)
+        if container is not None:
+            ids.add(container.id)
+    return ids
 
 
 async def active_dataset_case_ids(session: AsyncSession, scope: JurisdictionScope) -> set[str]:
@@ -145,12 +231,27 @@ async def active_dataset_case_ids(session: AsyncSession, scope: JurisdictionScop
             select(Case.id)
             .where(scope.case_filter())
             .where(await registry.strict_active_filter(session, Case))
-            .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
-            .where(~Case.case_number.like("%(unassigned records)%"))
-            .where(~Case.case_number.like("%(all records)%"))
+            .where(*_real_case_exclusions())
         )
     ).scalars()
-    return set(rows)
+    ids = set(rows)
+    # The container case is dataset-level scope, not a jurisdiction-scoped
+    # case: records no investigation claims belong to it (graph_build's
+    # container pass), and the master graph is the whole active dataset.
+    # Without this, a case-less dataset projects an empty master graph, and
+    # in mixed datasets the container's records vanish from it while
+    # /datasets/stats still counts them.
+    container_id = (
+        await session.execute(
+            select(Case.id)
+            .where(await registry.strict_active_filter(session, Case))
+            .where(Case.dataset_case_key == _CONTAINER_CASE_KEY)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if container_id is not None:
+        ids.add(container_id)
+    return ids
 
 
 async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref: str) -> Case:
@@ -194,8 +295,16 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
         if not candidates:
             raise NotFoundError("Case not found.")
         case = candidates[0]
-    if case.dataset_case_key == "ALL":
-        raise NotFoundError("The container case 'ALL' is not an investigative case.")
+    if case.dataset_case_key == _CONTAINER_CASE_KEY:
+        # The container case stands in for a case-less dataset (see
+        # :func:`_sole_container_case`).  While it is the active dataset's
+        # sole case it is reachable from any role of the deployment — it is
+        # dataset-level data, not a jurisdiction-scoped case — and refused
+        # every other way.
+        sole = await _sole_container_case(session)
+        if sole is None or sole.id != case.id or not registry.belongs_to_active(case, active):
+            raise NotFoundError("The container case 'ALL' is not an investigative case.")
+        return case
     case = scope.assert_case(case)
     if not registry.belongs_to_active(case, active):
         raise NotFoundError(
@@ -279,13 +388,31 @@ async def case_summaries(
         except Exception:  # pragma: no cover - graph unavailable
             person_counts, relationship_counts = {}, {}
 
+    # The case list must agree with the case pages: when the container case
+    # of a case-less dataset is shown, its "documents" are the dataset-level
+    # rows (case_id NULL) that ``document_service.list_documents`` serves for
+    # it — counted here with the identical predicate.
+    sole_container = await _sole_container_case(session)
+    dataset_level_docs = None
+    if sole_container is not None:
+        active = await registry.active_dataset_id(session)
+        if active is not None:
+            dataset_level_docs = (CaseDocument.dataset_id == active) | CaseDocument.dataset_id.is_(
+                None
+            )
+        else:
+            dataset_level_docs = CaseDocument.dataset_id.is_(None)
+
     out: list[dict] = []
     for case in cases:
+        doc_clause = CaseDocument.case_id == case.id
+        if case.id == (sole_container.id if sole_container is not None else None):
+            doc_clause = doc_clause | (CaseDocument.case_id.is_(None) & dataset_level_docs)
         documents = int(
             (
                 await session.execute(
                     select(func.count(CaseDocument.id)).where(
-                        CaseDocument.case_id == case.id, CaseDocument.is_deleted.is_(False)
+                        doc_clause, CaseDocument.is_deleted.is_(False)
                     )
                 )
             ).scalar()

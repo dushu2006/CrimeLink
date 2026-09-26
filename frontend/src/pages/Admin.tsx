@@ -5,6 +5,7 @@ import { useAuth } from "../store/auth";
 import { t } from "../i18n";
 import { Badge, Empty, Spinner } from "../components/Status";
 import DatasetConsole from "../components/DatasetConsole";
+import { DASH, fixed, shortId } from "../lib/nullSafe";
 
 interface AuditRow {
   id: string;
@@ -59,12 +60,19 @@ interface DatabaseSummary {
   infra: Record<string, unknown>;
 }
 
+interface HealthComponent {
+  ok: boolean;
+  backend: string;
+  detail: string;
+  error: string | null;
+}
+
 interface HealthInfo {
-  postgres: { ok: boolean; backend: string };
-  graph: { ok: boolean; backend: string };
-  redis: { ok: boolean; backend: string };
-  object_store: { ok: boolean; backend: string };
-  broker: { ok: boolean };
+  postgres: HealthComponent;
+  graph: HealthComponent;
+  redis: HealthComponent;
+  object_store: HealthComponent;
+  broker: HealthComponent;
   nlp_provider: string;
   ai_roles: Record<string, boolean>;
 }
@@ -72,7 +80,7 @@ interface HealthInfo {
 interface NodeRow { id: string; label: string; name: string; confidence: number; case_count: number; source_doc_count: number; is_active: boolean }
 interface EdgeRow { key: string; source: string; target: string; rel_type: string; confidence: number; source_doc_count: number }
 interface CaseRow { id: string; case_number: string; title: string; jurisdiction_id: string; status: string; created_at?: string }
-interface DocRow { id: string; case_id: string; document_type: string; filename: string; size_bytes: number; ingestion_status: string; quarantined: boolean; created_at?: string }
+interface DocRow { id: string; case_id: string | null; document_type: string; filename: string; size_bytes: number; ingestion_status: string; quarantined: boolean; created_at?: string }
 
 interface QuarantineRecordRow {
   id: string;
@@ -419,14 +427,34 @@ export default function Admin() {
       {tab === "health" && (health ? (
         <section className="panel">
           <h2>System health</h2>
+          <p className="hint">
+            Every component is probed live with a bounded timeout; a failure is
+            classified as config, auth or connectivity and the sanitized reason
+            is shown below the status.
+          </p>
           <table className="table">
             <thead><tr><th>Component</th><th>Status</th><th>Detail</th></tr></thead>
             <tbody>
-              <tr><td>PostgreSQL</td><td>{health.postgres.ok ? "OK" : "FAIL"}</td><td>{health.postgres.backend}</td></tr>
-              <tr><td>Graph</td><td>{health.graph.ok ? "OK" : "FAIL"}</td><td>{health.graph.backend}</td></tr>
-              <tr><td>Redis/broker</td><td>{health.redis.ok ? "OK" : "FAIL"}</td><td>{health.redis.backend}</td></tr>
-              <tr><td>Object store</td><td>{health.object_store.ok ? "OK" : "FAIL"}</td><td>{health.object_store.backend}</td></tr>
-              <tr><td>Job broker</td><td>{health.broker.ok ? "OK" : "FAIL"}</td><td></td></tr>
+              {([
+                ["PostgreSQL", health.postgres],
+                ["Graph", health.graph],
+                ["Redis", health.redis],
+                ["Object store", health.object_store],
+                ["Job broker", health.broker],
+              ] as const).map(([name, comp]) => (
+                <tr key={name}>
+                  <td>{name}</td>
+                  <td>{comp.ok ? "OK" : "FAIL"}</td>
+                  <td>
+                    <code>{comp.backend}</code> · {comp.detail}
+                    {comp.error && (
+                      <div className="hint" role="alert">
+                        {comp.error}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
               <tr><td>NLP provider</td><td>OK</td><td>{health.nlp_provider}</td></tr>
             </tbody>
           </table>
@@ -467,7 +495,7 @@ export default function Admin() {
               <thead><tr><th>File</th><th>Type</th><th>Case</th><th>Status</th><th>Size</th></tr></thead>
               <tbody>
                 {docs.map((d) => (
-                  <tr key={d.id}><td>{d.filename}</td><td>{d.document_type}</td><td>{d.case_id.slice(0, 8)}…</td><td><Badge value={d.ingestion_status} /></td><td>{(d.size_bytes / 1024).toFixed(1)} KB</td></tr>
+                  <tr key={d.id}><td>{d.filename}</td><td>{d.document_type}</td><td>{shortId(d.case_id, 8)}</td><td><Badge value={d.ingestion_status} /></td><td>{(d.size_bytes / 1024).toFixed(1)} KB</td></tr>
                 ))}
               </tbody>
             </table>
@@ -485,7 +513,7 @@ export default function Admin() {
                 <thead><tr><th>ID</th><th>Label</th><th>Display</th><th>Confidence</th><th>Cases</th><th>Evidence docs</th></tr></thead>
                 <tbody>
                   {entities.map((n) => (
-                    <tr key={n.id}><td><code>{n.id.slice(0, 16)}…</code></td><td>{n.label}</td><td>{n.name}</td><td>{n.confidence.toFixed(2)}</td><td>{n.case_count}</td><td>{n.source_doc_count}</td></tr>
+                    <tr key={n.id}><td><code>{shortId(n.id, 16)}</code></td><td>{n.label}</td><td>{n.name}</td><td>{fixed(n.confidence, 2)}</td><td>{n.case_count}</td><td>{n.source_doc_count}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -504,7 +532,7 @@ export default function Admin() {
                 <thead><tr><th>Source</th><th>Type</th><th>Target</th><th>Confidence</th><th>Evidence</th></tr></thead>
                 <tbody>
                   {rels.map((r) => (
-                    <tr key={r.key}><td><code>{r.source.slice(0, 12)}…</code></td><td><Badge value={r.rel_type} /></td><td><code>{r.target.slice(0, 12)}…</code></td><td>{r.confidence.toFixed(2)}</td><td>{r.source_doc_count}</td></tr>
+                    <tr key={r.key}><td><code>{shortId(r.source, 12)}</code></td><td><Badge value={r.rel_type} /></td><td><code>{shortId(r.target, 12)}</code></td><td>{fixed(r.confidence, 2)}</td><td>{r.source_doc_count}</td></tr>
                   ))}
                 </tbody>
               </table>

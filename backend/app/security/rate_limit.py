@@ -58,6 +58,25 @@ _redis_client_lock = threading.Lock()
 _redis_unavailable_until: float = 0.0  # circuit breaker timestamp
 
 
+def _redact_url(url: str) -> str:
+    """Mask the credential component of a connection URL before logging.
+
+    ``redis://user:password@host:6379/0`` -> ``redis://user:***@host:6379/0``.
+    Connection URLs are a classic accidental-credential leak; the host and path
+    are useful for debugging, the password is never acceptable in a log line.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:  # pragma: no cover - malformed URL
+        return "<unparseable url>"
+    if parts.password:
+        netloc = parts.netloc.replace(f":{parts.password}@", ":***@", 1)
+        return urlunsplit(parts._replace(netloc=netloc))
+    return url
+
+
 def _get_redis_client(settings: Settings) -> Any | None:
     """Return a Redis client if Redis is configured and reachable, else None.
 
@@ -96,10 +115,14 @@ def _get_redis_client(settings: Settings) -> Any | None:
             )
             client.ping()
             _redis_client = client
-            log.info("rate_limit.redis_ready", redis_url=settings.redis_url)
+            log.info("rate_limit.redis_ready", redis_url=_redact_url(settings.redis_url))
             return client
         except Exception as exc:
-            log.warning("rate_limit.redis_unavailable", error=str(exc), redis_url=getattr(settings, "redis_url", "unknown"))
+            log.warning(
+                "rate_limit.redis_unavailable",
+                error=str(exc),
+                redis_url=_redact_url(getattr(settings, "redis_url", "unknown")),
+            )
             _redis_unavailable_until = now + 5.0
             return None
 

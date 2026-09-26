@@ -196,7 +196,30 @@ async def upload_document(
 async def list_documents(
     session: AsyncSession, case_id: str, *, include_deleted: bool = False
 ) -> list[CaseDocument]:
-    stmt = select(CaseDocument).where(CaseDocument.case_id == case_id)
+    """Documents of *case_id* — plus the dataset's own documents when the
+    case is the container case of a case-less dataset.
+
+    ``datasets/pipeline.py::_ingest_documents`` attaches dataset-level
+    resources to the dataset, not to a case (``case_id IS NULL`` — they are
+    "never assigned to pseudo-cases").  In a corpus that contains no case at
+    all, that is *every* document: without the clause below the whole
+    collection would be reachable from the admin console but invisible from
+    the case pages, which is the production inconsistency this removes.
+    """
+    from app.datasets import registry
+    from app.services import cases as case_service
+
+    base = CaseDocument.case_id == case_id
+    if await case_service.is_sole_container_case(session, case_id):
+        active = await registry.active_dataset_id(session)
+        if active is not None:
+            dataset_clause = (
+                CaseDocument.dataset_id == active
+            ) | CaseDocument.dataset_id.is_(None)
+        else:
+            dataset_clause = CaseDocument.dataset_id.is_(None)
+        base = base | (CaseDocument.case_id.is_(None) & dataset_clause)
+    stmt = select(CaseDocument).where(base)
     if not include_deleted:
         stmt = stmt.where(CaseDocument.is_deleted.is_(False))
     return list((await session.execute(stmt.order_by(CaseDocument.created_at))).scalars().all())
