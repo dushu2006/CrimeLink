@@ -183,7 +183,11 @@ async def import_dataset(
         "on",
         "yes",
     }
-    jurisdiction_id = str(form.get("jurisdiction_id") or DEFAULT_JURISDICTION)
+    # Dataset records imported through the admin UI belong to the importing
+    # operator's jurisdiction unless an explicit jurisdiction was supplied.
+    # This keeps normal jurisdiction scoping intact while avoiding the
+    # SYN-DEV default hiding freshly imported cases from a METRO-CENTRAL admin.
+    jurisdiction_id = str(form.get("jurisdiction_id") or principal.jurisdiction_id or DEFAULT_JURISDICTION)
     if not files:
         raise ValidationFailedError("Select at least one file to import.")
 
@@ -218,7 +222,7 @@ async def import_dataset(
         activate=activate,
         build_graph=build_graph,
         copy_inputs=True,
-        jurisdiction_id=jurisdiction_id or DEFAULT_JURISDICTION,
+        jurisdiction_id=jurisdiction_id or principal.jurisdiction_id or DEFAULT_JURISDICTION,
         created_by=principal.id,
     )
 
