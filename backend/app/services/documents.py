@@ -590,6 +590,40 @@ def settings_snapshot() -> Settings:
     return get_settings()
 
 
+async def _dataset_level_graph_case(
+    session: AsyncSession, document: CaseDocument
+) -> str | None:
+    """The graph scope of a document no case claims, or ``None``.
+
+    An unassigned document (``case_id IS NULL``) still has people recorded
+    against it: ``datasets/graph_build.py`` projects dataset-level records into
+    the dataset's container case, and those nodes carry the ``source_doc_ids``
+    of the file they came from.  Reading *that* snapshot is what lets the
+    provenance panel name the people a dataset-level record is evidence for,
+    without assigning the document to a case it does not belong to.
+
+    Strictly scoped: the container case must belong to the same dataset as the
+    document, and the caller only keeps nodes whose ``source_doc_ids`` name this
+    document — nothing is borrowed from another case or another dataset.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Case
+
+    if document.case_id or not document.dataset_id:
+        return None
+    return (
+        await session.execute(
+            select(Case.id)
+            .where(
+                Case.dataset_id == document.dataset_id,
+                Case.dataset_case_key == "ALL",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def provenance_payload(
     session: AsyncSession,
     container: Container,
@@ -617,7 +651,11 @@ async def provenance_payload(
     relative_path = relative_path.replace("\\", "/").lstrip("/")
 
     # --- CASE ---------------------------------------------------------------
-    case = await session.get(Case, document.case_id)
+    # ``case_id`` is NULL for a dataset-level or ambiguous record, which
+    # content-first ingestion leaves unassigned on purpose.  The chain reports
+    # that honestly (``case: null``, CASE unresolved) instead of borrowing a
+    # case the data never proved.
+    case = await session.get(Case, document.case_id) if document.case_id else None
     case_row = (
         {
             "id": case.id,
@@ -736,9 +774,14 @@ async def provenance_payload(
 
     # --- PEOPLE THIS DOCUMENT IS RECORDED AGAINST ---------------------------
     people_rows: list[dict[str, Any]] = []
+    graph_case_id = document.case_id or await _dataset_level_graph_case(session, document)
     try:
-        snapshot = container.graph_store.snapshot(document.case_id, include_staging=False)
-        for node in snapshot.nodes.values():
+        snapshot = (
+            container.graph_store.snapshot(graph_case_id, include_staging=False)
+            if graph_case_id
+            else None
+        )
+        for node in (snapshot.nodes.values() if snapshot is not None else []):
             if canonical_label(node.label) != "PERSON":
                 continue
             props = node.properties or {}

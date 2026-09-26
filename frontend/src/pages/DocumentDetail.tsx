@@ -15,7 +15,7 @@ import { SourceReference } from "../components/SourceViewer";
 
 interface Detail {
   id: string;
-  case: { id: string; case_number: string; title: string };
+  case: { id: string; case_number: string; title: string } | null;
   filename: string;
   document_type: string;
   ingestion_status: string;
@@ -84,7 +84,11 @@ export default function DocumentDetail() {
           <h1>{detail.filename}</h1>
           <p className="muted">
             {detail.document_type} ·{" "}
-            <Link to={`/cases/${detail.case.id}`}>{detail.case.case_number}</Link>
+            {detail.case ? (
+              <Link to={`/cases/${detail.case.id}`}>{detail.case.case_number}</Link>
+            ) : (
+              <span>Not assigned to a case</span>
+            )}
           </p>
         </div>
         <div className="head-actions">

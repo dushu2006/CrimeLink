@@ -173,7 +173,11 @@ async def get_document(
     document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    await case_service.require_case(session, scope, document.case_id)
+    # ``document.case_id`` is NULL for dataset-level and ambiguous records,
+    # which content-first ingestion leaves unassigned on purpose.  Authorising
+    # the *record* (active-dataset boundary) instead of demanding a case keeps
+    # those rows openable and honest -- see case_service.require_case_for_record.
+    await case_service.require_case_for_record(session, scope, document)
     require_classification(principal, document.classification)
     return document_service.document_row(document)
 
@@ -193,7 +197,11 @@ async def evidence(
     document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    await case_service.require_case(session, scope, document.case_id)
+    # ``document.case_id`` is NULL for dataset-level and ambiguous records,
+    # which content-first ingestion leaves unassigned on purpose.  Authorising
+    # the *record* (active-dataset boundary) instead of demanding a case keeps
+    # those rows openable and honest -- see case_service.require_case_for_record.
+    await case_service.require_case_for_record(session, scope, document)
     require_classification(principal, document.classification)
 
     parsed: tuple[int, int] | None = None
@@ -235,7 +243,11 @@ async def evidence_provenance(
     document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    await case_service.require_case(session, scope, document.case_id)
+    # ``document.case_id`` is NULL for dataset-level and ambiguous records,
+    # which content-first ingestion leaves unassigned on purpose.  Authorising
+    # the *record* (active-dataset boundary) instead of demanding a case keeps
+    # those rows openable and honest -- see case_service.require_case_for_record.
+    await case_service.require_case_for_record(session, scope, document)
     require_classification(principal, document.classification)
 
     payload = await document_service.provenance_payload(
@@ -262,6 +274,10 @@ async def verify_evidence(
     document = await _resolve_document(session, doc_id)
     if document is None:
         raise NotFoundError("Document not found.")
-    await case_service.require_case(session, scope, document.case_id)
+    # ``document.case_id`` is NULL for dataset-level and ambiguous records,
+    # which content-first ingestion leaves unassigned on purpose.  Authorising
+    # the *record* (active-dataset boundary) instead of demanding a case keeps
+    # those rows openable and honest -- see case_service.require_case_for_record.
+    await case_service.require_case_for_record(session, scope, document)
     require_classification(principal, document.classification)
     return await document_service.verify_document_hash(get_container(), document)

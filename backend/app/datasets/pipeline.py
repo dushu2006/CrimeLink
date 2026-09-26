@@ -32,9 +32,10 @@ from typing import Any, Awaitable, Callable, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.datasets import discovery, graph_build, readers
 from app.datasets import normalize as nz
-from app.datasets import registry
+from app.datasets import registry, retirement
 from app.datasets import schema_map as sm
 from app.db.base import new_uuid, utcnow
 from app.db.models import (
@@ -47,6 +48,7 @@ from app.db.models import (
     SourceReference,
 )
 from app.domain.enums import CaseStatus, DocumentType, IngestionStatus, SourceConfidence
+from app.errors import ConflictError
 from app.logging import get_logger
 
 log = get_logger("crimelink.datasets.pipeline")
@@ -94,6 +96,9 @@ class ImportReport:
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
     duration_s: float = 0.0
+    #: What the replacement reclaimed, when this import became the active
+    #: dataset (``datasets/retirement.py``).  Empty when nothing was replaced.
+    replacement: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +116,7 @@ class ImportReport:
             "warning_count": len(self.warnings),
             "error": self.error,
             "duration_s": round(self.duration_s, 2),
+            "replacement": self.replacement,
         }
 
 
@@ -130,10 +136,25 @@ async def run_import(
     *,
     progress: ProgressFn | None = None,
 ) -> ImportReport:
-    """Import a dataset end to end. Commits as it goes so progress survives."""
+    """Import a dataset end to end. Commits as it goes so progress survives.
+
+    The dataset this import replaces is retired **at the end**, not at the
+    beginning: nothing that belongs to the currently active dataset is removed
+    until the incoming one has been discovered, parsed, normalized, persisted,
+    graph-projected and verified usable.  An import that fails on the way costs
+    the deployment nothing — the previous dataset is still active, still whole
+    and still queryable, which is the property a limited-capacity deployment
+    depends on (see ``datasets/retirement.py``).
+    """
     report = ImportReport()
     started = time.monotonic()
     emit = progress or _noop
+    #: The dataset that was active when this import started, and whether this
+    #: import evicted its graph projection while building its own.  Together
+    #: they are what makes the failure path able to put the deployment back the
+    #: way it was.
+    previous_active_id = await registry.active_dataset_id(session)
+    graph_evicted_others = False
 
     dataset = await registry.create_dataset(
         session,
@@ -170,47 +191,12 @@ async def run_import(
         await session.commit()
         await emit("VALIDATING", 15, f"{len(found.usable)} readable files found")
 
-        # --- Replacement lifecycle for single active dataset mode ---
-        if options.activate:
-            log.info(
-                "dataset.replacement.started",
-                incoming_dataset_id=dataset.id,
-                incoming_dataset_name=dataset.name,
-            )
-            # Deactivate currently active dataset
-            await registry.deactivate_all(session)
-            await session.commit()
-
-            # Purge old dataset's application data
-            purged = await registry.purge_inactive_datasets_data(session, dataset.id)
-            total_purged = sum(
-                sum(v for v in counts.values() if isinstance(v, int))
-                for counts in purged.values()
-            )
-            log.info(
-                "dataset.old_purged",
-                incoming_dataset_id=dataset.id,
-                purged_datasets=len(purged),
-                total_rows_removed=total_purged,
-            )
-
-            # Purge old graph projection
-            try:
-                from app.container import get_container
-
-                container = get_container()
-                store = container.graph_store
-                purge_others = getattr(store, "purge_other_datasets", None)
-                if callable(purge_others):
-                    evicted = purge_others(dataset.id)
-                    log.info("dataset.graph_purged", keep=dataset.id, nodes_evicted=evicted)
-                else:
-                    log.info("dataset.graph_purged", keep=dataset.id)
-            except Exception as exc:
-                log.warning("datasets.graph_purge_error", error=str(exc))
-
-            log.info("dataset.search_purged", keep=dataset.id)
-            log.info("dataset.cache_invalidated", keep=dataset.id)
+        # NOTE: nothing belonging to the currently active dataset is removed
+        # here.  Replacement used to deactivate and purge the previous import at
+        # this point -- before a single row of the new one had been parsed -- so
+        # an upload that failed during normalization left the deployment with no
+        # dataset at all.  The retirement now happens inside
+        # ``registry.activate`` at the end of a *verified* import.
 
         # --- 2. NORMALIZING ------------------------------------------------
         await registry.set_stage(session, dataset, "NORMALIZING", detail="Reading tables")
@@ -297,7 +283,8 @@ async def run_import(
 
         if options.ingest_documents:
             created, mentions = await _ingest_documents(
-                session, dataset, found, file_ids, normalizer.result, emit
+                session, dataset, found, file_ids, normalizer.result, emit,
+                warnings=report.warnings,
             )
             report.documents_created = created
             report.mentions = mentions
@@ -309,6 +296,11 @@ async def run_import(
                 session, dataset, "BUILDING_GRAPH", detail="Projecting the graph"
             )
             await session.commit()
+            # ``project_dataset`` is exclusive: the graph shows one dataset, so
+            # projecting this one evicts the projection of the dataset that is
+            # still active.  Recorded because it is the one thing a later
+            # failure has to put back.
+            graph_evicted_others = True
             report.graph = await graph_build.project_dataset(
                 session, dataset, progress=_scaled(emit, 75, 95)
             )
@@ -333,9 +325,38 @@ async def run_import(
         # --- 7. READY ------------------------------------------------------
         dataset.stats = await registry.dataset_stats(session, dataset.id)
         await registry.set_stage(session, dataset, "READY", detail="Dataset ready")
+        await session.commit()
+
         if options.activate:
+            # The gate that makes replacement failure-safe: the incoming
+            # dataset has to be *usable* before the deployment gives up the one
+            # it has.  Counted from its own stored rows, never assumed.
+            problems = await retirement.usability_problems(
+                session, dataset, expect_graph=options.build_graph, graph_stats=report.graph
+            )
+            if problems:
+                raise RuntimeError(
+                    "The imported dataset is not usable, so the active dataset was "
+                    "left in place: " + "; ".join(problems)
+                )
+            await emit("READY", 98, "Verified; replacing the active dataset")
+            # Activation and retirement are one transaction: either the new
+            # dataset is active and the old one's rows are gone, or neither
+            # happened.
             await registry.activate(session, dataset)
         await session.commit()
+        if options.activate:
+            # Irreversible storage reclamation (objects, workspace copies, and
+            # re-storing this dataset's evidence bytes under keys the retired
+            # dataset was holding) runs only now that the replacement is
+            # committed.
+            report.replacement = await retirement.finalize_pending(session)
+            report.replacement.update(
+                {
+                    "active_dataset_id": dataset.id,
+                    "previous_active_dataset_id": previous_active_id,
+                }
+            )
 
         report.status = dataset.status
         report.duration_s = time.monotonic() - started
@@ -345,6 +366,7 @@ async def run_import(
             dataset_id=dataset.id,
             entities=report.canonical.get("entities"),
             relationships=report.canonical.get("relationships"),
+            replaced_dataset=previous_active_id,
             duration_s=round(report.duration_s, 2),
         )
         return report
@@ -364,8 +386,40 @@ async def run_import(
                 session, failed, "FAILED", detail=report.error, error=report.error
             )
             await session.commit()
+        # The failed import was never activated, so the dataset that was active
+        # before it started is still active and its rows are untouched -- that
+        # is the guarantee this lifecycle exists to give.  The one thing a
+        # failure can have taken is its graph projection (an exclusive build
+        # evicts other datasets), so put that back.
+        if graph_evicted_others and previous_active_id and previous_active_id != report.dataset_id:
+            await _restore_previous_projection(session, previous_active_id, emit)
         await emit("FAILED", 100, report.error)
         return report
+
+
+async def _restore_previous_projection(
+    session: AsyncSession, dataset_id: str, emit: ProgressFn
+) -> None:
+    """Re-project the dataset that is still active after a failed replacement.
+
+    Best-effort by design: the relational data was never touched, so this only
+    restores the derived projection the failed import evicted.  If it cannot be
+    restored the operator still has an intact dataset and a rebuild button.
+    """
+    try:
+        previous = await session.get(Dataset, dataset_id)
+        if previous is None:
+            return
+        await emit("FAILED", 100, "Restoring the graph of the dataset that is still active")
+        await rebuild_graph(session, previous)
+        await session.commit()
+        log.info("datasets.previous_projection_restored", dataset_id=dataset_id)
+    except Exception as restore_error:  # noqa: BLE001 - never mask the real failure
+        log.warning(
+            "datasets.previous_projection_restore_failed",
+            dataset_id=dataset_id,
+            error=f"{type(restore_error).__name__}: {restore_error}",
+        )
 
 
 def _scaled(emit: ProgressFn, low: int, high: int) -> ProgressFn:
@@ -720,6 +774,7 @@ async def _ingest_documents(
     file_ids: dict[str, str],
     result: nz.NormalizationResult,
     emit: ProgressFn,
+    warnings: list[str] | None = None,
 ) -> tuple[int, int]:
     """Register document files as case documents and link their mentions.
 
@@ -986,6 +1041,8 @@ async def _ingest_documents(
     mention_count = 0
     seen_hashes: set[tuple[str | None, str]] = set()
     mention_rows: list[dict[str, Any]] = []
+    #: Bucket the original bytes are stored in, read once for the whole import.
+    evidence_bucket = get_settings().minio_bucket_documents
 
     assigned_per_case: dict[str, int] = {}
     assigned_count = 0
@@ -1225,16 +1282,12 @@ async def _ingest_documents(
             continue
         seen_hashes.add((target_case_id, content_hash))
 
-        # Store raw bytes into object store
-        try:
-            from app.container import get_container
-            get_container().object_store.put(
-                get_settings().minio_bucket_documents,
-                entry.relative_path,
-                entry.path.read_bytes(),
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        # Store the original bytes so the evidence chain can be re-verified
+        # later (``/evidence/{id}/verify`` recomputes this hash, and the
+        # provenance panel reports whether the original file is readable).
+        warning = _store_evidence_object(session, entry, evidence_bucket)
+        if warning and warnings is not None:
+            warnings.append(warning)
 
         document = CaseDocument(
             id=new_uuid(),
@@ -1474,6 +1527,53 @@ UNASSIGNED FILE DIAGNOSTICS
     )
     return (created, mention_count)
 
+
+
+def _store_evidence_object(
+    session: AsyncSession, entry: discovery.DiscoveredFile, bucket: str
+) -> str | None:
+    """Put one source file's bytes in the object store; return a warning or None.
+
+    The stored copy is what makes the evidence chain verifiable after the
+    import: ``/evidence/{id}/verify`` recomputes the SHA-256 of these bytes and
+    the provenance panel reports whether the original file is still readable.
+
+    Storage is write-once and the key is the dataset-relative path, so two
+    corpora that both contain ``people.csv`` collide.  A collision is reported
+    as a warning and the import continues — the previous dataset's bytes are
+    not destroyed mid-import, because that dataset is still the active one and
+    may still have to serve them.  When it is retired its objects are removed
+    and this dataset's copy is stored in their place
+    (``datasets/retirement.py::_restore_missing_objects``).
+    """
+    from app.container import get_container
+
+    try:
+        payload = entry.path.read_bytes()
+    except Exception as exc:  # noqa: BLE001 - the row is still ingested
+        return f"{entry.relative_path}: the original bytes could not be read ({exc})"
+    try:
+        get_container().object_store.put(
+            bucket, entry.relative_path, payload, content_type=entry.media_type
+        )
+        return None
+    except ConflictError:
+        # Recorded so retirement knows this key has to be rewritten once the
+        # dataset that currently holds it is gone (hash-verified, and only if no
+        # other surviving record claims the key).
+        retirement.note_object_conflict(session, bucket, entry.relative_path)
+        return (
+            f"{entry.relative_path}: the object store already holds different bytes "
+            "under this key (a file from the dataset being replaced); the evidence "
+            "copy is stored once that dataset is retired"
+        )
+    except Exception as exc:  # noqa: BLE001 - ingestion must not fail on storage
+        log.warning(
+            "pipeline.evidence_object_store_failed",
+            path=entry.relative_path,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return f"{entry.relative_path}: the evidence copy could not be stored ({exc})"
 
 
 def _extract_case_ids_from_content(

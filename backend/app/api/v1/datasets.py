@@ -401,12 +401,22 @@ async def activate_dataset(
     its id returned, which both evicts the previous dataset's nodes and
     projects this one -- otherwise the tables would show one dataset while the
     graph showed another.
+
+    Activation also *retires* the datasets it replaces (rows, graph projection,
+    workspace copies and the objects only they referenced), which is what keeps
+    a limited-capacity deployment at exactly one retained dataset.  The
+    irreversible storage work runs after the commit, so a failed transaction
+    destroys nothing — and the response reports what was reclaimed.
     """
+    from app.datasets import retirement
+
     dataset = await _require_dataset(session, dataset_id)
     await registry.activate(session, dataset)
     await session.commit()
+    storage = await retirement.finalize_pending(session)
     stats = await registry.dataset_stats(session, dataset.id)
     row = registry.dataset_row(dataset, stats)
+    row["retired"] = storage
 
     job_id = None
     if not await dataset_jobs.active_job_for_dataset(dataset.id):

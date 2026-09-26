@@ -7,6 +7,8 @@ cross-jurisdiction grant.
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -254,7 +256,9 @@ async def active_dataset_case_ids(session: AsyncSession, scope: JurisdictionScop
     return ids
 
 
-async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref: str) -> Case:
+async def resolve_case_ref(
+    session: AsyncSession, scope: JurisdictionScope, ref: str | None
+) -> Case:
     """Resolve a case reference to a live, visible case row.
 
     Two shapes are accepted, in this order:
@@ -265,15 +269,36 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
        is only ever looked up inside ``(active_dataset_id)`` plus hand-created
        cases; if two visible cases carry the same number (source data does
        this), the reference is ambiguous and refused rather than guessed.
+
+    **A missing reference is not a case.**  ``ref`` is nullable because the
+    rows that carry it are: content-first ingestion leaves a document or a
+    source reference unassigned (``case_id IS NULL``) whenever nothing in the
+    data proves a case association, and an ambiguous multi-case document stays
+    unassigned by design.  Such a ``NULL`` is refused here as the controlled
+    404 it is — it is never read as ``ALL`` (that would hand the caller every
+    case in the deployment), never resolved to whichever case happens to be
+    handy, and never an excuse to assign one.  Callers holding a row whose
+    ``case_id`` may legitimately be NULL go through
+    :func:`require_case_for_record` instead, which authorises the row against
+    the dataset boundary and reports it as unassigned.
     """
-    if ref.strip().upper() == "ALL":
+    if ref is None:
+        raise NotFoundError("No case reference was supplied.")
+    if not isinstance(ref, str):
+        # A reference arrives from a path parameter, a JSON body or a nullable
+        # column; anything that is not text cannot name a case.
+        raise NotFoundError("A case reference must be a case id or a case number.")
+    reference = ref.strip()
+    if not reference:
+        raise NotFoundError("No case reference was supplied.")
+    if reference.upper() == "ALL":
         raise NotFoundError("The container case 'ALL' is not an investigative case.")
 
     active = await registry.active_dataset_id(session)
     if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
         raise NotFoundError("This case belongs to a dataset that is no longer active.")
 
-    case = await session.get(Case, ref)
+    case = await session.get(Case, reference)
     if case is None:
         if active is None:
             raise NotFoundError("No dataset is currently active.")
@@ -281,7 +306,7 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
             (
                 await session.execute(
                     select(Case)
-                    .where(Case.case_number == ref)
+                    .where(Case.case_number == reference)
                     .where(await registry.visibility_filter(session, Case))
                     .where(Case.dataset_case_key.is_(None) | (Case.dataset_case_key != "ALL"))
                 )
@@ -289,7 +314,7 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
         )
         if len(candidates) > 1:
             raise NotFoundError(
-                f"Case number {ref!r} matches {len(candidates)} cases in the active "
+                f"Case number {reference!r} matches {len(candidates)} cases in the active "
                 "dataset; open one by its case id instead."
             )
         if not candidates:
@@ -314,8 +339,55 @@ async def resolve_case_ref(session: AsyncSession, scope: JurisdictionScope, ref:
     return case
 
 
+async def require_case_for_record(
+    session: AsyncSession, scope: JurisdictionScope, record: Any
+) -> Case | None:
+    """Authorise a stored record whose ``case_id`` may legitimately be NULL.
+
+    Evidence rows are not always case-scoped, and that is a *decision the data
+    made*, not an error: ``datasets/pipeline.py::_ingest_documents`` attaches a
+    document to a case only when the content, the identifiers, the FIR/case
+    mappings or the shared entity membership prove the association.  A
+    dataset-level resource (a data dictionary, a corpus index) and an ambiguous
+    multi-case document both stay ``case_id IS NULL`` — "never assigned to
+    pseudo-cases".  Passing that NULL to :func:`require_case` used to reach
+    ``ref.strip()`` and answer a 500 ``AttributeError`` where the API contract
+    calls for a resolved record with ``case: null``.
+
+    The rules, in the order the rest of the system already applies them:
+
+    * **assigned record** — unchanged: the case is resolved and jurisdiction-
+      scoped exactly as every case-scoped route does today;
+    * **unassigned record** — authorised against the *dataset* boundary, which
+      is the boundary dataset-level data has always had (see
+      :func:`_sole_container_case`): it must belong to the ACTIVE dataset, or
+      carry no dataset at all (an investigator's own upload).  A replaced
+      dataset's unassigned rows stay unreachable, and an explicit
+      ``X-Dataset-Id`` that is no longer active is refused;
+    * **never invented** — no case is looked up, guessed, or written onto the
+      record.  ``None`` is returned so the caller reports the record as
+      unassigned, which is what the provenance chain already does honestly.
+
+    Classification is not checked here: that stays with the calling endpoint
+    (``require_classification``), exactly as before.
+    """
+    case_id = getattr(record, "case_id", None)
+    if case_id:
+        return await resolve_case_ref(session, scope, case_id)
+
+    active = await registry.active_dataset_id(session)
+    if scope.expected_dataset_id and active and scope.expected_dataset_id != active:
+        raise NotFoundError("The requested dataset is no longer active.")
+    if not registry.belongs_to_active(record, active):
+        raise NotFoundError(
+            "This record belongs to a dataset that is no longer active. "
+            "Activate that dataset in Administration to open it again."
+        )
+    return None
+
+
 async def get_case(
-    session: AsyncSession, scope: JurisdictionScope, case_id: str
+    session: AsyncSession, scope: JurisdictionScope, case_id: str | None
 ) -> Case:
     """One case, if the caller may see it and the active dataset owns it.
 
@@ -489,12 +561,20 @@ async def update_status(
     return case
 
 
-async def require_case(session: AsyncSession, scope: JurisdictionScope, case_id: str) -> Case:
+async def require_case(
+    session: AsyncSession, scope: JurisdictionScope, case_id: str | None
+) -> Case:
     """Load a case for an operation, or refuse with a reason.
 
     Shares :func:`get_case`'s rules deliberately: every entry point into a
     case -- the detail page, documents, the AI panel -- has to agree about
     whether that case exists right now, or one of them becomes the way stale
     data gets back on screen.
+
+    ``case_id`` is nullable because the rows it is read from are (a dataset-level
+    document, an unassigned source reference).  A missing reference is refused
+    with the same controlled 404 as an unknown one; a route that serves such a
+    row uses :func:`require_case_for_record`, which authorises the row itself
+    instead of demanding a case it does not have.
     """
     return await resolve_case_ref(session, scope, case_id)

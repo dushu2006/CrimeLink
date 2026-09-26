@@ -132,6 +132,34 @@ class LocalObjectStore:
                     out.append(rel)
         return sorted(out)
 
+    def delete(self, bucket: str, key: str) -> bool:
+        """Remove one object; returns whether anything was actually deleted.
+
+        Write-once protects a *live* object from being silently replaced — it
+        does not make the object immortal.  Retiring the dataset that owns it
+        is the one legitimate removal, and the caller
+        (``app/datasets/retirement.py``) is what scopes it: a key still
+        referenced by a retained record is never deleted, so two datasets that
+        happen to share a relative path cannot lose bytes to each other.
+
+        The integrity sidecar and any interrupted ``.part`` write go with the
+        object, so a reclaimed key cannot leave a stale hash behind to fail a
+        later read.
+        """
+        path = self._path(bucket, key)
+        removed = False
+        for candidate in (
+            path,
+            path.with_suffix(path.suffix + ".sha256"),
+            path.with_suffix(path.suffix + ".part"),
+        ):
+            if candidate.exists():
+                candidate.unlink(missing_ok=True)
+                removed = True
+        if removed:
+            log.info("object.delete", bucket=bucket, key=key)
+        return removed
+
     def health_check(self) -> tuple[bool, str, str | None]:
         """Honest probe for the embedded filesystem store.
 
