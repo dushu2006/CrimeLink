@@ -118,10 +118,22 @@ async def get_dataset(session: AsyncSession, dataset_id: str) -> Dataset | None:
 
 
 async def list_datasets(session: AsyncSession, *, limit: int = 100) -> list[Dataset]:
-    rows = await session.execute(
-        select(Dataset).order_by(Dataset.created_at.desc()).limit(limit)
+    """Return the current operational dataset only.
+
+    Historical dataset registrations remain in the database for auditability,
+    but the Administration console is a single-dataset workspace. Returning
+    retired registrations here made old imports and their stale errors look
+    like selectable live corpora even though their operational rows had already
+    been reclaimed.
+    """
+    row = await session.execute(
+        select(Dataset)
+        .where(Dataset.is_active.is_(True))
+        .order_by(Dataset.activated_at.desc(), Dataset.created_at.desc(), Dataset.id.desc())
+        .limit(1)
     )
-    return list(rows.scalars())
+    active = row.scalars().first()
+    return [active] if active is not None else []
 
 
 async def active_dataset(session: AsyncSession) -> Dataset | None:
