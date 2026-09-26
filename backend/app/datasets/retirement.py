@@ -640,19 +640,23 @@ async def retire_dataset(
 
 
 async def replaced_dataset_ids(session: AsyncSession, keep_dataset_id: str) -> list[str]:
-    """The datasets this activation replaces: the ones that were ACTIVE before.
+    """Return every predecessor dataset that must leave the operational workspace.
 
-    Captured *before* :func:`app.datasets.registry.set_only_active` clears the
-    flag, so the answer survives the deactivation.  A dataset that was never
-    active is not replaced by anything — it is a candidate the operator may
-    still activate, and deleting it is :func:`purge_dataset_data`'s explicit
-    job, not a side effect of switching the haystack.
+    CrimeLink now keeps one dataset workspace at a time. A successful
+    replacement therefore retires not only the dataset that happened to be
+    marked active immediately before the switch, but also stale inactive/failed
+    candidates left by earlier uploads. Their operational rows, graph
+    projection, workspace and dataset-owned objects are reclaimed by the same
+    dependency-ordered retirement path.
+
+    The dataset registration/job history itself is retained where the existing
+    lifecycle requires it; it is simply no longer an operational dataset.
     """
     return list(
         (
             await session.execute(
                 select(Dataset.id)
-                .where(Dataset.is_active.is_(True), Dataset.id != keep_dataset_id)
+                .where(Dataset.id != keep_dataset_id)
                 .order_by(Dataset.created_at)
             )
         ).scalars()
