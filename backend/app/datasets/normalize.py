@@ -422,7 +422,7 @@ class Normalizer:
         hard_identifier_types = {sm.PHONE, sm.VEHICLE, sm.ACCOUNT}
         if entity_type in hard_identifier_types and normalized:
             canonical = self._alias.get(f"{entity_type}|{normalized}")
-            if not canonical:
+            if canonical is None:
                 canonical = _derived_id(entity_type, normalized)
         elif key:
             canonical = cid(entity_type, key)
