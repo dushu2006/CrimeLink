@@ -211,6 +211,44 @@ async def test_a_single_csv_produces_people_not_just_rows(client, admin_headers,
 
 
 # --------------------------------------------------------------------------- #
+# Hard identifier reconciliation
+# --------------------------------------------------------------------------- #
+
+async def test_duplicate_phone_numbers_converge_before_graph_projection(
+    client, admin_headers, container
+):
+    """The same normalized phone number under different source IDs is one graph entity."""
+    duplicate_phones = (
+        "person_id,full_name,phone_id,phone_number\n"
+        "P001,Ramesh Kumar,PH-A,9123456780\n"
+        "P002,Sunita Devi,PH-B,+91 9123456780\n"
+    )
+    final = await _upload(
+        client,
+        admin_headers,
+        files=[("files", ("duplicate_phones.csv", duplicate_phones, "text/csv"))],
+        data={"name": "Duplicate phone test"},
+    )
+    dataset_id = final["result"]["dataset_id"]
+
+    async with async_session() as session:
+        from app.db.models import DatasetEntity
+        rows = list(
+            (
+                await session.execute(
+                    select(DatasetEntity).where(
+                        DatasetEntity.dataset_id == dataset_id,
+                        DatasetEntity.entity_type == "PHONE",
+                    )
+                )
+            ).scalars()
+        )
+        assert len(rows) == 1, [row.canonical_id for row in rows]
+        assert rows[0].normalized_value == "9123456780"
+
+    assert final["result"]["graph"]["nodes_written"] >= 2, final["result"]
+
+# --------------------------------------------------------------------------- #
 # B. one XLSX
 # --------------------------------------------------------------------------- #
 
