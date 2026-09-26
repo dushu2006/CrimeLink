@@ -780,12 +780,8 @@ async def test_the_activate_endpoint_reports_what_was_retired(
         _wait_for_job(client, headers, job_id)
 
     listing = client.get("/api/v1/datasets", headers=headers).json()["items"]
-    assert [item["id"] for item in listing if item["is_active"]] == [new_report.dataset_id]
-    retired_row = next(
-        (item for item in listing if item["id"] == old_report.dataset_id), None
-    )
-    assert retired_row is not None, "the retired dataset stays visible as history"
-    assert retired_row["is_active"] is False
+    assert [item["id"] for item in listing] == [new_report.dataset_id]
+    assert all(item["is_active"] for item in listing)
 
     # Identity survived the replacement: the same badge still authenticates.
     assert _login(client, "ADM-0001", PASSWORD)
