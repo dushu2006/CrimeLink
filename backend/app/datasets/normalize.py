@@ -444,8 +444,8 @@ class Normalizer:
         )
         if key:
             self._alias[f"{entity_type}|{key}"] = canonical
-        if normalized_value:
-            self._alias.setdefault(f"{entity_type}|{normalized_value}", canonical)
+        if normalized:
+            self._alias.setdefault(f"{entity_type}|{normalized}", canonical)
         return canonical
 
     def _resolve(self, entity_type: str, reference: str | None) -> str | None:
