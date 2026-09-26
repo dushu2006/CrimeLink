@@ -512,6 +512,7 @@ def _case_edge(
     relationship: DatasetRelationship,
     case_by_key: dict[str, Case],
     fallback_doc_id: str,
+    graph_key_by_canonical: dict[str, str] | None = None,
 ) -> GraphEdge | None:
     """Link an entity to a real ``Case`` node rather than a canonical stub."""
     case_key = relationship.target_canonical_id.split(":", 1)[-1]
@@ -531,7 +532,7 @@ def _case_edge(
     }
     try:
         return GraphEdge(
-            source_key=node_key(dataset_id, relationship.source_canonical_id),
+            source_key=(graph_key_by_canonical or {}).get(relationship.source_canonical_id, node_key(dataset_id, relationship.source_canonical_id)),
             target_key=f"case:{case.id}",
             rel_type="PARTICIPATED_IN",
             properties=properties,
