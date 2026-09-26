@@ -82,10 +82,17 @@ async def list_datasets(
     principal: Principal = Depends(get_principal),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict:
-    """Every dataset the platform knows about, newest first."""
+    """The single current operational dataset."""
     datasets = await registry.list_datasets(session, limit=limit)
-    return {"items": [registry.dataset_row(dataset) for dataset in datasets]}
-
+    items = []
+    for dataset in datasets:
+        items.append(
+            registry.dataset_row(
+                dataset,
+                await registry.dataset_stats(session, dataset.id),
+            )
+        )
+    return {"items": items}
 
 @router.get("/active")
 async def get_active_dataset(
