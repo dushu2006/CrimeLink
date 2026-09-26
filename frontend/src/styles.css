@@ -1830,6 +1830,25 @@ ul.compact-list { margin: 8px 0 0; padding-left: 18px; }
   .header-search-form { width: 200px; }
   .officer-info-col { display: none; }
   .source-meta > div { border-right: none; border-bottom: 1px solid var(--cl-border-soft); }
+  /* Tables: scroll horizontally instead of spilling off the screen.
+     `display: block` makes the table element itself the scroll container,
+     so no page markup changes and every existing table (Admin, Cases,
+     Documents, Entities, Relationships, quarantine…) works as-is. */
+  .table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Tab bars (Administration has 13 sections): scroll, never wrap. */
+  .tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .tab { flex: none; white-space: nowrap; }
+  /* Breadcrumbs truncate instead of squeezing the header apart. */
+  .header-context-crumbs { overflow: hidden; }
+  .crumb-detail-text { overflow: hidden; text-overflow: ellipsis; }
 }
 @media (max-width: 700px) {
   .stitch-content-container { padding: 16px; }
@@ -1851,6 +1870,11 @@ ul.compact-list { margin: 8px 0 0; padding-left: 18px; }
   .source-meta { flex-direction: column; }
   .cards { grid-template-columns: 1fr; }
   .crumb-section-text { display: none; }
+  /* 320px phones: the header must still fit — shrink the search field and
+     let the breadcrumb take whatever room is left (it truncates). */
+  .header-search-form { width: 132px; min-width: 0; }
+  .header-actions-row { gap: 8px; }
+  .stitch-executive-header { padding: 0 12px; }
 }
 
 /* Scrollbars (webkit) */

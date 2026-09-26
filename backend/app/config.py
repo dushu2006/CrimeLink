@@ -31,11 +31,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, Literal
+from urllib.parse import urlparse
 
-from pydantic import Field, PrivateAttr, field_validator, model_validator
+from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app import runtime
@@ -58,6 +61,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # Several infrastructure fields carry a `validation_alias` (the bare
+        # NEO4J_/S3_/REDIS_ environment names); this keeps the field name
+        # usable for direct construction (tests, explicit overrides) too.
+        populate_by_name=True,
     )
 
     # ---------------------------------------------------------------- profile
@@ -110,8 +117,22 @@ class Settings(BaseSettings):
     _resolved_runtime_context: str = PrivateAttr(default=runtime.CONTEXT_HOST)
     _endpoint_rewrites: list[str] = PrivateAttr(default_factory=list)
 
-    postgres_dsn: str = runtime.DEFAULT_POSTGRES_DSN
-    postgres_dsn_sync: str = runtime.DEFAULT_POSTGRES_DSN_SYNC
+    postgres_dsn: str = Field(
+        default=runtime.DEFAULT_POSTGRES_DSN,
+        validation_alias=AliasChoices(
+            "CRIMELINK_POSTGRES_DSN",
+            "DATABASE_URL",
+            "POSTGRES_URL",
+            "POSTGRESQL_URL",
+            "POSTGRES_DSN",
+            "DATABASE_URI",
+            "POSTGRES_URI",
+        ),
+    )
+    postgres_dsn_sync: str = Field(
+        default=runtime.DEFAULT_POSTGRES_DSN_SYNC,
+        validation_alias=AliasChoices("CRIMELINK_POSTGRES_DSN_SYNC", "POSTGRES_DSN_SYNC"),
+    )
     postgres_pool_size: int = 10
     postgres_max_overflow: int = 20
     #: Seconds an asyncpg connection attempt may take before failing. Managed
@@ -136,23 +157,111 @@ class Settings(BaseSettings):
     postgres_serverless_pool_size: int = 2
     postgres_serverless_max_overflow: int = 3
 
-    neo4j_uri: str = runtime.DEFAULT_NEO4J_URI
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = "crimelink"
-    neo4j_database: str = "neo4j"
+    # Neo4j connection.  Each field accepts the ``CRIMELINK_``-prefixed name
+    # (highest priority) **and** the bare names used by Neo4j's own tooling and
+    # by Aura / managed deployments (e.g. ``NEO4J_URI``, ``NEO4J_USERNAME``,
+    # ``NEO4J_PASSWORD``, ``NEO4J_DATABASE``) so a deployment that sets the
+    # standard variables — as this production instance does — is honoured.
+    # ``CRIMELINK_`` always wins when both are present.
+    neo4j_uri: str = Field(
+        default=runtime.DEFAULT_NEO4J_URI,
+        validation_alias=AliasChoices(
+            "CRIMELINK_NEO4J_URI", "NEO4J_URI", "NEO4J_CONNECTION_URI", "NEO4J_URL"
+        ),
+    )
+    neo4j_user: str = Field(
+        default="neo4j",
+        validation_alias=AliasChoices("CRIMELINK_NEO4J_USER", "NEO4J_USER", "NEO4J_USERNAME"),
+    )
+    neo4j_password: str = Field(
+        default="crimelink",
+        # NOTE: ``NEO4J_AUTH`` (``user:password``) is deliberately NOT an
+        # alias here — it is parsed into user+password by
+        # ``_derive_managed_service_defaults``.
+        validation_alias=AliasChoices(
+            "CRIMELINK_NEO4J_PASSWORD", "NEO4J_PASSWORD", "NEO4J_PASSWORD_ENCRYPTED"
+        ),
+    )
+    neo4j_database: str = Field(
+        default="neo4j",
+        validation_alias=AliasChoices("CRIMELINK_NEO4J_DATABASE", "NEO4J_DATABASE"),
+    )
     neo4j_gds_enabled: bool = False  # GDS is optional; centrality is computed in Python
 
-    redis_url: str = runtime.DEFAULT_REDIS_URL
-    celery_broker_url: str = runtime.DEFAULT_CELERY_BROKER_URL
-    celery_result_backend: str = runtime.DEFAULT_CELERY_RESULT_BACKEND
+    redis_url: str = Field(
+        default=runtime.DEFAULT_REDIS_URL,
+        validation_alias=AliasChoices("CRIMELINK_REDIS_URL", "REDIS_URL", "REDIS_URI"),
+    )
+    celery_broker_url: str = Field(
+        default=runtime.DEFAULT_CELERY_BROKER_URL,
+        validation_alias=AliasChoices("CRIMELINK_CELERY_BROKER_URL", "CELERY_BROKER_URL"),
+    )
+    celery_result_backend: str = Field(
+        default=runtime.DEFAULT_CELERY_RESULT_BACKEND,
+        validation_alias=AliasChoices("CRIMELINK_CELERY_RESULT_BACKEND", "CELERY_RESULT_BACKEND"),
+    )
 
-    minio_endpoint: str = runtime.DEFAULT_MINIO_ENDPOINT
-    minio_access_key: str = "crimelink"
-    minio_secret_key: str = "crimelink"
-    minio_secure: bool = False
-    minio_bucket_documents: str = "documents"
-    minio_bucket_derived: str = "documents-derived"
-    minio_bucket_audit_anchor: str = "audit-anchor"
+    # MinIO / any S3-compatible object store.  Accepts the ``CRIMELINK_`` name,
+    # the bare ``MINIO_*`` names, the AWS SDK style (``S3_ENDPOINT`` /
+    # ``S3_ACCESS_KEY_ID`` / ``S3_SECRET_ACCESS_KEY``) and the AWS CLI style
+    # (``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` / ``AWS_ENDPOINT_URL``).
+    minio_endpoint: str = Field(
+        default=runtime.DEFAULT_MINIO_ENDPOINT,
+        validation_alias=AliasChoices(
+            "CRIMELINK_MINIO_ENDPOINT",
+            "S3_ENDPOINT",
+            "S3_ENDPOINT_URL",
+            "MINIO_ENDPOINT",
+            "MINIO_SERVER",
+            "AWS_ENDPOINT_URL",
+        ),
+    )
+    minio_access_key: str = Field(
+        default="crimelink",
+        validation_alias=AliasChoices(
+            "CRIMELINK_MINIO_ACCESS_KEY",
+            "S3_ACCESS_KEY_ID",
+            "S3_ACCESS_KEY",
+            "MINIO_ACCESS_KEY",
+            "MINIO_ACCESS_KEY_ID",
+            "AWS_ACCESS_KEY_ID",
+        ),
+    )
+    minio_secret_key: str = Field(
+        default="crimelink",
+        validation_alias=AliasChoices(
+            "CRIMELINK_MINIO_SECRET_KEY",
+            "S3_SECRET_ACCESS_KEY",
+            "S3_SECRET_KEY",
+            "MINIO_SECRET_KEY",
+            "MINIO_SECRET_ACCESS_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+    )
+    minio_secure: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CRIMELINK_MINIO_SECURE", "S3_SECURE", "MINIO_SECURE"),
+    )
+    minio_bucket_documents: str = Field(
+        default="documents",
+        validation_alias=AliasChoices(
+            "CRIMELINK_MINIO_BUCKET_DOCUMENTS", "S3_BUCKET_DOCUMENTS", "MINIO_BUCKET_DOCUMENTS"
+        ),
+    )
+    minio_bucket_derived: str = Field(
+        default="documents-derived",
+        validation_alias=AliasChoices(
+            "CRIMELINK_MINIO_BUCKET_DERIVED", "S3_BUCKET_DERIVED", "MINIO_BUCKET_DERIVED"
+        ),
+    )
+    minio_bucket_audit_anchor: str = Field(
+        default="audit-anchor",
+        validation_alias=AliasChoices(
+            "CRIMELINK_MINIO_BUCKET_AUDIT_ANCHOR",
+            "S3_BUCKET_AUDIT_ANCHOR",
+            "MINIO_BUCKET_AUDIT_ANCHOR",
+        ),
+    )
 
     # Filesystem roots used by the embedded adapters
     data_dir: Path = Field(default=REPO_ROOT / "var" / "data")
@@ -420,6 +529,69 @@ class Settings(BaseSettings):
                     )
         self._resolved_runtime_context = context
         self._endpoint_rewrites = rewrites
+        return self
+
+    @model_validator(mode="after")
+    def _derive_managed_service_defaults(self) -> "Settings":
+        """Derive credential gaps from the connection string itself.
+
+        Two common deployment patterns set only part of the configuration:
+
+        * **Neo4j Aura** — the URI is ``<scheme>://<instance-id>.databases.
+          neo4j.io`` and the database *and* user are that same instance id.
+          A deployment that sets only ``NEO4J_URI`` (plus credentials) would
+          otherwise target a database literally named ``neo4j`` which Aura
+          never has, surfacing as ``22N51 GraphDatabaseError: The provided
+          reference does not identify any graph database``.  Deriving both
+          from the URI makes the connection string the single source of truth
+          and makes the old failure structurally impossible: the default
+          database ``neo4j`` can never be selected for an Aura host.
+        * **S3/MinIO** — an endpoint that already carries an ``https://``
+          scheme is, by definition, TLS.
+
+        Explicit configuration always wins: a value the operator set in the
+        environment (any of the accepted names) is never overridden here.
+        ``NEO4J_AUTH`` (the standard ``user:password`` form) fills both the
+        user and the password when neither was set.
+        """
+        explicit = set(self.model_fields_set)
+
+        # NEO4J_AUTH="user:password" is the canonical Neo4j environment form.
+        auth = os.environ.get("NEO4J_AUTH", "")
+        auth_user, sep, auth_password = auth.partition(":")
+        if (
+            sep
+            and auth_user
+            and auth_password
+            and "neo4j_user" not in explicit
+            and "neo4j_password" not in explicit
+        ):
+            self.neo4j_user = auth_user
+            self.neo4j_password = auth_password
+            explicit |= {"neo4j_user", "neo4j_password"}
+
+        host = urlparse(self.neo4j_uri).hostname or ""
+        aura = re.fullmatch(r"([0-9a-f]{8})\.databases\.neo4j\.io", host)
+        if aura:
+            instance_id = aura.group(1)
+            if "neo4j_user" not in explicit and self.neo4j_user == "neo4j":
+                self.neo4j_user = instance_id
+            if "neo4j_database" not in explicit and self.neo4j_database == "neo4j":
+                self.neo4j_database = instance_id
+
+        # The MinIO client takes a bare ``host[:port]`` — the scheme is
+        # conveyed by the ``secure`` flag, and a URL with a scheme raises
+        # ``"path in endpoint is not allowed"``.  AWS-style environment
+        # variables (``S3_ENDPOINT`` / ``AWS_ENDPOINT_URL``) carry a full
+        # URL, so normalise it: ``https://s3.x.com`` → endpoint ``s3.x.com``
+        # with TLS on.  A scheme-less endpoint keeps working as before
+        # (``MINIO_SECURE`` decides).
+        if "://" in self.minio_endpoint:
+            parts = urlparse(self.minio_endpoint)
+            if parts.scheme in {"http", "https"} and parts.hostname:
+                self.minio_endpoint = self.minio_endpoint.split("://", 1)[1].rstrip("/")
+                if parts.scheme == "https":
+                    self.minio_secure = True
         return self
 
     @model_validator(mode="after")

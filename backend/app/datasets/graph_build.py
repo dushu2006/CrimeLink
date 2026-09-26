@@ -188,6 +188,7 @@ def build_edge(
     relationship: DatasetRelationship,
     *,
     fallback_doc_id: str,
+    fallback_case_ids: Sequence[str] = (),
 ) -> GraphEdge:
     rel_type = _graph_rel(relationship.rel_type)
     if rel_type is None:
@@ -198,6 +199,12 @@ def build_edge(
     source_doc_ids = list(attrs.get("source_doc_ids") or provenance.get("source_doc_ids") or [])
     if source_doc_id and source_doc_id not in source_doc_ids:
         source_doc_ids.append(source_doc_id)
+    # Case scope: the relationship's own explicit case list first; when the
+    # source data does not state one, the edge is visible in the cases its
+    # endpoints belong to (the union, so an edge is never invisible to every
+    # case while both endpoints are visible — an unscoped edge in a case-less
+    # dataset would make the whole graph a node cloud with no edges).
+    case_scope = list(relationship.case_ids) or list(fallback_case_ids)
     properties: dict[str, Any] = {
         "dataset_id": dataset_id,
         "canonical_rel_type": relationship.rel_type,
@@ -206,7 +213,7 @@ def build_edge(
         "support_level": attrs.get("support_level", "direct_source_record"),
         "contradiction_state": attrs.get("contradiction_state", "not_recorded"),
         "analytical_basis": attrs.get("analytical_basis", "source_record"),
-        "case_scope": list(relationship.case_ids),
+        "case_scope": case_scope,
         # G1: an evidenced edge must name the document that justifies it.  The
         # dataset file the row came from *is* that document.
         "source_doc_id": source_doc_id,
@@ -226,8 +233,8 @@ def build_edge(
         if value in (None, "") or key in properties:
             continue
         properties[key] = value
-    if relationship.case_ids:
-        properties["case_ids"] = list(relationship.case_ids)
+    if case_scope:
+        properties["case_ids"] = case_scope
     return GraphEdge(
         source_key=node_key(dataset_id, relationship.source_canonical_id),
         target_key=node_key(dataset_id, relationship.target_canonical_id),
@@ -289,9 +296,14 @@ async def project_dataset(
             select(Case).where(Case.dataset_id == dataset_id).order_by(Case.case_number)
         )
     ).scalars().all()
+    # The container case ("ALL") is the home for records no investigation
+    # claims; it is tracked separately from the real cases below, which are
+    # the only ones that get Case *nodes*.
+    container_case: Case | None = None
     case_by_key: dict[str, Case] = {}
     for case in cases:
         if case.dataset_case_key == "ALL":
+            container_case = case
             continue
         store.ensure_case_node(
             case.id, case.case_number, case.jurisdiction_id, dataset_id
@@ -312,8 +324,25 @@ async def project_dataset(
     # Which cases each entity participates in, so jurisdiction scoping works
     # and case-scoped reads can find it. The dataset's container case ("ALL")
     # catches whatever no investigation claims.
-    container_case = case_by_key.get("ALL")
-    default_case_id = container_case.id if container_case else (next(iter(case_by_key.values())).id if len(case_by_key) == 1 else None)
+    #
+    # NOTE: a case-less dataset — the production "Upload of 577 files v1" —
+    # has no real case to put unclaimed records in.  An earlier version
+    # looked up ``case_by_key.get("ALL")`` for the container, which can never
+    # match (the loop above skips it), so the default was *None* and every
+    # entity was projected with an empty case list: present in the store,
+    # invisible to every case-scoped read, and ``store.stats()`` the only
+    # place the data still appeared.
+    #
+    # When real cases exist the old rules stand: a single real case absorbs
+    # its unclaimed records (the container there is administrative), and with
+    # several cases there is no case the data supports, so records stay
+    # unscoped rather than being invented into one.
+    if case_by_key:
+        default_case_id = (
+            next(iter(case_by_key.values())).id if len(case_by_key) == 1 else None
+        )
+    else:
+        default_case_id = container_case.id if container_case is not None else None
     case_links = await _case_links(
         session,
         dataset_id,
@@ -395,7 +424,20 @@ async def project_dataset(
                 skipped_edges += 1
             continue
         try:
-            edge_batch.append(build_edge(dataset_id, relationship, fallback_doc_id=fallback_doc_id))
+            # When the source data carries no explicit case list, scope the
+            # edge to the cases its endpoints belong to (see build_edge).
+            derived_case_ids = sorted(
+                set(case_links.get(relationship.source_canonical_id, ()))
+                | set(case_links.get(relationship.target_canonical_id, ()))
+            )
+            edge_batch.append(
+                build_edge(
+                    dataset_id,
+                    relationship,
+                    fallback_doc_id=fallback_doc_id,
+                    fallback_case_ids=derived_case_ids,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - domain validation raises several types
             skipped_edges += 1
             log.warning(

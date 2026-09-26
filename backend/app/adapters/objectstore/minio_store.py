@@ -48,12 +48,27 @@ class MinioObjectStore:
         if Minio is None:  # pragma: no cover
             raise DependencyUnavailableError("minio client is not installed")
         self.settings = settings or get_settings()
+        # Bounded timeouts: on serverless platforms a black-holed S3 endpoint
+        # must not pin the invocation until the platform kills it.  The
+        # connect timeout keeps cold starts and health checks snappy; the read
+        # timeout covers object listings and presign calls.
         self._client = Minio(
             self.settings.minio_endpoint,
             access_key=self.settings.minio_access_key,
             secret_key=self.settings.minio_secret_key,
             secure=self.settings.minio_secure,
+            http_client=self._build_http_client(),
         )
+
+    @staticmethod
+    def _build_http_client():
+        try:
+            import urllib3
+
+            timeout = urllib3.Timeout(connect=5.0, read=20.0)
+            return urllib3.PoolManager(timeout=timeout, maxsize=4, retries=False)
+        except ImportError:  # pragma: no cover - minio requires urllib3
+            return None
         self._buckets = (
             self.settings.minio_bucket_documents,
             self.settings.minio_bucket_derived,
@@ -127,3 +142,75 @@ class MinioObjectStore:
             return [obj.object_name for obj in self._client.list_objects(bucket, prefix=prefix)]
         except S3Error:  # pragma: no cover
             return []
+
+    # --------------------------------------------------------------- health
+    def health_check(self) -> tuple[bool, str, str | None]:
+        """Honest reachability probe: ``(ok, detail, error)``.
+
+        Actually contacts the object store (``bucket_exists`` on the documents
+        bucket) and distinguishes the three failure classes that operators
+        need to act on differently:
+
+        * **config**      — the endpoint answered but the bucket is missing;
+        * **auth**        — the endpoint answered but rejected the credential;
+        * **connectivity** — the endpoint could not be reached at all (DNS,
+          refused, timeout).  This is the class that surfaces when a compose
+          hostname (``minio:9000``) is used from a serverless runtime.
+
+        ``detail``/``error`` are sanitized: the endpoint host is useful for
+        debugging, credentials never are.
+        """
+        from urllib.parse import urlsplit
+
+        endpoint = self.settings.minio_endpoint
+        try:
+            host = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").netloc or endpoint
+        except ValueError:  # pragma: no cover
+            host = endpoint
+        detail = f"bucket '{self.settings.minio_bucket_documents}' @ {host}"
+        try:
+            if not self._client.bucket_exists(self.settings.minio_bucket_documents):
+                return (
+                    False,
+                    detail,
+                    "object store reachable but the configured bucket does not exist "
+                    "(config) — create the bucket or correct CRIMELINK_MINIO_BUCKET_DOCUMENTS",
+                )
+            return True, detail, None
+        except S3Error as exc:
+            return False, detail, self._describe_s3_error(exc)
+        except Exception as exc:  # network layer (urllib3 wraps DNS/timeout/refused)
+            return False, detail, self._describe_network_error(host, exc)
+
+    @staticmethod
+    def _describe_s3_error(exc: Exception) -> str:
+        code = str(getattr(exc, "code", "") or "")
+        if code in {"NoSuchBucket", "NoSuchKey"}:
+            return "object store reachable but the bucket was not found (config)"
+        if code in {
+            "AccessDenied",
+            "InvalidAccessKeyId",
+            "SignatureDoesNotMatch",
+            "InvalidClientTokenId",
+            "AuthFailure",
+        }:
+            return "object store rejected the credentials (auth) — check the S3/MinIO access key and secret"
+        message = str(exc).strip().splitlines()[0] if str(exc).strip() else code or "unknown"
+        return f"object store error (auth/config) {message[:200]}"
+
+    @staticmethod
+    def _describe_network_error(host: str, exc: Exception) -> str:
+        text = str(exc)
+        lowered = text.lower()
+        if "getaddrinfo" in lowered or "name or service not known" in lowered or "nodename nor servname" in lowered:
+            return (
+                f"object store unreachable (connectivity) — host '{host}' does not resolve from this runtime. "
+                "Compose service names only exist on the Compose network; a serverless deployment needs the "
+                "public S3/MinIO endpoint URL"
+            )
+        if "refused" in lowered:
+            return f"object store unreachable (connectivity) — connection refused by '{host}'"
+        if "timed out" in lowered or "timeout" in lowered:
+            return f"object store unreachable (connectivity) — '{host}' timed out"
+        message = text.strip().splitlines()[0] if text.strip() else exc.__class__.__name__
+        return f"object store unreachable (connectivity) — {message[:200]}"

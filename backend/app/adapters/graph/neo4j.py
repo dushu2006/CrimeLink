@@ -61,10 +61,38 @@ except ImportError:  # pragma: no cover - production image always has it
     Neo4jServiceUnavailable = None  # type: ignore
     Neo4jSessionExpired = None  # type: ignore
 
+# ``DatabaseNotFound`` exists only in some driver versions (the 22N51 code is
+# the stable contract; the class name is not).  Imported in its own guard so
+# its absence never cascades into the connectivity classifiers above.
+try:
+    from neo4j.exceptions import (  # type: ignore
+        DatabaseNotFound as Neo4jDatabaseNotFound,
+    )
+except ImportError:  # pragma: no cover - older/newer drivers
+    Neo4jDatabaseNotFound = None  # type: ignore
+
 GRAPH_UNAVAILABLE_MESSAGE = (
     "The graph database (Neo4j) is unreachable. Graph views are temporarily "
     "unavailable; relational case data is unaffected."
 )
+
+
+def _is_database_not_found(exc: BaseException) -> bool:
+    """Neo4j error 22N51: the server is reachable but has no such database.
+
+    A *configuration* failure (wrong ``NEO4J_DATABASE``), not connectivity —
+    the historical production bug: the deployment's Aura instance has database
+    ``608355f3`` while the app asked for the default ``neo4j``.  Classified
+    separately so the 503 message tells the operator exactly what to fix
+    instead of the generic "unreachable".
+    """
+    if Neo4jDatabaseNotFound is not None and isinstance(exc, Neo4jDatabaseNotFound):
+        return True
+    # The Neo4jError ``code`` is the stable contract across driver versions.
+    code = str(getattr(exc, "code", "") or "")
+    if "22N51" in code or "DatabaseNotFound" in code:
+        return True
+    return "22N51" in str(exc)
 
 
 def _is_connectivity_failure(exc: BaseException) -> bool:
@@ -97,6 +125,17 @@ def _is_connectivity_failure(exc: BaseException) -> bool:
 
 def _unavailable(exc: BaseException) -> ServiceUnavailableError:
     return ServiceUnavailableError(f"{GRAPH_UNAVAILABLE_MESSAGE} ({type(exc).__name__})")
+
+
+def _database_not_found(database: str) -> ServiceUnavailableError:
+    """Actionable 503 for Neo4j error 22N51 (unknown database reference)."""
+    return ServiceUnavailableError(
+        f"The configured Neo4j database '{database}' does not exist on the server "
+        "(Neo4j 22N51 — configuration failure, the server itself is reachable). "
+        "Set NEO4J_DATABASE / CRIMELINK_NEO4J_DATABASE to the database that exists in "
+        "your deployment — for Neo4j Aura it is the instance id from the connection "
+        "URI (e.g. '608355f3' for neo4j+s://608355f3.databases.neo4j.io)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +368,8 @@ class Neo4jGraphStore:
             with self._driver.session(database=self.settings.neo4j_database) as session:
                 return session.execute_write(fn, *args, **kwargs)
         except Exception as exc:
+            if _is_database_not_found(exc):
+                raise _database_not_found(self.settings.neo4j_database) from exc
             if _is_connectivity_failure(exc):
                 raise _unavailable(exc) from exc
             raise
@@ -338,6 +379,8 @@ class Neo4jGraphStore:
             with self._driver.session(database=self.settings.neo4j_database) as session:
                 return session.execute_read(fn, *args, **kwargs)
         except Exception as exc:
+            if _is_database_not_found(exc):
+                raise _database_not_found(self.settings.neo4j_database) from exc
             if _is_connectivity_failure(exc):
                 raise _unavailable(exc) from exc
             raise

@@ -57,11 +57,33 @@ async def documents(
     if not allowed:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
 
+    # A case-less dataset carries its documents at the *dataset* level
+    # (``case_id IS NULL`` — see ``datasets/pipeline.py::_ingest_documents``,
+    # which never assigns them to the pseudo container case).  When the
+    # container case is the only visible case, those rows are this dataset's
+    # evidence and must be listed; without this a case-less corpus shows an
+    # empty documents page while the admin console lists the same files.
+    sole_container = await case_service._sole_container_case(session)
+    include_dataset_level = sole_container is not None and sole_container.id in allowed
+    in_clause = CaseDocument.case_id.in_(allowed)
+    if include_dataset_level:
+        # Dataset-level rows stay inside the same dataset boundary every other
+        # listing honours: active dataset plus hand-created (NULL) rows — a
+        # replaced dataset's NULL documents must not resurface here.
+        from app.datasets import registry
+
+        active = await registry.active_dataset_id(session)
+        if active is not None:
+            dataset_clause = (
+                CaseDocument.dataset_id == active
+            ) | CaseDocument.dataset_id.is_(None)
+        else:
+            dataset_clause = CaseDocument.dataset_id.is_(None)
+        in_clause = in_clause | (CaseDocument.case_id.is_(None) & dataset_clause)
+
     # A discarded document is a tombstone: the row stays for the audit trail,
     # but it is no longer evidence and must not be listed as such.
-    query = select(CaseDocument).where(
-        CaseDocument.case_id.in_(allowed), CaseDocument.is_deleted.is_(False)
-    )
+    query = select(CaseDocument).where(in_clause, CaseDocument.is_deleted.is_(False))
     if case_id:
         query = query.where(CaseDocument.case_id == case_id)
     if status:

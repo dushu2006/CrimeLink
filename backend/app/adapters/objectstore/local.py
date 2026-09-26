@@ -132,6 +132,22 @@ class LocalObjectStore:
                     out.append(rel)
         return sorted(out)
 
+    def health_check(self) -> tuple[bool, str, str | None]:
+        """Honest probe for the embedded filesystem store.
+
+        The filesystem exists (it is created in ``__init__``), so the useful
+        check is *writability* — a read-only mount would still report ``ok``
+        from a mere ``exists()`` while every pipeline write fails.
+        """
+        detail = f"filesystem @ {self.root}"
+        try:
+            probe = self.root / ".crimelink-health"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except OSError as exc:
+            return False, detail, f"object store not writable (connectivity/config) — {exc.strerror or exc}"
+        return True, detail, None
+
     @staticmethod
     def _verify(path: Path, data: bytes) -> None:
         """Detect silent corruption; a hash mismatch is a chain-of-custody event."""
