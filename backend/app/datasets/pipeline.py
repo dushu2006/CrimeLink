@@ -723,15 +723,26 @@ async def _ingest_documents(
 ) -> tuple[int, int]:
     """Register document files as case documents and link their mentions.
 
-    Case assignment follows the 5-tier resolution hierarchy:
-    1. Explicit case_id / case_number field (manifest / index)
-    2. Explicit FIR / case relationship
-    3. Relative folder path (e.g. cases/C101/...)
-    4. Filename metadata
-    5. Document metadata / text mentions
+    STRUCTURE-AGNOSTIC DESIGN:
+    - Folder names are OPTIONAL context, never authoritative.
+    - Case association is CONTENT-FIRST: explicit identifiers, text mentions,
+      shared entities, then folder/filename as weak supporting evidence.
+    - All supported document/text files are ingested regardless of folder.
+    - Manifest detection is content-aware, not filename-only.
+    - Provenance (original_path) is preserved for every fact.
 
-    Dataset-level resources (README, DATA_DICTIONARY, QUALITY_REPORT, MASTER_INDEX)
-    receive case_id = None and are never assigned to pseudo-cases.
+    Case assignment hierarchy (content-first):
+    1. Explicit case_id in manifest/index (content from documents.csv or any
+       table that maps to DOCUMENT.path + CASE.id)
+    2. Case identifiers extracted from file CONTENT (text, JSON, CSV columns)
+    3. FIR -> case relationships (content)
+    4. Entity mentions whose canonical entities belong to cases (shared ids)
+    5. Folder context as supporting evidence (weak, optional)
+    6. Filename metadata (weak)
+    7. Single-case dataset default (fallback)
+
+    Dataset-level resources (README, DATA_DICTIONARY, etc.) receive
+    case_id = None and are never assigned to pseudo-cases.
     """
     cases = (
         await session.execute(select(Case).where(Case.dataset_id == dataset.id))
@@ -744,16 +755,123 @@ async def _ingest_documents(
         c.dataset_case_key: c for c in cases if c.dataset_case_key and c.dataset_case_key != "ALL"
     }
 
-    # Manifest and FIR lookups
+    # Manifest and FIR lookups - CONTENT-AWARE, not filename-only
     manifest_by_relpath: dict[str, dict[str, str]] = {}
     manifest_by_filename: dict[str, dict[str, str]] = {}
     fir_to_case: dict[str, str] = {}
 
     import csv
+    import json
+
+    # Helper: content-based detection of document index tables
+    def _is_document_index_table(columns: list[str], mapping: sm.TableMapping) -> bool:
+        m = mapping.mapped
+        has_path = bool(m.get("DOCUMENT.path") or m.get("DOCUMENT.id"))
+        has_case = bool(m.get("CASE.id") or m.get("CASE.number"))
+        # Also check raw column names for file_path / relative_path + case_id
+        lowered = {c.lower() for c in columns}
+        has_file_col = any(
+            kw in lowered
+            for kw in ("file_path", "filepath", "relative_path", "relativepath", "filename", "file_name")
+        )
+        has_case_col = "case_id" in lowered or "case_number" in lowered
+        return (has_path and has_case) or (has_file_col and has_case_col)
+
+    def _is_fir_table(columns: list[str], mapping: sm.TableMapping) -> bool:
+        m = mapping.mapped
+        has_fir = bool(m.get("FIR.id") or m.get("FIR.number"))
+        has_case = bool(m.get("CASE.id") or m.get("CASE.number"))
+        lowered = {c.lower() for c in columns}
+        has_fir_col = "fir_id" in lowered or "fir_number" in lowered or "fir_no" in lowered
+        has_case_col = "case_id" in lowered
+        return (has_fir and has_case) or (has_fir_col and has_case_col)
 
     for entry in found.usable:
         fn_lower = entry.filename.lower()
-        if fn_lower in {"documents.csv", "00_document_index.csv"}:
+        # Filename-based detection (backward compatible)
+        is_known_doc_manifest_name = fn_lower in {"documents.csv", "00_document_index.csv", "document_index.csv"}
+        is_known_fir_manifest_name = fn_lower in {"fir_records.csv", "firs.csv", "fir.csv"}
+
+        # Content-based detection for any table file
+        if entry.kind == "table":
+            try:
+                tables = readers.read_tables(entry.path, entry.extension)
+                for table in tables:
+                    if not table.columns:
+                        continue
+                    mapping = sm.map_table(table.columns, table.rows)
+                    if _is_document_index_table(table.columns, mapping):
+                        for row in table.rows:
+                            rel = (
+                                row.get(mapping.mapped.get("DOCUMENT.path", "") or "")
+                                or row.get("relative_path")
+                                or row.get("file_path")
+                                or row.get("filepath")
+                                or ""
+                            )
+                            rel = str(rel).replace("\\", "/").strip().lower()
+                            fname = (
+                                row.get("filename")
+                                or row.get("file_name")
+                                or Path(rel).name
+                                if rel
+                                else ""
+                            )
+                            fname = str(fname).strip().lower()
+                            cid = (
+                                row.get(mapping.mapped.get("CASE.id", "") or "")
+                                or row.get(mapping.mapped.get("CASE.number", "") or "")
+                                or row.get("case_id")
+                                or row.get("case_number")
+                                or ""
+                            )
+                            cid = str(cid).strip()
+                            dtype = (
+                                row.get(mapping.mapped.get("DOCUMENT.type", "") or "")
+                                or row.get("document_type")
+                                or ""
+                            )
+                            dtype = str(dtype).strip()
+                            doc_id = (
+                                row.get(mapping.mapped.get("DOCUMENT.id", "") or "")
+                                or row.get("document_id")
+                                or row.get("doc_id")
+                                or ""
+                            )
+                            doc_id = str(doc_id).strip()
+                            data = {"case_id": cid, "document_type": dtype, "document_id": doc_id}
+                            if rel:
+                                manifest_by_relpath[rel] = data
+                            if fname:
+                                manifest_by_filename[fname] = data
+                    if _is_fir_table(table.columns, mapping):
+                        for row in table.rows:
+                            fid = (
+                                row.get(mapping.mapped.get("FIR.id", "") or "")
+                                or row.get(mapping.mapped.get("FIR.number", "") or "")
+                                or row.get("fir_id")
+                                or row.get("fir_number")
+                                or row.get("fir_no")
+                                or ""
+                            )
+                            fid = str(fid).strip().upper()
+                            cid = (
+                                row.get(mapping.mapped.get("CASE.id", "") or "")
+                                or row.get("case_id")
+                                or ""
+                            )
+                            cid = str(cid).strip()
+                            if fid and cid:
+                                fir_to_case[fid] = cid
+                                fir_to_case[fid.replace("-", "")] = cid
+                                fir_to_case[fid.replace("_", "")] = cid
+                                fir_to_case[fid.replace("/", "")] = cid
+            except Exception as exc:  # noqa: BLE001
+                # One bad table must not stop manifest discovery
+                log.warning("pipeline.manifest_content_scan_failed", file=entry.relative_path, error=str(exc))
+
+        # Filename-based fallback (original behavior, preserved for backward compat)
+        if is_known_doc_manifest_name:
             try:
                 with open(entry.path, "r", encoding="utf-8-sig", errors="replace") as f:
                     reader = csv.DictReader(f)
@@ -770,7 +888,7 @@ async def _ingest_documents(
                             manifest_by_filename[fname] = data
             except Exception as exc:  # noqa: BLE001
                 log.warning("pipeline.manifest_read_failed", file=entry.relative_path, error=str(exc))
-        elif fn_lower in {"fir_records.csv", "firs.csv"}:
+        elif is_known_fir_manifest_name:
             try:
                 with open(entry.path, "r", encoding="utf-8-sig", errors="replace") as f:
                     reader = csv.DictReader(f)
@@ -784,7 +902,7 @@ async def _ingest_documents(
             except Exception as exc:  # noqa: BLE001
                 log.warning("pipeline.fir_read_failed", file=entry.relative_path, error=str(exc))
 
-    # Also build FIR -> case mapping from normalized relationships
+    # Also build FIR -> case mapping from normalized relationships (content-based)
     for rel in result.relationships.values():
         if rel.rel_type in {"HAS_FIR", "IN_CASE", "BELONGS_TO_CASE"}:
             src, tgt = rel.source_canonical_id, rel.target_canonical_id
@@ -793,22 +911,41 @@ async def _ingest_documents(
                 f_key = tgt.split(":", 1)[-1].upper()
                 fir_to_case[f_key] = c_key
                 fir_to_case[f_key.replace("-", "")] = c_key
+                fir_to_case[f_key.replace("_", "")] = c_key
+                fir_to_case[f_key.replace("/", "")] = c_key
             elif tgt.startswith(f"{sm.CASE}:") and src.startswith(f"{sm.FIR}:"):
                 c_key = tgt.split(":", 1)[-1]
                 f_key = src.split(":", 1)[-1].upper()
                 fir_to_case[f_key] = c_key
                 fir_to_case[f_key.replace("-", "")] = c_key
+                fir_to_case[f_key.replace("_", "")] = c_key
+                fir_to_case[f_key.replace("/", "")] = c_key
 
-    # Select candidate files for document ingestion
+    # Build entity -> cases mapping from canonical relationships (content-based)
+    entity_to_cases: dict[str, set[str]] = {}
+    for rel in result.relationships.values():
+        # Any relationship where target is CASE indicates source belongs to that case
+        if rel.target_canonical_id.startswith(f"{sm.CASE}:"):
+            c_key = rel.target_canonical_id.split(":", 1)[-1]
+            case_obj = case_by_key.get(c_key)
+            if case_obj:
+                entity_to_cases.setdefault(rel.source_canonical_id, set()).add(case_obj.id)
+                # Also propagate case key for lookup
+        # Also check case_ids on relationships
+        for cid in rel.case_ids:
+            entity_to_cases.setdefault(rel.source_canonical_id, set()).add(cid)
+            entity_to_cases.setdefault(rel.target_canonical_id, set()).add(cid)
+
+    # Select candidate files for document ingestion - STRUCTURE-AGNOSTIC
+    # Include ALL document/text files regardless of folder, plus manifest-referenced files
     candidates: list[discovery.DiscoveredFile] = []
     seen_relpaths: set[str] = set()
 
     for f in found.usable:
         norm_rel = f.relative_path.replace("\\", "/").strip().lower()
-        parts = [p.lower() for p in Path(f.relative_path).parts]
         fn_lower = f.filename.lower()
 
-        is_case_folder = "cases" in parts or any(p.upper() in case_by_key for p in parts)
+        # Content-first inclusion criteria (no folder name dependency)
         is_in_manifest = norm_rel in manifest_by_relpath or fn_lower in manifest_by_filename
         is_doc_or_text = f.kind in {"document", "text"}
         is_dataset_doc = (
@@ -817,14 +954,15 @@ async def _ingest_documents(
                 "data_dictionary.md", "data_dictionary.txt",
                 "quality_report.txt", "quality_report.md",
                 "dataset_metadata.json",
+                "schema.json",
             }
             or "master_index" in fn_lower
+            or "document_index" in fn_lower
         )
 
-        if is_case_folder or is_in_manifest or is_doc_or_text or is_dataset_doc:
-            # Exclude master tabular data unless explicitly indexed as a document
-            if parts and parts[0] == "master_data" and not is_in_manifest and not is_dataset_doc:
-                continue
+        # STRUCTURE-AGNOSTIC: include all document/text files, manifest files, and dataset docs
+        # Folder name is NOT a filter - it's preserved as provenance only
+        if is_doc_or_text or is_in_manifest or is_dataset_doc:
             if norm_rel not in seen_relpaths:
                 seen_relpaths.add(norm_rel)
                 candidates.append(f)
@@ -876,8 +1014,24 @@ async def _ingest_documents(
 
         mentions = _mentions(text, by_natural, by_phone, by_plate)
 
+        # Also extract case IDs directly from content (CONTENT-FIRST)
+        content_case_ids = _extract_case_ids_from_content(
+            text=text,
+            file_path=entry.path,
+            extension=entry.extension,
+            relative_path=entry.relative_path,
+            filename=entry.filename,
+            case_by_key=case_by_key,
+        )
+
+        # Entity-based case candidates: if document mentions entities that belong to cases
+        entity_case_votes: dict[str, int] = {}  # case_id -> vote count
+        for canonical_id in mentions:
+            for cid in entity_to_cases.get(canonical_id, set()):
+                entity_case_votes[cid] = entity_case_votes.get(cid, 0) + 1
+
         # -------------------------------------------------------------------
-        # 5-Tier Case Resolution
+        # CONTENT-FIRST Case Resolution (folder context is secondary)
         # -------------------------------------------------------------------
         target_case: Case | None = None
         resolution_method: str = "unresolved"
@@ -887,60 +1041,99 @@ async def _ingest_documents(
         fn_lower = entry.filename.lower()
         manifest_meta = manifest_by_relpath.get(norm_rel) or manifest_by_filename.get(fn_lower)
 
-        # Tier 1: Explicit case_id / case_number field in manifest/index
+        # Tier 1: Explicit case_id in manifest/index (content from structured index)
         if manifest_meta and manifest_meta.get("case_id"):
             m_case_key = manifest_meta["case_id"]
             if m_case_key in case_by_key:
                 target_case = case_by_key[m_case_key]
                 candidate_case_id = m_case_key
-                resolution_method = "explicit manifest case_id"
+                resolution_method = "explicit manifest case_id (content)"
 
-        # Tier 2: Explicit FIR / case relationship
+        # Tier 2: Case identifiers extracted from file CONTENT (primary evidence)
+        if not target_case and content_case_ids:
+            sorted_content_cases = sorted(
+                content_case_ids.items(), key=lambda kv: len(kv[1]), reverse=True
+            )
+            if len(sorted_content_cases) == 1:
+                ck = sorted_content_cases[0][0]
+                if ck in case_by_key:
+                    target_case = case_by_key[ck]
+                    candidate_case_id = ck
+                    resolution_method = f"content case identifier: {sorted_content_cases[0][1][0]}"
+            elif len(sorted_content_cases) > 1:
+                top_count = len(sorted_content_cases[0][1])
+                second_count = len(sorted_content_cases[1][1]) if len(sorted_content_cases) > 1 else 0
+                if top_count >= second_count * 2 and top_count >= 2:
+                    ck = sorted_content_cases[0][0]
+                    if ck in case_by_key:
+                        target_case = case_by_key[ck]
+                        candidate_case_id = ck
+                        resolution_method = f"content case identifier (dominant): {sorted_content_cases[0][1][0]}"
+
+        # Tier 3: FIR -> case relationships (content-based)
         if not target_case:
-            fir_matches = re.findall(r"\b(FIR[-_]?\d{2,6})\b", f"{entry.relative_path} {entry.filename}", re.IGNORECASE)
+            fir_candidates: dict[str, int] = {}
+            for ck, evidences in content_case_ids.items():
+                if ck.upper().startswith("FIR"):
+                    for ev in evidences:
+                        mapped = fir_to_case.get(ck.upper()) or fir_to_case.get(
+                            ck.upper().replace("-", "").replace("_", "").replace("/", "")
+                        )
+                        if mapped and mapped in case_by_key:
+                            fir_candidates[mapped] = fir_candidates.get(mapped, 0) + 1
+            fir_matches = re.findall(
+                r"\b(FIR[-_/]?\d{2,10})\b",
+                f"{entry.relative_path} {entry.filename} {text[:2000]}",
+                re.IGNORECASE,
+            )
             for fm in fir_matches:
-                fm_norm = fm.upper().replace("-", "").replace("_", "")
-                mapped_case_key = fir_to_case.get(fm.upper()) or fir_to_case.get(fm_norm)
+                fm_upper = fm.upper()
+                fm_norm = fm_upper.replace("-", "").replace("_", "").replace("/", "")
+                mapped_case_key = fir_to_case.get(fm_upper) or fir_to_case.get(fm_norm)
                 if mapped_case_key and mapped_case_key in case_by_key:
-                    target_case = case_by_key[mapped_case_key]
-                    candidate_case_id = mapped_case_key
-                    resolution_method = "explicit FIR/case relationship"
-                    break
+                    fir_candidates[mapped_case_key] = fir_candidates.get(mapped_case_key, 0) + 1
 
-        # Tier 3: Relative folder path
-        if not target_case:
-            parts = Path(entry.relative_path).parts
-            for p in parts:
-                p_clean = p.strip()
-                if p_clean in case_by_key:
-                    target_case = case_by_key[p_clean]
-                    candidate_case_id = p_clean
-                    resolution_method = "relative folder path"
-                    break
+            if fir_candidates:
+                best_case_key = max(fir_candidates.items(), key=lambda kv: kv[1])[0]
+                target_case = case_by_key[best_case_key]
+                candidate_case_id = best_case_key
+                resolution_method = "explicit FIR/case relationship (content)"
 
-        # Tier 4: Filename metadata
-        if not target_case:
-            case_matches = re.findall(r"\b(C\d{3,6}|CASE[-_]?\d{3,6})\b", entry.filename, re.IGNORECASE)
-            for cm in case_matches:
-                cm_clean = cm.upper()
-                if cm_clean in case_by_key:
-                    target_case = case_by_key[cm_clean]
-                    candidate_case_id = cm_clean
-                    resolution_method = "filename metadata"
-                    break
+        # Tier 4: Entity mentions that belong to cases (shared identifiers)
+        if not target_case and entity_case_votes:
+            sorted_votes = sorted(entity_case_votes.items(), key=lambda kv: kv[1], reverse=True)
+            if len(sorted_votes) == 1:
+                case_id = sorted_votes[0][0]
+                for ck, case_obj in case_by_key.items():
+                    if case_obj.id == case_id:
+                        target_case = case_obj
+                        candidate_case_id = ck
+                        resolution_method = f"shared entity case membership ({sorted_votes[0][1]} entities)"
+                        break
+            elif len(sorted_votes) > 1:
+                top_votes = sorted_votes[0][1]
+                second_votes = sorted_votes[1][1]
+                if top_votes >= second_votes * 2 and top_votes >= 2:
+                    case_id = sorted_votes[0][0]
+                    for ck, case_obj in case_by_key.items():
+                        if case_obj.id == case_id:
+                            target_case = case_obj
+                            candidate_case_id = ck
+                            resolution_method = f"shared entity case membership (dominant: {top_votes} vs {second_votes})"
+                            break
 
-        # Tier 5: Document text / mentions
+        # Tier 5: Document text mentions of CASE entities directly
         if not target_case:
             picked = _pick_case(mentions, case_by_key)
             if picked is not None:
                 target_case = picked
                 candidate_case_id = picked.dataset_case_key
-                resolution_method = "document text mentions"
+                resolution_method = "document text mentions (case entity)"
             else:
                 for m in mentions:
                     if m.startswith(f"{sm.FIR}:"):
                         f_key = m.split(":", 1)[-1].upper()
-                        f_clean = f_key.replace("-", "").replace("_", "")
+                        f_clean = f_key.replace("-", "").replace("_", "").replace("/", "")
                         mapped = fir_to_case.get(f_key) or fir_to_case.get(f_clean)
                         if mapped and mapped in case_by_key:
                             target_case = case_by_key[mapped]
@@ -948,30 +1141,74 @@ async def _ingest_documents(
                             resolution_method = "document text mentions (FIR reference)"
                             break
 
-        # If unresolved: determine if dataset-level resource
+        # Tier 6: Folder context as SUPPORTING evidence (weak, optional)
         if not target_case:
-            is_dataset_level = (
-                fn_lower in {
-                    "readme.md", "readme.txt", "readme",
-                    "data_dictionary.md", "data_dictionary.txt",
-                    "quality_report.txt", "quality_report.md",
-                    "dataset_metadata.json",
-                }
-                or "master_index" in fn_lower
-                or "schema" in fn_lower
-                or entry.relative_path.replace("\\", "/").startswith(("master_data/", "meta/", "docs/"))
+            parts = Path(entry.relative_path).parts
+            folder_matches: list[str] = []
+            for p in parts[:-1]:
+                p_clean = p.strip()
+                if p_clean in case_by_key:
+                    folder_matches.append(p_clean)
+                elif p_clean.upper() in (k.upper() for k in case_by_key.keys()):
+                    for k in case_by_key.keys():
+                        if k.upper() == p_clean.upper():
+                            folder_matches.append(k)
+                            break
+
+            if folder_matches:
+                if not content_case_ids or any(fm in content_case_ids for fm in folder_matches):
+                    ck = folder_matches[-1]
+                    if ck in case_by_key:
+                        target_case = case_by_key[ck]
+                        candidate_case_id = ck
+                        resolution_method = "folder context as supporting evidence (secondary)"
+
+        # Tier 7: Filename metadata (weak supporting evidence)
+        if not target_case:
+            case_matches = re.findall(
+                r"\b(C\d{3,6}|CASE[-_]?\d{3,6}|FIR[-_/]?\d{2,10})\b",
+                entry.filename,
+                re.IGNORECASE,
+            )
+            for cm in case_matches:
+                cm_upper = cm.upper()
+                if cm_upper in case_by_key:
+                    target_case = case_by_key[cm_upper]
+                    candidate_case_id = cm_upper
+                    resolution_method = "filename metadata as supporting evidence (secondary)"
+                    break
+                cm_norm = re.sub(r"[^A-Z0-9]", "", cm_upper)
+                for k in case_by_key.keys():
+                    k_norm = re.sub(r"[^A-Z0-9]", "", k.upper())
+                    if cm_norm == k_norm or cm_norm in k_norm or k_norm in cm_norm:
+                        target_case = case_by_key[k]
+                        candidate_case_id = k
+                        resolution_method = "filename metadata as supporting evidence (secondary)"
+                        break
+                if target_case:
+                    break
+
+        # If still unresolved: determine if dataset-level resource or single-case default
+        if not target_case:
+            is_dataset_level = _is_dataset_level_resource(
+                filename=entry.filename,
+                relative_path=entry.relative_path,
+                text=text,
+                extension=entry.extension,
             )
             if is_dataset_level:
                 target_case = None
-                resolution_method = "dataset-level resource"
+                resolution_method = "dataset-level resource (content-based)"
             elif len(case_by_key) == 1:
-                target_case = next(iter(case_by_key.values()))
-                candidate_case_id = target_case.dataset_case_key
-                resolution_method = "single-case dataset default"
+                if not content_case_ids or len(case_by_key) == 1:
+                    target_case = next(iter(case_by_key.values()))
+                    candidate_case_id = target_case.dataset_case_key
+                    resolution_method = "single-case dataset default (content-compatible)"
             else:
                 target_case = None
-                resolution_method = "unresolved"
+                resolution_method = "unresolved (no reliable case association)"
 
+        # Document Type classification
         # Document Type classification
         doc_type = _resolve_document_type(
             entry,
@@ -1137,7 +1374,7 @@ async def _ingest_documents(
                 assigned_per_case.get(target_case.dataset_case_key, 0) + 1
             )
             assigned_count += 1
-        elif resolution_method == "dataset-level resource":
+        elif "dataset-level resource" in resolution_method:
             dataset_level_count += 1
         else:
             unassigned_count += 1
@@ -1238,7 +1475,239 @@ UNASSIGNED FILE DIAGNOSTICS
     return (created, mention_count)
 
 
+
+def _extract_case_ids_from_content(
+    *,
+    text: str,
+    file_path,
+    extension: str,
+    relative_path: str,
+    filename: str,
+    case_by_key: dict,
+) -> dict[str, list[str]]:
+    """Extract case identifiers from file CONTENT (structure-agnostic).
+
+    Returns dict: case_key -> list of evidence strings that indicated it.
+    This is CONTENT-FIRST: looks inside the actual file, not just its name/path.
+
+    Supported patterns:
+    - Explicit "Case Number: XXX", "Case No: XXX", "FIR No: XXX"
+    - Case IDs like C101, CASE-001, CASE_001, etc.
+    - FIR identifiers like FIR/2024/00101, FIR-001, FIR_001
+    - JSON fields: case_id, case_number, case_no, incident_id, fir_id, fir_number
+    - CSV columns that map to CASE.id / CASE.number
+    """
+    found: dict[str, list[str]] = {}
+    import json as _json
+
+    def _add(case_key: str, evidence: str):
+        ck = str(case_key).strip()
+        if not ck:
+            return
+        # Normalize: uppercase for matching, but preserve original key for lookup
+        # We will try to match against case_by_key keys in various forms
+        found.setdefault(ck, []).append(evidence)
+        # Also add uppercase variant
+        ck_up = ck.upper()
+        if ck_up != ck:
+            found.setdefault(ck_up, []).append(evidence)
+
+    # 1. Text-based extraction (works for PDF, TXT, DOCX, etc.)
+    if text:
+        # Pattern: Case Number: XXX, Case No: XXX, Case ID: XXX
+        for pattern in [
+            r"Case\s+Number\s*[:=]\s*([A-Z0-9/\-_]+)",
+            r"Case\s+No\s*[:=]\s*([A-Z0-9/\-_]+)",
+            r"Case\s+ID\s*[:=]\s*([A-Z0-9/\-_]+)",
+            r"FIR\s+No\s*[:=]\s*([A-Z0-9/\-_]+)",
+            r"FIR\s+Number\s*[:=]\s*([A-Z0-9/\-_]+)",
+            r"Incident\s+ID\s*[:=]\s*([A-Z0-9/\-_]+)",
+            r"Crime\s+Number\s*[:=]\s*([A-Z0-9/\-_]+)",
+        ]:
+            for m in re.finditer(pattern, text, re.IGNORECASE):
+                val = m.group(1).strip()
+                # Filter out very short or generic values
+                if len(val) >= 3 and len(val) <= 30:
+                    _add(val, f"text pattern {pattern[:20]}")
+
+        # Generic case ID patterns in text
+        # C101, C102, CASE-001, CASE_001, CASE001, etc.
+        for m in re.findall(r"\b(C\d{3,6})\b", text, re.IGNORECASE):
+            _add(m.upper(), "text Cxxx pattern")
+        for m in re.findall(r"\b(CASE[-_]?\d{2,6})\b", text, re.IGNORECASE):
+            _add(m.upper(), "text CASE pattern")
+        for m in re.findall(r"\b(FIR[-_/]?\d{2,10})\b", text, re.IGNORECASE):
+            _add(m.upper(), "text FIR pattern")
+        for m in re.findall(r"\b(FIR/\d{4}/\d{3,10})\b", text, re.IGNORECASE):
+            _add(m.upper(), "text FIR full pattern")
+
+    # 2. JSON content extraction (structure-agnostic: inspect actual JSON)
+    if extension.lower() in {".json", ".jsonl", ".ndjson"}:
+        try:
+            raw = file_path.read_text(encoding="utf-8", errors="replace")
+            if extension.lower() in {".jsonl", ".ndjson"}:
+                payloads = []
+                for line in raw.splitlines():
+                    line=line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payloads.append(_json.loads(line))
+                    except Exception:
+                        continue
+            else:
+                try:
+                    payloads = [_json.loads(raw)]
+                except Exception:
+                    payloads = []
+
+            def _walk_json(obj, depth=0):
+                if depth > 5:
+                    return
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        kl = str(k).lower()
+                        if any(x in kl for x in ("case_id", "case_number", "case_no", "incident_id", "crime_number", "fir_id", "fir_number", "fir_no")):
+                            if isinstance(v, str) and 2 <= len(v) <= 30:
+                                _add(v, f"json field {k}")
+                            elif isinstance(v, (int, float)):
+                                _add(str(v), f"json field {k}")
+                        # Recurse
+                        if isinstance(v, (dict, list)):
+                            _walk_json(v, depth+1)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, (dict, list)):
+                            _walk_json(item, depth+1)
+
+            for payload in payloads:
+                _walk_json(payload)
+        except Exception:
+            pass
+
+    # 3. CSV content extraction (inspect headers and values)
+    if extension.lower() in {".csv", ".tsv"}:
+        try:
+            tables = readers.read_tables(file_path, extension)
+            for table in tables:
+                if not table.columns:
+                    continue
+                mapping = sm.map_table(table.columns, table.rows)
+                # If table has CASE.id or CASE.number, collect those values
+                case_col = mapping.mapped.get("CASE.id") or mapping.mapped.get("CASE.number")
+                if case_col:
+                    for row in table.rows[:200]:  # Sample first 200 rows
+                        val = str(row.get(case_col, "") or "").strip()
+                        if val and 2 <= len(val) <= 30:
+                            _add(val, f"csv column {case_col}")
+                # Also check for generic case_id columns even if not mapped
+                for col in table.columns:
+                    if "case_id" in col.lower() or "case_number" in col.lower() or "case_no" in col.lower():
+                        for row in table.rows[:200]:
+                            val = str(row.get(col, "") or "").strip()
+                            if val and 2 <= len(val) <= 30:
+                                _add(val, f"csv column {col}")
+        except Exception:
+            pass
+
+    # 4. Normalize and match against known case keys (content-first matching)
+    # Build normalized lookup for known cases
+    normalized_known: dict[str, str] = {}  # normalized -> original key
+    for known_key in case_by_key.keys():
+        normalized_known[known_key.upper()] = known_key
+        # Also normalized without separators
+        norm = re.sub(r"[^A-Z0-9]", "", known_key.upper())
+        normalized_known[norm] = known_key
+        # Also handle C101 vs CASE-101 etc
+        # If known_key is C101, also accept CASE101, CASE-101
+        if re.match(r"^C\d+$", known_key.upper()):
+            num = re.sub(r"[^0-9]", "", known_key)
+            normalized_known[f"CASE{num}"] = known_key
+            normalized_known[f"CASE-{num}"] = known_key
+            normalized_known[f"CASE_{num}"] = known_key
+
+    matched: dict[str, list[str]] = {}
+    for extracted_key, evidences in found.items():
+        ek_upper = extracted_key.upper()
+        ek_norm = re.sub(r"[^A-Z0-9]", "", ek_upper)
+
+        # Direct match
+        if ek_upper in case_by_key:
+            matched.setdefault(ek_upper, []).extend(evidences)
+        elif ek_upper in normalized_known:
+            orig = normalized_known[ek_upper]
+            matched.setdefault(orig, []).extend(evidences)
+        elif ek_norm in normalized_known:
+            orig = normalized_known[ek_norm]
+            matched.setdefault(orig, []).extend(evidences)
+        # FIR matching - check if extracted is FIR that maps to case via fir_to_case logic
+        # This will be handled at higher level, but we keep FIR ids here too
+        elif ek_upper.startswith("FIR"):
+            matched.setdefault(ek_upper, []).extend(evidences)
+            # Also try normalized FIR without separators
+            if ek_norm not in matched:
+                matched.setdefault(ek_norm, []).extend(evidences)
+
+    # Also include any extracted keys that look like case IDs even if not in known list
+    # They will be filtered later, but we keep them for diagnostics
+    # For now, only return matched known cases plus FIRs
+    return matched
+
+
+def _is_dataset_level_resource(
+    *,
+    filename: str,
+    relative_path: str,
+    text: str,
+    extension: str,
+) -> bool:
+    """Determine if a file is a dataset-level resource (not case-specific).
+
+    Based on CONTENT and filename, not folder structure.
+    """
+    fn_lower = filename.lower()
+    rel_lower = relative_path.replace("\\", "/").lower()
+
+    # Filename-based dataset-level detection (content of name)
+    dataset_level_names = {
+        "readme.md", "readme.txt", "readme",
+        "data_dictionary.md", "data_dictionary.txt", "data_dictionary.csv",
+        "quality_report.txt", "quality_report.md",
+        "dataset_metadata.json", "metadata.json",
+        "schema.json",
+    }
+    if fn_lower in dataset_level_names:
+        return True
+    if "master_index" in fn_lower or "document_index" in fn_lower:
+        # Document indexes are dataset-level, not case-level
+        # Unless they contain case-specific content (checked via content)
+        # For now, treat as dataset-level if they are top-level indexes
+        if "master" in fn_lower:
+            return True
+
+    # Content-based: if text contains dataset-level keywords and no case IDs
+    if text:
+        text_lower = text.lower()[:2000]
+        dataset_keywords = [
+            "data dictionary", "quality report", "dataset metadata",
+            "corpus layout", "document index", "schema definition",
+        ]
+        if any(kw in text_lower for kw in dataset_keywords):
+            # Check if it also contains case-specific content
+            # If it mentions specific cases, it might be case-level
+            # For simplicity, if it has dataset keywords and is short, it's dataset-level
+            if len(text) < 5000:
+                return True
+
+    # Extension-based: JSON schema files are dataset-level
+    if extension.lower() == ".json" and ("schema" in fn_lower or "metadata" in fn_lower or "config" in fn_lower):
+        return True
+
+    return False
+
+
 def _mentions(
+
     text: str,
     by_natural: dict[str, str],
     by_phone: dict[str, str],
