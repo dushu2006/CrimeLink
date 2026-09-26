@@ -483,6 +483,60 @@ class Normalizer:
         self._alias[f"{entity_type}|{ref}"] = canonical
         return canonical
 
+
+    def dedupe_hard_identifiers(self) -> int:
+        """Converge hard identifiers that arrived through mixed source paths.
+
+        A source row can first create an identifier from a natural source ID
+        and later repeat the same normalized phone/vehicle/account value from
+        another file. Neo4j deliberately enforces uniqueness on these graph
+        properties, so the relational canonical result must converge them and
+        rewire the relationships before persistence.
+        """
+        hard_types = {sm.PHONE, sm.VEHICLE, sm.ACCOUNT}
+        by_value: dict[tuple[str, str], str] = {}
+        remap: dict[str, str] = {}
+        for entity in list(self.result.entities.values()):
+            if entity.entity_type not in hard_types:
+                continue
+            value = str(entity.normalized_value or "").strip()
+            if not value:
+                continue
+            key = (entity.entity_type, value)
+            survivor = by_value.get(key)
+            if survivor is None:
+                by_value[key] = entity.canonical_id
+                continue
+            if survivor == entity.canonical_id:
+                continue
+            keep = self.result.entities.get(survivor)
+            if keep is None:
+                by_value[key] = entity.canonical_id
+                continue
+            keep.merge(entity)
+            remap[entity.canonical_id] = survivor
+
+        if not remap:
+            return 0
+
+        for canonical_id in remap:
+            self.result.entities.pop(canonical_id, None)
+
+        rewired: dict[str, CanonicalRelationship] = {}
+        for rel in self.result.relationships.values():
+            rel.source_canonical_id = remap.get(rel.source_canonical_id, rel.source_canonical_id)
+            rel.target_canonical_id = remap.get(rel.target_canonical_id, rel.target_canonical_id)
+            if rel.source_canonical_id == rel.target_canonical_id:
+                continue
+            rewired.setdefault(rel.edge_key, rel)
+        self.result.relationships = rewired
+
+        for alias_key, canonical in list(self._alias.items()):
+            if canonical in remap:
+                self._alias[alias_key] = remap[canonical]
+        log.info("normalize.hard_identifiers_deduped", folded=len(remap))
+        return len(remap)
+
     def reconcile_identifiers(self) -> int:
         """Fold placeholder entities into the record the dataset already has.
 
