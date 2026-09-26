@@ -423,7 +423,9 @@ class Normalizer:
         if entity_type in hard_identifier_types and normalized:
             canonical = self._alias.get(f"{entity_type}|{normalized}")
             if canonical is None:
-                canonical = _derived_id(entity_type, normalized)
+                # Hard identifiers remain human-traceable when no source id is
+                # supplied; the normalized value defines their canonical identity.
+                canonical = cid(entity_type, normalized)
         elif key:
             canonical = cid(entity_type, key)
         elif normalized_value:
