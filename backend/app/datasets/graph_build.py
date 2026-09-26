@@ -43,10 +43,14 @@ BATCH = 1000
 _VALID_LABELS = {e.value for e in EntityType} | {"Case"}
 
 
+# These canonical schema-map types are the hard identifiers that must collapse
+# to one graph node per dataset. ``ACCOUNT`` is the bank-account canonical type
+# used by the ingestion/normalization layer; ``BANK_ACCOUNT`` is the graph
+#/domain wire label, not a schema-map constant.
 HARD_GRAPH_ID_TYPES = {
     sm.PHONE,
     sm.VEHICLE,
-    sm.BANK_ACCOUNT,
+    sm.ACCOUNT,
 }
 
 
