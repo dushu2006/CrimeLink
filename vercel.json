@@ -21,7 +21,7 @@
       "functions": {
         "main.py": {
           "maxDuration": 300,
-          "includeFiles": ["CrimeLink_Synthetic_Corpus_v1/**"]
+          "includeFiles": "CrimeLink_Synthetic_Corpus_v1/**"
         }
       }
     }
