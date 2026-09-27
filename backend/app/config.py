@@ -463,6 +463,16 @@ class Settings(BaseSettings):
     synthetic_data_root: Path = Field(
         default=BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"
     )
+    #: Serverless deployments import the checked-in corpus through the normal
+    #: content-driven dataset pipeline when no dataset (or only an older
+    #: built-in demo seed) is active. Native ``python run.py`` remains unchanged.
+    builtin_dataset_auto_import: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "CRIMELINK_BUILTIN_DATASET_AUTO_IMPORT",
+            "BUILTIN_DATASET_AUTO_IMPORT",
+        ),
+    )
 
     # ------------------------------------------------------ entity resolution
     er_fuzzy_threshold: float = 0.85

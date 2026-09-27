@@ -119,13 +119,23 @@ class MinioObjectStore:
                 response.close()
                 response.release_conn()
         except S3Error as exc:
-            raise NotFoundError("Object not found.") from exc
+            code = str(getattr(exc, "code", "") or "")
+            if code in {"NoSuchKey", "NotFound", "NoSuchObject"}:
+                raise NotFoundError("Object not found.") from exc
+            raise DependencyUnavailableError(
+                "Object storage rejected the source read."
+            ) from exc
 
     def stat(self, bucket: str, key: str) -> ObjectMeta | None:
         try:
             info = self._client.stat_object(bucket, key)
-        except S3Error:
-            return None
+        except S3Error as exc:
+            code = str(getattr(exc, "code", "") or "")
+            if code in {"NoSuchKey", "NotFound", "NoSuchObject"}:
+                return None
+            raise DependencyUnavailableError(
+                "Object storage could not inspect the source object."
+            ) from exc
         return ObjectMeta(
             key=key,
             size=int(info.size or 0),
@@ -144,8 +154,13 @@ class MinioObjectStore:
     def list_keys(self, bucket: str, prefix: str = "") -> list[str]:
         try:
             return [obj.object_name for obj in self._client.list_objects(bucket, prefix=prefix)]
-        except S3Error:  # pragma: no cover
-            return []
+        except S3Error as exc:
+            code = str(getattr(exc, "code", "") or "")
+            if code == "NotFound":
+                return []
+            raise DependencyUnavailableError(
+                "Object storage could not list source objects."
+            ) from exc
 
     def delete(self, bucket: str, key: str) -> bool:
         """Remove one object; returns whether anything was actually deleted.

@@ -96,6 +96,10 @@ NEW_FILES = {
 OLD_DOC_KEY = f"{OLD_FOLDER}/notes/old_brief.txt"
 NEW_DOC_KEY = f"{NEW_FOLDER}/notes/new_brief.txt"
 
+
+def _object_key(dataset_id: str, relative_path: str) -> str:
+    return f"{dataset_id}/{relative_path}"
+
 _MODELS_BY_TABLE = {
     value.__tablename__: value
     for value in vars(db_models).values()
@@ -364,9 +368,11 @@ async def test_the_replaced_datasets_evidence_bytes_leave_the_object_store(
     swap, store, bucket
 ):
     """Reclaimed, not merely hidden: the retired keys are gone from the store."""
-    assert store.exists(bucket, OLD_DOC_KEY) is False
-    assert store.exists(bucket, NEW_DOC_KEY) is True
-    assert OLD_DOC_KEY not in store.list_keys(bucket)
+    old_key = _object_key(swap["old"]["dataset_id"], OLD_DOC_KEY)
+    new_key = _object_key(swap["new"]["dataset_id"], NEW_DOC_KEY)
+    assert store.exists(bucket, old_key) is False
+    assert store.exists(bucket, new_key) is True
+    assert old_key not in store.list_keys(bucket)
 
 
 async def test_the_replaced_datasets_workspace_copy_is_removed(swap):
@@ -455,7 +461,7 @@ async def test_a_failed_import_never_becomes_active_and_costs_the_old_dataset_no
     assert after["cases"] == before["cases"]
     assert after["documents"] == before["documents"]
     assert after["entities"] == before["entities"]
-    assert store.exists(bucket, OLD_DOC_KEY) is True
+    assert store.exists(bucket, _object_key(old_report.dataset_id, OLD_DOC_KEY)) is True
     assert Path(after["root_path"]).is_dir() is True
     # The exclusive projection the failed import evicted was put back.
     assert "Old Person One" in {item.get("name") for item in _graph_nodes(container)}
@@ -463,6 +469,63 @@ async def test_a_failed_import_never_becomes_active_and_costs_the_old_dataset_no
     failed_state = await _dataset_state(failed.dataset_id)
     assert failed_state is not None and failed_state["is_active"] is False
     assert failed_state["status"] == "FAILED"
+
+
+async def test_evidence_storage_failure_or_hash_mismatch_keeps_the_old_dataset_active(
+    tmp_path, container, store, bucket, monkeypatch
+):
+    """Source durability is part of verification, not a warning after activation."""
+    old_report = await _import(tmp_path / "old", "Old corpus", OLD_FOLDER, OLD_FILES)
+    assert old_report.error is None, old_report.error
+    old_key = _object_key(old_report.dataset_id, OLD_DOC_KEY)
+    before = await _dataset_state(old_report.dataset_id)
+    real_put = store.put
+    put_count = 0
+
+    def fail_mid_upload(bucket_name, key, payload, content_type="application/octet-stream"):
+        nonlocal put_count
+        if not key.startswith(f"{old_report.dataset_id}/"):
+            put_count += 1
+            if put_count == 2:
+                raise OSError("simulated object-store write failure")
+        return real_put(bucket_name, key, payload, content_type=content_type)
+
+    monkeypatch.setattr(store, "put", fail_mid_upload)
+    failed_put = await _import(tmp_path / "new-write-failure", "Write failure", "WriteFail", NEW_FILES)
+    assert failed_put.status == "FAILED"
+    assert "Could not store source bytes" in (failed_put.error or "")
+    assert await _active_dataset_ids() == [old_report.dataset_id]
+    assert store.exists(bucket, old_key)
+    assert await _dataset_state(old_report.dataset_id) == before
+    assert not store.list_keys(bucket, prefix=f"{failed_put.dataset_id}/")
+
+    # Now permit writes, but corrupt the bytes returned by the store during the
+    # pre-activation read-back. The candidate must fail the SHA-256 gate too.
+    monkeypatch.setattr(store, "put", real_put)
+    candidate_prefix: str | None = None
+
+    def observe_candidate_put(bucket_name, key, payload, content_type="application/octet-stream"):
+        nonlocal candidate_prefix
+        if not key.startswith(f"{old_report.dataset_id}/"):
+            candidate_prefix = key.split("/", 1)[0]
+        return real_put(bucket_name, key, payload, content_type=content_type)
+
+    monkeypatch.setattr(store, "put", observe_candidate_put)
+    real_get = store.get
+
+    def corrupt_candidate_read(bucket_name, key):
+        payload = real_get(bucket_name, key)
+        if candidate_prefix and key.startswith(f"{candidate_prefix}/"):
+            return payload + b"tampered after upload"
+        return payload
+
+    monkeypatch.setattr(store, "get", corrupt_candidate_read)
+    failed_hash = await _import(tmp_path / "new-hash-failure", "Hash failure", "HashFail", NEW_FILES)
+    assert failed_hash.status == "FAILED"
+    assert "integrity check failed" in (failed_hash.error or "").lower()
+    assert await _active_dataset_ids() == [old_report.dataset_id]
+    assert store.exists(bucket, old_key)
+    assert await _dataset_state(old_report.dataset_id) == before
 
 
 async def test_an_unusable_dataset_is_refused_before_the_old_one_is_retired(
@@ -500,7 +563,7 @@ async def test_an_unusable_dataset_is_refused_before_the_old_one_is_retired(
     assert after["is_active"] is True
     assert after["cases"] == before["cases"]
     assert after["documents"] == before["documents"]
-    assert store.exists(bucket, OLD_DOC_KEY) is True
+    assert store.exists(bucket, _object_key(old_report.dataset_id, OLD_DOC_KEY)) is True
     assert "Old Person One" in {item.get("name") for item in _graph_nodes(container)}
 
 
@@ -533,7 +596,7 @@ async def test_a_rolled_back_activation_destroys_no_storage(
     assert summary["finalized"] is False
     assert summary["objects_deleted"] == 0
     assert await _active_dataset_ids() == [old_report.dataset_id]
-    assert store.exists(bucket, OLD_DOC_KEY) is True
+    assert store.exists(bucket, _object_key(old_report.dataset_id, OLD_DOC_KEY)) is True
     old_state = await _dataset_state(old_report.dataset_id)
     assert old_state["cases"] > 0 and old_state["documents"] > 0
 
@@ -656,14 +719,7 @@ async def test_rows_with_no_dataset_are_never_deleted(tmp_path, container, store
 async def test_a_key_both_corpora_use_holds_the_survivors_bytes_afterwards(
     tmp_path, container, store, bucket
 ):
-    """Re-uploading the same folder name must not leave the old bytes behind.
-
-    The object store is write-once and keyed by dataset-relative path, so the
-    incoming corpus cannot overwrite the key the *still active* dataset holds.
-    The import reports the collision, and once the old dataset is retired the
-    survivor's own bytes are written in their place — hash-verified against the
-    document row, so evidence can never point at another dataset's content.
-    """
+    """Identical relative paths in separate datasets get isolated object keys."""
     old_body = "OLD BRIEF: the previous corpus wrote this file.\n"
     new_body = "NEW BRIEF: the replacing corpus wrote this file.\n"
     old_report = await _import(
@@ -675,6 +731,10 @@ async def test_a_key_both_corpora_use_holds_the_survivors_bytes_afterwards(
         },
     )
     assert old_report.error is None, old_report.error
+    relative_key = "Corpus/notes/brief.txt"
+    old_key = _object_key(old_report.dataset_id, relative_key)
+    assert store.get(bucket, old_key) == old_body.encode("utf-8")
+
     new_report = await _import(
         tmp_path / "new", "New corpus", "Corpus",
         {
@@ -684,24 +744,23 @@ async def test_a_key_both_corpora_use_holds_the_survivors_bytes_afterwards(
         },
     )
     assert new_report.error is None, new_report.error
-    assert any(
-        "already holds different bytes" in warning for warning in new_report.warnings
-    ), new_report.warnings
+    assert not any("already holds different bytes" in warning for warning in new_report.warnings)
 
-    key = "Corpus/notes/brief.txt"
-    stored = store.get(bucket, key)
+    new_key = _object_key(new_report.dataset_id, relative_key)
+    stored = store.get(bucket, new_key)
     assert stored == new_body.encode("utf-8")
+    assert store.exists(bucket, old_key) is False
     async with async_session() as session:
         recorded = (
             await session.execute(
                 select(CaseDocument.content_hash).where(
                     CaseDocument.dataset_id == new_report.dataset_id,
-                    CaseDocument.storage_key == key,
+                    CaseDocument.storage_key == new_key,
                 )
             )
         ).scalar_one()
     assert content_hash(stored) == recorded
-    assert new_report.replacement["objects_restored"] >= 1
+    assert new_report.replacement["objects_restored"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -728,7 +787,7 @@ async def test_storage_reclamation_is_measured_reported_and_idempotent(
         again = await retirement.finalize_pending(session)
     assert again["finalized"] is False
     assert again["objects_deleted"] == 0
-    assert store.exists(bucket, NEW_DOC_KEY) is True
+    assert store.exists(bucket, _object_key(swap["new"]["dataset_id"], NEW_DOC_KEY)) is True
 
 
 async def test_upload_staging_is_cleaned_and_operator_folders_are_not(tmp_path, container):

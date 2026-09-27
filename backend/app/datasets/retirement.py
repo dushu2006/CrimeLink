@@ -466,6 +466,19 @@ async def _object_keys_of(
         if derived_key:
             target["derived"].add(derived_key)
 
+    # Source tables and dataset-level documents may have a manifest entry but
+    # no CaseDocument row. They are still durable source material and must be
+    # reclaimed with their owning dataset. New imports use a namespaced key, so
+    # this never deletes another dataset's identically named file.
+    from app.datasets.storage import dataset_object_key
+
+    for relative_path in (
+        await session.execute(
+            select(DatasetFile.relative_path).where(DatasetFile.dataset_id == dataset_id)
+        )
+    ).scalars():
+        owned["documents"].add(dataset_object_key(dataset_id, relative_path))
+
     return {
         buckets[name]: {key for key in owned[name] if key not in retained[name]}
         for name in buckets

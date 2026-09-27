@@ -19,6 +19,7 @@ Covers acceptance points A, B, C, D, E, G, H, R and S.
 
 from __future__ import annotations
 
+import hashlib
 import io
 
 import pytest
@@ -92,14 +93,14 @@ async def object_store_only_dataset(container, workspace, users):
         doc_pdf = CaseDocument(
             id="doc-src-9001-01", case_id=case.id, dataset_id=ds.id,
             document_type=DocumentType.FIR, filename="SRC-9001_FIR_01.pdf",
-            storage_key=pdf_key, content_hash="sha256_src9001_pdf",
+            storage_key=pdf_key, content_hash=hashlib.sha256(pdf_bytes).hexdigest(),
             size_bytes=len(pdf_bytes), mime_type="application/pdf",
             source_metadata={"evidence_id": "E-9001", "dataset": ds.id},
         )
         doc_csv = CaseDocument(
             id="doc-src-9001-02", case_id=case.id, dataset_id=ds.id,
             document_type=DocumentType.CDR, filename="SRC-9001_CDR_02.csv",
-            storage_key=csv_key, content_hash="sha256_src9001_csv",
+            storage_key=csv_key, content_hash=hashlib.sha256(csv_bytes).hexdigest(),
             size_bytes=len(csv_bytes), mime_type="text/csv",
             source_metadata={"evidence_id": "E-9002", "dataset": ds.id},
         )
@@ -110,14 +111,14 @@ async def object_store_only_dataset(container, workspace, users):
                 id=new_uuid(), dataset_id=ds.id, relative_path=pdf_key,
                 filename="SRC-9001_FIR_01.pdf", extension="pdf",
                 media_type="application/pdf", file_kind="document",
-                size_bytes=len(pdf_bytes), sha256="a" * 64, status="INGESTED",
+                size_bytes=len(pdf_bytes), sha256=hashlib.sha256(pdf_bytes).hexdigest(), status="INGESTED",
                 doc_id=doc_pdf.id,
             ),
             DatasetFile(
                 id=new_uuid(), dataset_id=ds.id, relative_path=csv_key,
                 filename="SRC-9001_CDR_02.csv", extension="csv",
                 media_type="text/csv", file_kind="table",
-                size_bytes=len(csv_bytes), sha256="b" * 64, status="INGESTED",
+                size_bytes=len(csv_bytes), sha256=hashlib.sha256(csv_bytes).hexdigest(), status="INGESTED",
                 doc_id=doc_csv.id, row_count=2,
             ),
         ])

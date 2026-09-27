@@ -16,6 +16,7 @@ and an object-store outage is never reported as a missing file.
 
 from __future__ import annotations
 
+import hashlib
 import io
 
 import pytest
@@ -75,7 +76,7 @@ async def seeded(container, workspace, users):
             document_type=DocumentType.FIR,
             filename="SRC-7001_FIR_01.pdf",
             storage_key=key,
-            content_hash="sha7001",
+            content_hash=hashlib.sha256(payload).hexdigest(),
             size_bytes=len(payload),
             mime_type="application/pdf",
             source_metadata={"relative_path": key},
@@ -92,7 +93,7 @@ async def seeded(container, workspace, users):
                 media_type="application/pdf",
                 file_kind="document",
                 size_bytes=len(payload),
-                sha256="c" * 64,
+                sha256=hashlib.sha256(payload).hexdigest(),
                 status="INGESTED",
                 doc_id=doc.id,
             )

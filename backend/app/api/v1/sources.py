@@ -14,10 +14,10 @@ Two questions, one module:
   state (AVAILABLE / UNSUPPORTED / CORRUPTED / NOT_FOUND / EXTRACTION_FAILED
   / NO_EXTRACTED_TEXT).
 
-MinIO-aware: In production, files live in MinIO (bucket documents) with
-deterministic keys evidence/E-042/original.pdf. This module tries MinIO first
-when backend is minio, then filesystem workspace. In production, MinIO is
-mandatory — fails loudly if unavailable, no silent Local fallback.
+MinIO-aware: In production, imported files live in the configured object store
+under dataset-scoped keys. The active dataset manifest owns each path, and
+retrieval verifies the actual bytes against its SHA-256. Production never falls
+back to a bundled/workspace file when durable storage is missing or unavailable.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.datasets import registry
+from app.datasets.storage import dataset_object_key, legacy_object_key
 from app.db.models import Case, CaseDocument, Dataset, DatasetFile, SourceReference
 from app.db.session import get_db_session
 from app.errors import NotFoundError, ServiceUnavailableError
@@ -271,15 +272,40 @@ async def dataset_files(
     )
 
     # Check MinIO existence for each file
-    store, bucket, is_minio, is_prod = _get_object_store_for_sources() if rows else (None, None, False, False)
+    try:
+        store, bucket, is_minio, is_prod = (
+            _get_object_store_for_sources() if rows else (None, None, False, False)
+        )
+    except StorageUnavailableError as exc:
+        raise ServiceUnavailableError(
+            str(exc), code=source_viewer.CODE_STORAGE_UNAVAILABLE
+        ) from exc
     minio_existence: dict[str, bool] = {}
     if store is not None:
         for r in rows:
+            scoped_key = dataset_object_key(dataset.id, r.relative_path)
             try:
-                meta = store.stat(bucket, r.relative_path)
-                minio_existence[r.relative_path] = meta is not None
-            except Exception:
+                meta = store.stat(bucket, scoped_key)
+                if meta is None:  # read objects written before key namespacing
+                    scoped_key = legacy_object_key(r.relative_path)
+                    meta = store.stat(bucket, scoped_key)
+                if meta is not None:
+                    payload = store.get(bucket, scoped_key)
+                    digest = hashlib.sha256(payload).hexdigest()
+                    minio_existence[r.relative_path] = bool(
+                        len(payload) == meta.size
+                        and (not r.size_bytes or len(payload) == r.size_bytes)
+                        and (not r.sha256 or digest == r.sha256)
+                    )
+                else:
+                    minio_existence[r.relative_path] = False
+            except NotFoundError:
                 minio_existence[r.relative_path] = False
+            except Exception as exc:  # outages must not be reported as missing files
+                raise ServiceUnavailableError(
+                    "Source object storage is unavailable.",
+                    code=source_viewer.CODE_STORAGE_UNAVAILABLE,
+                ) from exc
 
     counts = {
         row[0]: int(row[1])
@@ -296,13 +322,18 @@ async def dataset_files(
     case_number_by_id: dict[str, str] = {}
     if doc_ids:
         documents = (
-            await session.execute(select(CaseDocument).where(CaseDocument.id.in_(doc_ids)))
+            await session.execute(
+                select(CaseDocument).where(
+                    CaseDocument.id.in_(doc_ids), CaseDocument.dataset_id == dataset.id
+                )
+            )
         ).scalars()
         documents_by_id = {d.id: d for d in documents}
         case_rows = (
             await session.execute(
                 select(Case.id, Case.case_number).where(
-                    Case.id.in_({d.case_id for d in documents_by_id.values()})
+                    Case.id.in_({d.case_id for d in documents_by_id.values()}),
+                    Case.dataset_id == dataset.id,
                 )
             )
         ).all()
@@ -313,7 +344,11 @@ async def dataset_files(
         if _is_evaluation_path(row.relative_path):
             continue
         document = documents_by_id.get(row.doc_id) if row.doc_id else None
-        exists_fs = bool(root and (root / row.relative_path).is_file())
+        exists_fs = bool(
+            not (is_prod and get_settings().effective_object_store_backend == "minio")
+            and root
+            and (root / row.relative_path).is_file()
+        )
         exists_minio = minio_existence.get(row.relative_path, False)
         status, openable = _file_availability(row, exists_fs, exists_minio)
         items.append(
@@ -506,6 +541,11 @@ async def _resolve_source_path(
     workspace copy is only ever a convenience.
     """
     base = root.resolve() if root is not None else None
+    settings = get_settings()
+    production_object_store_only = (
+        (settings.profile == "production" or settings.environment == "production")
+        and settings.effective_object_store_backend == "minio"
+    )
 
     def _fs(rel: str) -> Path | None:
         """Resolve ``rel`` inside the workspace, or None if there is no workspace.
@@ -514,57 +554,76 @@ async def _resolve_source_path(
         ``..`` that escapes the workspace resolves outside ``base`` and is
         rejected rather than served.
         """
-        if base is None:
+        if base is None or production_object_store_only:
+            # Production evidence cannot silently fall back to a read-only
+            # bundled/workspace copy when the configured durable object is
+            # missing or unavailable.
             return None
         cand = (base / rel).resolve()
         return cand if (cand.is_file() and cand.is_relative_to(base)) else None
 
-    # Helper to try MinIO for a relative path.
-    #
-    # An object-store *outage* is raised, never turned into ``None``: returning
-    # None here is indistinguishable from "the key does not exist", and that
-    # conflation is precisely what reported a MinIO outage as a missing
-    # evidence file.
-    def _try_minio(rel: str) -> bytes | None:
+    # Object lookup prefers the document's recorded storage key, then the
+    # dataset-scoped manifest key, and finally the legacy unscoped key. An
+    # outage is raised rather than reported as a missing source.
+    def _try_minio(
+        rel: str,
+        doc: CaseDocument | None = None,
+        expected_hash: str | None = None,
+    ) -> bytes | None:
         store, bucket, _is_minio, _is_prod = _get_object_store_for_sources()
         if store is None:
             return None
         clean_rel = rel.replace("\\", "/").lstrip("/")
-        try:
-            meta = store.stat(bucket, clean_rel)
-        except Exception as exc:  # noqa: BLE001 - transport/config failure
-            raise StorageUnavailableError(
-                f"Object storage could not be queried for {clean_rel}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        if not meta:
-            return None
-        try:
-            return store.get(bucket, clean_rel)
-        except Exception as exc:  # noqa: BLE001
-            raise StorageUnavailableError(
-                f"Object storage could not return the bytes for {clean_rel}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
+        candidates = [
+            getattr(doc, "storage_key", None),
+            dataset_object_key(dataset.id, clean_rel),
+            legacy_object_key(clean_rel),
+        ]
+        for key in dict.fromkeys(item for item in candidates if item):
+            try:
+                meta = store.stat(bucket, key)
+            except Exception as exc:  # noqa: BLE001 - transport/config failure
+                raise StorageUnavailableError(
+                    f"Object storage could not be queried for {key}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            if not meta:
+                continue
+            try:
+                payload = store.get(bucket, key)
+            except Exception as exc:  # noqa: BLE001
+                raise StorageUnavailableError(
+                    f"Object storage could not return the bytes for {key}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            expected = (doc.content_hash if doc is not None else None) or expected_hash
+            actual = hashlib.sha256(payload).hexdigest()
+            if expected and actual != expected:
+                raise StorageUnavailableError(
+                    f"Retrieved source {rel} failed SHA-256 verification."
+                )
+            return payload
+        return None
 
     # 1. Explicit dataset_file_id lookup
     if dataset_file_id:
         df = await session.get(DatasetFile, dataset_file_id)
         if df and df.dataset_id == dataset.id:
+            doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
+            if doc is not None and doc.dataset_id != dataset.id:
+                doc = None
             # Try MinIO first
-            minio_data = _try_minio(df.relative_path)
+            minio_data = _try_minio(df.relative_path, doc, df.sha256)
             if minio_data is not None:
-                doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
                 return None, df.relative_path, df, doc, minio_data
             cand = _fs(df.relative_path.replace("\\", "/").lstrip("/"))
             if cand is not None:
-                doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
                 return cand, df.relative_path, df, doc, None
 
     # 2. Explicit doc_id lookup
     if doc_id:
         doc = await session.get(CaseDocument, doc_id)
-        if doc:
+        if doc and doc.dataset_id == dataset.id:
             df = (
                 await session.execute(
                     select(DatasetFile).where(
@@ -576,7 +635,7 @@ async def _resolve_source_path(
             rel = df.relative_path if df else ((doc.source_metadata or {}).get("relative_path") or doc.storage_key)
             if rel:
                 rel_clean = rel.replace("\\", "/").lstrip("/")
-                minio_data = _try_minio(rel_clean)
+                minio_data = _try_minio(rel_clean, doc, df.sha256 if df else None)
                 if minio_data is not None:
                     return None, rel_clean, df, doc, minio_data
                 cand = _fs(rel_clean)
@@ -620,7 +679,7 @@ async def _resolve_source_path(
         ).scalars().first()
 
     if df is not None or doc is not None:
-        minio_data = _try_minio(cleaned)
+        minio_data = _try_minio(cleaned, doc, df.sha256 if df else None)
         if minio_data is not None:
             return None, cleaned, df, doc, minio_data
         cand = _fs(cleaned)
@@ -660,7 +719,7 @@ async def _resolve_source_path(
 
     # 3b. Check if cleaned matches a doc_id — try MinIO via its storage_key
     doc = await session.get(CaseDocument, cleaned)
-    if doc:
+    if doc and doc.dataset_id == dataset.id:
         df = (
             await session.execute(
                 select(DatasetFile).where(
@@ -672,7 +731,7 @@ async def _resolve_source_path(
         rel = df.relative_path if df else ((doc.source_metadata or {}).get("relative_path") or doc.storage_key)
         if rel:
             rel_clean = rel.replace("\\", "/").lstrip("/")
-            minio_data = _try_minio(rel_clean)
+            minio_data = _try_minio(rel_clean, doc, df.sha256 if df else None)
             if minio_data is not None:
                 return None, rel_clean, df, doc, minio_data
             cand = _fs(rel_clean)
@@ -682,9 +741,9 @@ async def _resolve_source_path(
     # 3c. Check if cleaned matches a dataset_file_id
     df = await session.get(DatasetFile, cleaned)
     if df and df.dataset_id == dataset.id:
-        minio_data = _try_minio(df.relative_path)
+        doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
+        minio_data = _try_minio(df.relative_path, doc, df.sha256)
         if minio_data is not None:
-            doc = await session.get(CaseDocument, df.doc_id) if df.doc_id else None
             return None, df.relative_path, df, doc, minio_data
         cand = _fs(df.relative_path.replace("\\", "/").lstrip("/"))
         if cand is not None:
@@ -703,7 +762,7 @@ async def _resolve_source_path(
     if doc:
         rel = (doc.source_metadata or {}).get("relative_path") or doc.storage_key
         rel_clean = rel.replace("\\", "/").lstrip("/")
-        minio_data = _try_minio(rel_clean)
+        minio_data = _try_minio(rel_clean, doc)
         if minio_data is not None:
             df = (
                 await session.execute(
@@ -757,7 +816,7 @@ async def _resolve_source_path(
             ).scalars().first()
         if sub_df is None and sub_doc is None:
             continue
-        minio_data = _try_minio(sub)
+        minio_data = _try_minio(sub, sub_doc, sub_df.sha256 if sub_df else None)
         if minio_data is not None:
             return None, sub, sub_df, sub_doc, minio_data
         cand = _fs(sub)
@@ -857,6 +916,7 @@ async def preview_file(
         dataset_id=dataset_id,
         raw_url=_raw_url(resolved_relative_path),
         download_url=_raw_url(resolved_relative_path),
+        source_bytes=minio_bytes,
     )
     result["code"] = source_viewer.CODE_BY_STATUS.get(
         result.get("status", source_viewer.STATUS_AVAILABLE), "available"
@@ -926,6 +986,7 @@ async def read_file(
             context=context,
             limit=limit,
             root=root,
+            source_bytes=minio_bytes,
         )
     except StorageUnavailableError as exc:
         # 503: storage is down, the file may well exist.
@@ -989,6 +1050,10 @@ async def raw_file(
             doc_id=doc_id,
             dataset_file_id=dataset_file_id,
         )
+    except StorageUnavailableError as exc:
+        raise ServiceUnavailableError(
+            str(exc), code=source_viewer.CODE_STORAGE_UNAVAILABLE
+        ) from exc
     except SourceNotFoundError as exc:
         # 404, naming the file that is genuinely not there.
         raise NotFoundError(str(exc)) from exc
@@ -1141,6 +1206,18 @@ async def get_reference(
     status = source_viewer.STATUS_AVAILABLE
     reason: str | None = None
     try:
+        active = await _active_dataset(session)
+        if active is None or active.id != ref.dataset_id:
+            raise SourceNotFoundError("The source reference is not owned by the active dataset.")
+        _resolved_file, _relative_path, _file_row, _doc_row, stored_bytes = (
+            await _resolve_source_path(
+                session,
+                active,
+                root,
+                path=ref.origin_file,
+                doc_id=ref.doc_id,
+            )
+        )
         window_dict = source_viewer.read_window(
             ref.origin_file,
             row=ref.row_number,
@@ -1148,7 +1225,10 @@ async def get_reference(
             line_end=ref.line_end,
             context=context,
             root=root,
+            source_bytes=stored_bytes,
         ).to_dict()
+    except StorageUnavailableError as exc:
+        status, reason = source_viewer.STATUS_STORAGE_UNAVAILABLE, str(exc)
     except SourceNotFoundError as exc:
         status, reason = source_viewer.STATUS_NOT_FOUND, str(exc)
     except SourceAccessError as exc:

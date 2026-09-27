@@ -48,13 +48,59 @@ async def readiness() -> dict:
         _record("database", False, error=type(exc).__name__)
 
     try:
+        from app.datasets import registry
+        from app.db.session import async_session
+
+        async with async_session() as session:
+            active_dataset = await registry.active_dataset(session)
+        from app import runtime
+
+        expected_builtin = (
+            runtime.running_on_serverless() and settings.builtin_dataset_auto_import
+        )
+        active_dataset_ready = active_dataset is not None
+        if active_dataset is not None and expected_builtin:
+            from app.datasets.builtin import (
+                CORPUS_NAME,
+                CORPUS_VERSION,
+                LEGACY_BUILTIN_IDS,
+            )
+
+            active_dataset_ready = active_dataset.id not in LEGACY_BUILTIN_IDS and not (
+                active_dataset.source_kind == "builtin"
+                and active_dataset.name == CORPUS_NAME
+                and active_dataset.version != CORPUS_VERSION
+            )
+        _record(
+            "active_dataset",
+            active_dataset_ready,
+            dataset_id=active_dataset.id if active_dataset is not None else None,
+            dataset_name=active_dataset.name if active_dataset is not None else None,
+            expected_builtin_corpus=expected_builtin,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _record("active_dataset", False, error=type(exc).__name__)
+
+    try:
         stats = container.graph_store.stats()
         _record("graph", True, backend=stats.get("backend"), nodes=stats.get("nodes"))
     except Exception as exc:  # noqa: BLE001
         _record("graph", False, error=type(exc).__name__)
 
     try:
-        _record("object_store", True, backend=container.object_store.backend_name)
+        store = container.object_store
+        health_check = getattr(store, "health_check", None)
+        if health_check is None:
+            _record("object_store", True, backend=store.backend_name)
+        else:
+            store_ok, detail, error = health_check()
+            _record(
+                "object_store",
+                store_ok,
+                backend=store.backend_name,
+                detail=detail,
+                error=error,
+            )
     except Exception as exc:  # noqa: BLE001
         _record("object_store", False, error=type(exc).__name__)
 
