@@ -1044,6 +1044,7 @@ def read_window(
     offset: int | None = None,
     root: Path | None = None,
     sheet: str | None = None,
+    source_bytes: bytes | None = None,
 ) -> SourceWindow:
     """Open any supported dataset file at the requested position — MinIO-aware.
 
@@ -1052,8 +1053,13 @@ def read_window(
     decoder here.
     """
     clean = relative_path.split("#", 1)[0]
-    # Try object store first
-    data, fs_path = get_bytes_for_path(clean, root=root)
+    # Prefer bytes already resolved against this dataset's own object key;
+    # otherwise use the legacy generic lookup and workspace fallback.
+    data, fs_path = (
+        (source_bytes, None)
+        if source_bytes is not None
+        else get_bytes_for_path(clean, root=root)
+    )
 
     if data is not None:
         # MinIO/local object store path
@@ -1224,6 +1230,7 @@ def preview(
     dataset_id: str | None = None,
     raw_url: str | None = None,
     download_url: str | None = None,
+    source_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Decide what a file is, render it with the matching renderer, report why not.
 
@@ -1237,7 +1244,11 @@ def preview(
     data: bytes | None = None
     fs_path: Path | None = None
     try:
-        data, fs_path = get_bytes_for_path(clean, root=root)
+        data, fs_path = (
+            (source_bytes, None)
+            if source_bytes is not None
+            else get_bytes_for_path(clean, root=root)
+        )
     except SourceAccessError as exc:
         return {
             "status": exc.status,
