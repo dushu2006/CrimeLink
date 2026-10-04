@@ -375,3 +375,16 @@ GET /api/v1/datasets (no credentials) → HTTP 401 authentication_failed
 
 The instance boots, health reports the misconfiguration as a health fact
 instead of crashing, and authorization is unchanged.
+
+**A4 — the bundled corpus is included in the deployed function (no
+`vercel.json` change needed).** The backend service declares
+`"root": "backend/"` and its function key is `"main.py"`, which is
+`backend/main.py` — so globs inside that `functions` block are resolved
+against the service root (`backend/`), and `includeFiles:
+"CrimeLink_Synthetic_Corpus_v1/**"` matches
+`backend/CrimeLink_Synthetic_Corpus_v1/**`. That is also where
+`Settings.synthetic_data_root` looks by default
+(`BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"`), so the serverless
+auto-import reads the checked-in corpus through the normal pipeline rather
+than falling back to anything. The Vercel check for both this commit and the
+previous one passed.
