@@ -318,3 +318,60 @@ No secret is committed; the template is `.env.vercel.example`.
   `L010`, organisations `ORG006`–`ORG008`) remain in the dataset's container
   case — searchable and jurisdiction-scoped, never silently dropped. Observed
   places such as `Camera Point 1` are kept as evidenced locations.
+
+---
+
+## Appendix A — live validation performed in this workspace
+
+The checks below were run against the fixed code over real HTTP (not the test
+client) and, where noted, in a production-profile process. Cloud credentials
+are not available in this workspace, so no live S3/Postgres/Neo4j/Aura
+endpoint was contacted; the Vercel preview deployment for the commit built
+successfully but is protected by Vercel SSO, so it could not be queried from
+here.
+
+**A1 — hosted import path, real HTTP (`embedded` profile, local object store).**
+
+```
+POST /api/v1/datasets/import/path  →  job QUEUED → SUCCEEDED, status READY
+files discovered 194 · usable 180 · tables 62 · text 122 · document 10
+GET /api/v1/datasets/stats →
+  cases 10 · documents 164 · entities 227 · relationships 525
+  ACCOUNT 42  ADDRESS 42  CASE 10  LOCATION 11  ORGANIZATION 8
+  PERSON 42  PHONE 42  VEHICLE 30
+  CALLED 50  INVOLVED_IN 41  MEMBER_OF 5  MENTIONED_IN 160
+  OWNS_ACCOUNT 42  OWNS_VEHICLE 30  RESIDES_AT 42  SEEN_AT 47
+  TRANSFER_TO 66  USES_PHONE 42
+```
+
+**A2 — evidence provenance with real bytes.** `GET /api/v1/evidence/{doc}/provenance`
+
+```
+file.storage_status = available     file.available = true
+file.size_bytes     = 300           file.hash_matches = true
+checks.record_available  ok=true   state=available
+checks.traceable_to_original ok=true
+checks.hash_matches      ok=true
+checks.source_verified   ok=false   (the corpus is SYNTHETIC — source
+                                     classification, by design separate
+                                     from storage verification)
+chain: CASE ✓  EVIDENCE ✓  SOURCE_RECORD ✓  ORIGINAL_FILE ✓  FINDING —
+```
+
+`GET /api/v1/evidence/{doc}/verify` recomputed the same SHA-256
+(`b492e566…`, match: true) from the stored bytes.
+
+**A3 — production-profile boot with an unusable object-store endpoint.**
+Process started with `VERCEL=1`, `profile/environment/runtime_context=production`
+and `CRIMELINK_MINIO_ENDPOINT=minio:9000`:
+
+```
+GET /api/v1/version     → profile production, object_store_backend minio
+GET /api/v1/health/ready → HTTP 200, status "degraded",
+                           checks.object_store = {status: error,
+                                                  error: DependencyUnavailableError}
+GET /api/v1/datasets (no credentials) → HTTP 401 authentication_failed
+```
+
+The instance boots, health reports the misconfiguration as a health fact
+instead of crashing, and authorization is unchanged.
