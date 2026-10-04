@@ -388,3 +388,28 @@ against the service root (`backend/`), and `includeFiles:
 auto-import reads the checked-in corpus through the normal pipeline rather
 than falling back to anything. The Vercel check for both this commit and the
 previous one passed.
+
+**A5 — import state is backend-authoritative across a client restart
+(problem 3).** Two imports were submitted back to back while polling the
+recovery endpoint:
+
+```
+GET /api/v1/datasets/jobs/current   → {"job": {"id": "f6a1f575…",
+                                                 "status": "RUNNING",
+                                                 "progress_pct": 5}}
+GET /api/v1/datasets/jobs/current   → {"job": {… "progress_pct": 76}}
+GET /api/v1/datasets/jobs/current   → {"job": null}      (terminal)
+POST /api/v1/datasets/import/path   → HTTP 409 conflict
+                                      "An import is already running
+                                       (job 9e0bfce9…)"
+POST /api/v1/datasets/import/path   → HTTP 200 job_id 0ae34db9…  (the
+                                      previous import had already reached
+                                      SUCCEEDED, so a new import is correct)
+```
+
+A client that mounts with no local memory of the job re-attaches to the
+running one; it can only start a second import after the first is genuinely
+terminal. The dataset produced by an earlier import also survives: it is
+still `READY`, simply `is_active: false` once a newer dataset is activated —
+it is not deleted, so the "never destroy the active dataset before a
+replacement is proven usable" guarantee holds end to end.
