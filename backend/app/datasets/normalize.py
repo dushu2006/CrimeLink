@@ -28,8 +28,9 @@ source states it, so "who owned this vehicle in March 2024" stays answerable.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 from app.datasets import schema_map as sm
 from app.datasets.readers import Table
@@ -71,6 +72,99 @@ REL_SHARED_ACCOUNT = "SHARED_ACCOUNT"
 REL_SHARED_VEHICLE = "SHARED_VEHICLE"
 REL_SHARED_LOCATION = "SHARED_LOCATION"
 REL_SHARED_IDENTIFIER = "SHARED_IDENTIFIER"
+
+#: Entity types whose written value *is* an identifier, so a reference may
+#: claim it as another way of naming the same record.  A phone register's
+#: ``+919801000001`` and a note's ``9801000001`` are one phone; a bank
+#: statement's ``100000000001`` and the register's ``AC0001`` row are one
+#: account.  A person's or organisation's "normalized value" is a display
+#: name, and two people called *Ajay Kumar* are two people -- claiming names
+#: as identifiers would merge innocent bystanders, so those types are absent.
+_IDENTITY_TYPES = frozenset({sm.PHONE, sm.VEHICLE, sm.ACCOUNT})
+
+#: Values a dataset writes where it has no value to give.  A CCTV sheet whose
+#: subject column says ``DATA_GAP`` is stating that nobody was identified; a
+#: statement filed under ``UNKNOWN`` is stating that the writer does not know.
+#: Minting a PERSON named after the marker invents a person the file never
+#: described, and a graph that shows them beside real suspects is worse than
+#: one that shows nothing.  The vocabulary is recognised in the *value*, never
+#: by the file it came from, so any dataset may use these conventions.
+_MISSING_MARKERS = frozenset(
+    {
+        "n/a",
+        "n.a.",
+        "n.a",
+        "not available",
+        "not_available",
+        "notavailable",
+        "no data",
+        "no_data",
+        "nodata",
+        "data gap",
+        "data_gap",
+        "datagap",
+        "unknown",
+        "unspecified",
+        "unidentified",
+        "unavailable",
+        "missing",
+        "none",
+        "null",
+        "nil",
+        "tbd",
+        "tba",
+        "redacted",
+        "withheld",
+        "deleted",
+        "anonymous",
+        "anon",
+        "-",
+        "--",
+        "---",
+        "?",
+        "??",
+    }
+)
+#: Words that mark a SCREAMING_SNAKE_CASE token (``DATA_GAP``,
+#: ``UNKNOWN_SUBJECT``) as an absence marker rather than a name.  The
+#: underscore is required, so an agency that writes a real name in capitals
+#: (``RAM SINGH``) is untouched.
+_MISSING_SEGMENTS = frozenset(
+    {
+        "GAP",
+        "UNKNOWN",
+        "UNSPECIFIED",
+        "UNIDENTIFIED",
+        "MISSING",
+        "UNAVAILABLE",
+        "NONE",
+        "NULL",
+        "NIL",
+        "TBD",
+        "TBA",
+        "REDACTED",
+        "WITHHELD",
+        "ANON",
+        "ANONYMOUS",
+        "NA",
+    }
+)
+
+
+def is_missing_value(value: Any) -> bool:
+    """True when a dataset wrote an absence marker where a value belongs."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return True
+    if " ".join(text.split()).casefold() in _MISSING_MARKERS:
+        return True
+    token = text.upper()
+    if "_" not in token:
+        return False
+    segments = token.split("_")
+    if not all(segment.isalnum() and segment for segment in segments):
+        return False
+    return any(segment in _MISSING_SEGMENTS for segment in segments)
 
 #: Columns that identify *which* person a row is about, in priority order.
 #: Consulted by the secondary extraction pass so a person referenced as
@@ -213,6 +307,11 @@ class CanonicalEntity:
         if not self.display_name:
             self.display_name = self.name or other.display_name
         for key, value in other.attributes.items():
+            if key == "stub":
+                # Bookkeeping, not data: a reference-only placeholder being
+                # folded into the record it names must not mark that record as
+                # a stub.
+                continue
             if value not in (None, "") and self.attributes.get(key) in (None, ""):
                 self.attributes[key] = value
         # Explicit confirmed criminal status must never be lost during merge
@@ -375,6 +474,63 @@ def _derived_id(entity_type: str, value: str) -> str:
     return f"{entity_type}:~{digest}"
 
 
+#: A value that can be read as a telephone number.  Used to decide whether the
+#: *numbers* inside it may be treated as another way of naming the same phone;
+#: an identifier like ``PH0001`` must not become aliases ``0001``/``PHONE0001``.
+_PHONE_LIKE = re.compile(r"^[+]?[\d\s\-().]{8,}$")
+
+
+def identifier_variants(entity_type: str, value: Any) -> list[str]:
+    """Every way a dataset may write the *same* identifier.
+
+    ``+91 98010 00001``, ``9801000001`` and ``+919801000001`` are one phone;
+    ``MH 11 AB 1001`` and ``MH11AB1001`` are one vehicle; ``AC-0001`` and
+    ``AC0001`` are one account.  Nothing here invents a link: each variant is
+    a faithful rewriting of the value the source actually wrote.
+
+    The type decides how far a rewriting may go.  Phone numbers are collapsed
+    to their national digits (and re-expanded with the country code) because a
+    phone number *is* its digits; account and vehicle identifiers are only
+    compacted, because stripping their letters would merge ``AC0001`` with
+    account number ``0001``.
+    """
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return []
+    variants = [text, text.upper()]
+    if entity_type == sm.PHONE and _PHONE_LIKE.match(text):
+        digits = sm.normalize_phone(text)
+        if digits:
+            variants.extend([digits, f"+91{digits}"])
+    elif entity_type in {sm.VEHICLE, sm.ACCOUNT}:
+        compact = sm.normalize_plate(text)
+        if compact:
+            variants.append(compact)
+    elif entity_type == sm.PERSON:
+        name = sm.normalize_name(text)
+        if name:
+            variants.append(name)
+    out: list[str] = []
+    for variant in variants:
+        if variant and variant not in out:
+            out.append(variant)
+    return out
+
+
+def _edge_key(
+    rel_type: str,
+    source: str,
+    target: str,
+    valid_from: str | None,
+    observed_at: str | None,
+    discriminator: Any,
+) -> str:
+    raw = "|".join(
+        [rel_type, source, target, valid_from or "", observed_at or "", str(discriminator or "")]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
+
+
 # ---------------------------------------------------------------------------
 # Normalizer
 # ---------------------------------------------------------------------------
@@ -386,12 +542,121 @@ class Normalizer:
     def __init__(self) -> None:
         self.result = NormalizationResult()
         #: natural id -> canonical id, per entity type, for cross-table joins.
+        #: Kept for the callers that read it directly (relation tables, FIR
+        #: aliasing); every write goes through :meth:`_claim`.
         self._alias: dict[str, str] = {}
+        #: ``(entity_type, identifier variant) -> canonical id``.  One row may
+        #: know an account as ``AC0001`` while another knows it as
+        #: ``100000000001``; both are aliases of one entity, and this is what
+        #: makes the second one resolve to the first *whatever order the files
+        #: happened to be read in*.
+        self._identity: dict[tuple[str, str], str] = {}
+        #: Union-find over canonical ids: identifiers discovered later link an
+        #: entity that already exists to the one that names it.
+        self._parent: dict[str, str] = {}
+        self._order: dict[str, int] = {}
+        #: True where a canonical id was minted purely to hold a reference --
+        #: the placeholder a foreign key creates before the register that
+        #: actually describes the thing is read.  A placeholder never wins a
+        #: merge against a record the dataset really described.
+        self._placeholder: dict[str, bool] = {}
+        #: True where the id is the dataset's own identifier for the record
+        #: (``AC0001``, ``V001``, ``PH0001``) rather than a value-derived id
+        #: (``~hash`` of a number, a plate, a name).  When two records merge,
+        #: the dataset's id is the one a reader can look up again; two derived
+        #: ids fall back to the earliest.
+        self._described: dict[str, bool] = {}
         #: Provenance of the row currently being processed.  Stubs created by
         #: :meth:`_resolve` inherit it, so even an entity that only ever
         #: appears as a foreign key can name the row that referenced it --
         #: which is what guarantee G1 requires of every graph node.
         self._current_prov: dict[str, Any] = {}
+        #: ``(entity_type, marker)`` pairs already reported, so a document that
+        #: carries the same absence marker on forty rows is explained once.
+        self._missing_seen: set[tuple[str, str]] = set()
+
+    # ------------------------------------------------- identity bookkeeping
+    def _find(self, canonical_id: str) -> str:
+        """Representative of ``canonical_id``'s identity group."""
+        parent = self._parent.get(canonical_id)
+        if parent is None or parent == canonical_id:
+            self._parent.setdefault(canonical_id, canonical_id)
+            return canonical_id
+        root = self._find(parent)
+        self._parent[canonical_id] = root
+        return root
+
+    def _link(self, first: str, second: str) -> None:
+        """Record that two canonical ids name the same real-world record.
+
+        The representative is the *describing* record when only one of them is
+        a placeholder, and the earliest otherwise: the entity a caller gets
+        back for ``4801...`` should be the phone register's ``PH0001``, not the
+        anonymous node a call log's foreign key happened to create first.
+        """
+        a, b = self._find(first), self._find(second)
+        if a == b:
+            return
+        placeholder_a = self._placeholder.get(a, False)
+        placeholder_b = self._placeholder.get(b, False)
+        described_a = self._described.get(a, False)
+        described_b = self._described.get(b, False)
+        if placeholder_a and not placeholder_b:
+            root, child = b, a
+        elif placeholder_b and not placeholder_a:
+            root, child = a, b
+        elif described_b and not described_a:
+            root, child = b, a
+        elif described_a and not described_b:
+            root, child = a, b
+        elif self._order.get(b, 1 << 30) < self._order.get(a, 1 << 30):
+            root, child = b, a
+        else:
+            root, child = a, b
+        self._parent[child] = root
+        self._placeholder[root] = placeholder_a and placeholder_b
+        self._described[root] = described_a or described_b
+
+    def _claim(
+        self,
+        entity_type: str,
+        canonical_id: str,
+        values: Iterable[Any],
+        *,
+        placeholder: bool = False,
+        described: bool = False,
+    ) -> None:
+        """Register every way this entity is named, linking duplicates.
+
+        Claiming is what turns "the account table's ``AC0001``" and "the
+        ledger's ``100000000001``" into one entity: the second claim finds the
+        first already owning the value and links the two rather than creating
+        a parallel account nobody owns.
+        """
+        self._order.setdefault(canonical_id, len(self._order))
+        if placeholder:
+            self._placeholder.setdefault(canonical_id, True)
+        if described:
+            self._described.setdefault(canonical_id, True)
+        for value in values:
+            for variant in identifier_variants(entity_type, value):
+                key = (entity_type, variant)
+                owner = self._identity.get(key)
+                if owner is None:
+                    self._identity[key] = canonical_id
+                    continue
+                self._link(owner, canonical_id)
+            if value:
+                self._alias[f"{entity_type}|{str(value).strip()}"] = self._find(canonical_id)
+
+    def _lookup(self, entity_type: str, reference: str) -> str | None:
+        """The canonical entity ``reference`` already names, if it exists."""
+        for variant in identifier_variants(entity_type, reference):
+            owner = self._identity.get((entity_type, variant))
+            if owner is not None:
+                return self._find(owner)
+        known = self._alias.get(f"{entity_type}|{str(reference).strip()}")
+        return self._find(known) if known else None
 
     # -------------------------------------------------------------- helpers
     def _provenance(self, source: dict[str, Any], row_number: int | None) -> dict[str, Any]:
@@ -412,6 +677,9 @@ class Normalizer:
     ) -> str | None:
         """Create or refresh an entity, returning its canonical id."""
         key = (natural_id or "").strip()
+        if not key and is_missing_value(normalized_value or name):
+            self._note_missing(entity_type, str(normalized_value or name))
+            return None
         if key:
             canonical = cid(entity_type, key)
         elif normalized_value:
@@ -420,6 +688,15 @@ class Normalizer:
             canonical = _derived_id(entity_type, sm.normalize_name(name))
         else:
             return None
+        claimed = [key, normalized_value, name] if entity_type in _IDENTITY_TYPES else [key]
+        # A record the dataset named keeps its own identifier through a merge;
+        # one minted from a value yields to it.
+        self._claim(entity_type, canonical, claimed, described=bool(key))
+        # The identifiers may already belong to another entity of this type
+        # (the ledger met ``100000000001`` before the register named it
+        # ``AC0001``): give back the group's representative so every caller
+        # behaves as if the two had been one entity from the start.
+        canonical = self._find(canonical)
         self.result.add_entity(
             CanonicalEntity(
                 canonical_id=canonical,
@@ -436,25 +713,57 @@ class Normalizer:
             self._alias.setdefault(f"{entity_type}|{normalized_value}", canonical)
         return canonical
 
+    def _note_missing(self, entity_type: str, marker: str) -> None:
+        """Record an absence marker once, where the operator can see it.
+
+        The marker is not silently dropped: the value is named in the import
+        report, so a file that says "nobody was identified here" is explained
+        rather than quietly producing a smaller graph.
+        """
+        # Case-folded: the log's ``DATA_GAP`` and the display form ``Data Gap``
+        # are the same absence, and the operator needs to see it once, spelled
+        # the way the file spells it.
+        key = (entity_type, marker.casefold())
+        if key in self._missing_seen:
+            return
+        self._missing_seen.add(key)
+        prov = self._current_prov or {}
+        self.result.warnings.append(
+            f"{prov.get('file', '?')} row {prov.get('row', '?')}: "
+            f"{entity_type} value {marker!r} is a missing-value marker, not an entity"
+        )
+
     def _resolve(self, entity_type: str, reference: str | None) -> str | None:
         """Resolve a cross-table reference, creating a stub if it is unknown.
 
         A stub keeps the relationship rather than dropping it: the source row
         genuinely asserts the link, and dropping edges because a lookup table
         was not supplied is how a dataset silently loses half its graph.
+
+        The lookup is identifier-tolerant, so a reference finds the record
+        *however that dataset wrote it* -- ``+91 98010 00001`` resolves against
+        a register that spells it ``9801000001``.  If the record is only
+        defined later (the register is read after the ledger), the stub
+        is folded into it by :meth:`reconcile_identifiers` rather than leaving
+        two accounts that never meet.
         """
         ref = (reference or "").strip()
         if not ref:
             return None
-        known = self._alias.get(f"{entity_type}|{ref}")
+        if is_missing_value(ref):
+            self._note_missing(entity_type, ref)
+            return None
+        known = self._lookup(entity_type, ref)
         if known:
             return known
         # When resolving a CASE, also check if reference is an aliased FIR
         if entity_type == sm.CASE:
             fir_known = self._alias.get(f"FIR|{ref}")
             if fir_known:
-                return fir_known
+                return self._find(fir_known)
         canonical = cid(entity_type, ref)
+        self._claim(entity_type, canonical, [ref], placeholder=True)
+        canonical = self._find(canonical)
         if canonical not in self.result.entities:
             self.result.add_entity(
                 CanonicalEntity(
@@ -470,34 +779,94 @@ class Normalizer:
         return canonical
 
     def reconcile_identifiers(self) -> int:
-        """Fold placeholder entities into the record the dataset already has.
+        """Fold entities the dataset's own identifiers show to be one record.
 
-        A cell can hold an identifier the dataset defines elsewhere: a
-        ``counterparty`` column containing ``PERSON_00379``, a ``party`` column
-        holding an ``ORG_0031``. The extractor that met it first had no way to
-        know, so it created an entity of its own type named after the raw
-        value -- which is how an organisation called "PERSON_00379" ends up on
-        the Organizations page.
+        Two mechanisms meet here, and both run after every table has been read,
+        when the whole identifier space is known.
 
-        This pass runs after every table has been read, when the whole id space
-        is known. A placeholder (an entity whose name is nothing but its own
-        natural key, so the data never asserted an identity for it) is merged
-        into a *differently typed* entity carrying that same natural key and a
-        real name, and its relationships are rewired. Nothing is invented: the
-        merge happens only because the dataset itself used that identifier for
-        a record it did describe.
+        *Identity groups.*  A ledger row naming ``100000000001`` and a register
+        that calls that account ``AC0001`` are one account; a phone written
+        ``+91 98010 00001`` in one file and ``9801000001`` in another is one
+        phone.  The entity a source *described* wins over the placeholder a
+        bare reference created, so the register's ``AC0001`` is what the graph
+        keeps, and the ledger's edges are rewired onto it instead of leaving a
+        second account nobody owns.
+
+        *Names the dataset later defined.*  A sheet that writes only a name
+        creates a person keyed by that name; when a register defines the same
+        name with an identifier, the derived record folds into it.
+
+        *Same-key placeholders.*  A cell may hold an identifier the dataset
+        defines elsewhere as another type: a ``counterparty`` column containing
+        ``PERSON_00379``.  The extractor that met it first created an entity of
+        its own type named after the raw value.  Such a placeholder is merged
+        into the record that carries the same natural key and a real name.
+
+        Nothing is invented: every merge is between entities the dataset itself
+        named with one and the same identifier.
 
         Returns the number of entities folded away.
         """
+        folded = self._apply_remap(self._identity_remap())
+        folded += self._apply_remap(self._name_remap())
+        folded += self._apply_remap(self._same_key_remap())
+        if folded:
+            log.info("normalize.identifiers_reconciled", folded=folded)
+        return folded
+
+    def _identity_remap(self) -> dict[str, str]:
+        """Canonical ids the identity index has linked, as child -> survivor."""
+        remap: dict[str, str] = {}
+        for canonical_id in list(self.result.entities):
+            root = self._find(canonical_id)
+            if root != canonical_id:
+                remap[canonical_id] = root
+        return remap
+
+    def _name_remap(self) -> dict[str, str]:
+        """Name-derived people that a keyed record of the same name defines.
+
+        A sheet that only writes ``subject: Amit Joshi`` creates a person keyed
+        by the name's hash, because at that moment the dataset had not defined
+        him.  When the register is read later and defines ``P008`` as
+        *Amit Joshi*, the two are one man: the derived entity folds into the
+        described record.  Two *identified* records that happen to share a name
+        are deliberately left alone -- the dataset told them apart, and merging
+        them would invent a person.
+        """
+        by_name: dict[str, list[CanonicalEntity]] = {}
+        for entity in self.result.entities.values():
+            if entity.entity_type != sm.PERSON:
+                continue
+            name = sm.normalize_name(entity.name or entity.display_name or "")
+            if name:
+                by_name.setdefault(name.casefold(), []).append(entity)
+
+        remap: dict[str, str] = {}
+        for entities in by_name.values():
+            derived = [
+                e for e in entities if e.canonical_id.split(":", 1)[-1].startswith("~")
+            ]
+            described = [
+                e for e in entities if not e.canonical_id.split(":", 1)[-1].startswith("~")
+            ]
+            if len(described) != 1 or not derived:
+                continue
+            for entity in derived:
+                remap[entity.canonical_id] = described[0].canonical_id
+        return remap
+
+    def _same_key_remap(self) -> dict[str, str]:
+        """Placeholders that share a natural key with a described record."""
         by_key: dict[tuple[str, str], list[CanonicalEntity]] = {}
         for entity in self.result.entities.values():
-            entity_type, _, key = entity.canonical_id.partition(":")
+            _entity_type, _, key = entity.canonical_id.partition(":")
             if not key or key.startswith("~"):
                 continue
             by_key.setdefault((entity.entity_type, key), []).append(entity)
 
         remap: dict[str, str] = {}
-        for (etype, key), entities in by_key.items():
+        for (_etype, key), entities in by_key.items():
             if len(entities) < 2:
                 continue
             named = [e for e in entities if (e.name or "").strip() and e.name.strip() != key]
@@ -511,14 +880,28 @@ class Normalizer:
                     continue
                 if placeholder.entity_type != survivor.entity_type:
                     continue
-                survivor.merge(placeholder)
                 remap[placeholder.canonical_id] = survivor.canonical_id
+        return remap
 
+    def _apply_remap(self, remap: dict[str, str]) -> int:
+        """Merge each folded entity into its survivor and rewire the edges.
+
+        Edge keys are recomputed: two relationships that differed only because
+        one endpoint was the placeholder now describe the same connection, and
+        aggregate (as repeats of one call pair already do) instead of lingering
+        twice under stale keys.
+        """
+        remap = {
+            child: parent
+            for child, parent in remap.items()
+            if child != parent and parent in self.result.entities
+        }
         if not remap:
             return 0
-
-        for canonical_id in remap:
-            self.result.entities.pop(canonical_id, None)
+        for child, parent in remap.items():
+            folded = self.result.entities.pop(child, None)
+            if folded is not None:
+                self.result.entities[parent].merge(folded)
 
         rewired: dict[str, CanonicalRelationship] = {}
         for rel in self.result.relationships.values():
@@ -529,17 +912,124 @@ class Normalizer:
                 # between them says nothing.
                 continue
             if (source, target) != (rel.source_canonical_id, rel.target_canonical_id):
+                rel.edge_key = _edge_key(
+                    rel.rel_type,
+                    source,
+                    target,
+                    rel.valid_from,
+                    rel.observed_at,
+                    rel.attributes.get("discriminator"),
+                )
                 rel.source_canonical_id = source
                 rel.target_canonical_id = target
-            rewired.setdefault(rel.edge_key, rel)
+            existing = rewired.get(rel.edge_key)
+            if existing is None:
+                rewired[rel.edge_key] = rel
+                continue
+            existing.attributes["occurrences"] = int(
+                existing.attributes.get("occurrences", 1)
+            ) + int(rel.attributes.get("occurrences", 1))
+            for case_id in rel.case_ids:
+                if case_id not in existing.case_ids:
+                    existing.case_ids.append(case_id)
         self.result.relationships = rewired
 
         for alias_key, canonical in list(self._alias.items()):
             if canonical in remap:
                 self._alias[alias_key] = remap[canonical]
-
-        log.info("normalize.identifiers_reconciled", folded=len(remap))
         return len(remap)
+
+    #: A value that is nothing but a code: ``CP_01``, ``PARTY-3``, ``ACCT_0007``,
+    #: ``100000000001``.  Such a value may be an identifier the dataset defines
+    #: somewhere else, and resolving it is the point; but if no record in the
+    #: dataset defines it, calling it an organisation asserts something no row
+    #: ever said.
+    _OPAQUE_CODE = re.compile(r"^(?:[A-Za-z]{1,8}[-_/]?\d{1,15}|\d{6,20})$")
+
+    def _reference_entity(self, value: str, prov: dict) -> str | None:
+        """Resolve a bare reference to whatever the dataset says it is.
+
+        An identifier defined elsewhere resolves to the record that defines it
+        -- ``CP_01`` is the person whose ``person_id`` is ``CP_01``, an
+        ``INV-2024-11`` is the property it names.  A value that reads as a name
+        (it has spaces, or letters not followed by a code) is the business the
+        transaction names.  Anything else is an unresolved code: it is reported
+        rather than dressed up as an organisation, which is how a reference
+        like ``CP_01`` used to become a company with no employees and no links.
+        """
+        ref = (value or "").strip()
+        if not ref:
+            return None
+        for candidate_type in sm.ENTITY_TYPES:
+            known = self._lookup(candidate_type, ref)
+            if known:
+                return known
+        if " " not in ref and self._OPAQUE_CODE.match(ref):
+            self.result.warnings.append(
+                f"Unresolved reference {ref!r}: no record in this dataset defines it, "
+                "so it was left untyped rather than recorded as an organisation"
+            )
+            return None
+        return self._register(
+            sm.ORGANIZATION, None, name=ref, normalized_value=ref.upper(),
+            attributes={"role": "counterparty"}, provenance=prov,
+        )
+
+    def _register_person(
+        self,
+        person_id: str | None,
+        name: str,
+        *,
+        attributes: dict[str, Any] | None = None,
+        provenance: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Register a person, resolving a name the dataset already knows.
+
+        A CCTV sheet's ``subject`` column or a witness statement names somebody
+        the case file already defines.  Minting a second PERSON for that name
+        is how one suspect becomes three nodes, none of them connected.  The
+        name is only used when a person with exactly that name already exists;
+        it never merges two records the dataset told apart by identifier.
+        """
+        raw = str(name or "").strip()
+        if raw and not person_id and is_missing_value(raw):
+            # Report the file's own text, not the display form: "DATA_GAP" is
+            # what the operator will search for in the export.
+            self._note_missing(sm.PERSON, raw)
+            return None
+        normalized = sm.normalize_name(name) if name else ""
+        if not person_id and normalized:
+            known = self._lookup(sm.PERSON, normalized)
+            if known:
+                return known
+        return self._register(
+            sm.PERSON,
+            person_id,
+            name=normalized,
+            normalized_value=normalized,
+            attributes=attributes,
+            provenance=provenance,
+        )
+
+    def _row_case_ids(self, row: dict, m: dict) -> list[str]:
+        """The cases this row states it belongs to.
+
+        Scoping an edge is not the same as membership: a transfer that names
+        ``C101`` belongs to that case's file, and belongs on its graph, but the
+        accounts are not case members because money moved between them.
+        """
+        out: list[str] = []
+        for field in ("CASE.id", "CASE.number"):
+            column = m.get(field)
+            if not column:
+                continue
+            value = str(row.get(column, "") or "").strip()
+            if not value:
+                continue
+            case_cid = self._resolve(sm.CASE, value)
+            if case_cid and case_cid not in out:
+                out.append(case_cid)
+        return out
 
     def _relate(
         self,
@@ -665,13 +1155,7 @@ class Normalizer:
 
         name = sm.normalize_name(raw_name) if raw_name else ""
         if name:
-            pid = self._register(
-                sm.PERSON,
-                person_id or None,
-                name=name,
-                normalized_value=name,
-                provenance=prov,
-            )
+            pid = self._register_person(person_id or None, name, provenance=prov)
         else:
             # The row references a person but does not name them. Resolving
             # produces a placeholder that yields to the real record when the
@@ -790,10 +1274,7 @@ class Normalizer:
             # surfaces can echo it; nothing here infers it.
             "criminal_status": raw_crm_status,
         }
-        pid = self._register(
-            sm.PERSON, person_id, name=sm.normalize_name(name),
-            normalized_value=sm.normalize_name(name), attributes=attributes, provenance=prov,
-        )
+        pid = self._register_person(person_id, name, attributes=attributes, provenance=prov)
         # An address stated inline on a person row is a real, evidenced link.
         line1 = row.get(m.get("ADDRESS.line1", ""), "")
         if pid and line1:
@@ -930,17 +1411,16 @@ class Normalizer:
         if to_ref:
             target_account = self._resolve(sm.ACCOUNT, to_ref)
             self._relate(source_account, target_account, REL_TRANSFER_TO, observed_at=when,
-                         attributes=attributes, provenance=prov)
+                         attributes=attributes, provenance=prov,
+                         case_ids=self._row_case_ids(row, m))
             emitted = True
         elif counterparty and source_account:
-            org = self._register(
-                sm.ORGANIZATION, counterparty, name=counterparty,
-                normalized_value=counterparty.upper(), attributes={"role": "counterparty"},
-                provenance=prov,
-            )
-            self._relate(source_account, org, REL_TRANSFER_TO, observed_at=when,
-                         attributes=attributes, provenance=prov)
-            emitted = True
+            other = self._reference_entity(counterparty, prov)
+            if other:
+                self._relate(source_account, other, REL_TRANSFER_TO, observed_at=when,
+                             attributes=attributes, provenance=prov,
+                             case_ids=self._row_case_ids(row, m))
+                emitted = True
         if person_ref and source_account:
             holder = self._resolve(sm.PERSON, person_ref)
             self._relate(holder, source_account, REL_OWNS_ACCOUNT, provenance=prov)
@@ -964,21 +1444,24 @@ class Normalizer:
             "cell": row.get(m.get("CALL.cell", ""), ""),
         }
         emitted = False
+        case_ids = self._row_case_ids(row, m)
         if from_phone and to_phone:
             a = self._resolve(sm.PHONE, from_phone)
             b = self._resolve(sm.PHONE, to_phone)
-            self._relate(a, b, REL_CALLED, observed_at=when, attributes=attributes, provenance=prov)
+            self._relate(a, b, REL_CALLED, observed_at=when, attributes=attributes,
+                         provenance=prov, case_ids=case_ids)
             emitted = True
         if from_person and to_person:
             a = self._resolve(sm.PERSON, from_person)
             b = self._resolve(sm.PERSON, to_person)
-            self._relate(a, b, REL_CALLED, observed_at=when, attributes=attributes, provenance=prov)
+            self._relate(a, b, REL_CALLED, observed_at=when, attributes=attributes,
+                         provenance=prov, case_ids=case_ids)
             emitted = True
         if from_person and phone_ref:
             self._relate(
                 self._resolve(sm.PERSON, from_person),
                 self._resolve(sm.PHONE, phone_ref),
-                REL_USES_PHONE, provenance=prov,
+                REL_USES_PHONE, provenance=prov, case_ids=case_ids,
             )
             emitted = True
         return emitted
@@ -1215,21 +1698,28 @@ class Normalizer:
         return bool(pid)
 
     def _sightings(self, row: dict, m: dict, prov: dict) -> bool:
-        vehicle = self._resolve(sm.VEHICLE, row.get(m.get("VEHICLE.id", ""), ""))
+        # A log may name the vehicle by its plate rather than by the register's
+        # internal id (``vehicle`` column vs ``vehicle_id``); both are the same
+        # vehicle, and a sighting whose vehicle cannot be resolved is dropped.
+        vehicle_ref = row.get(m.get("VEHICLE.id", ""), "") or row.get(
+            m.get("VEHICLE.registration", ""), ""
+        )
+        vehicle = self._resolve(sm.VEHICLE, vehicle_ref)
         location = self._resolve(sm.LOCATION, row.get(m.get("LOCATION.id", ""), "") or row.get(m.get("LOCATION.name", ""), ""))
         when = sm.normalize_date(row.get(m.get("COMMON.observed_at", ""), ""))
         if not vehicle:
             return False
+        case_ids = self._row_case_ids(row, m)
         self._relate(
             vehicle, location, REL_SEEN_AT, observed_at=when,
             attributes={"source": row.get(m.get("COMMON.source", ""), "")},
-            provenance=prov,
+            provenance=prov, case_ids=case_ids,
         )
         driver = row.get(m.get("SIGHTING.driver", ""), "")
         if driver:
             self._relate(
                 self._resolve(sm.PERSON, driver), vehicle, REL_DROVE,
-                observed_at=when, provenance=prov,
+                observed_at=when, provenance=prov, case_ids=case_ids,
             )
         return True
 

@@ -366,11 +366,15 @@ async def project_dataset(
     # its unclaimed records (the container there is administrative), and with
     # several cases there is no case the data supports, so records stay
     # unscoped rather than being invented into one.
-    if case_by_key:
-        default_case_id = (
-            next(iter(case_by_key.values())).id if len(case_by_key) == 1 else None
-        )
+    if len(case_by_key) == 1:
+        # One investigation: records that name no case are still records of it.
+        default_case_id = next(iter(case_by_key.values())).id
     else:
+        # Several investigations, or none: unclaimed records join the dataset's
+        # own container case.  That case exists for exactly this ("records not
+        # linked to a case"), and it is what makes them searchable and
+        # jurisdiction-scoped.  Leaving them with no case at all puts them in
+        # the store and out of every case-scoped read.
         default_case_id = container_case.id if container_case is not None else None
     case_links = await _case_links(
         session,
@@ -574,7 +578,6 @@ CASE_MEMBERSHIP_RELS = {
     "EMPLOYED_BY",
     "WORKS_AT",
     "RELATED_TO",
-    "SEEN_AT",
     "HAS_EVIDENCE",
     "INVOLVED_IN",
     "MENTIONED_IN",
@@ -582,6 +585,13 @@ CASE_MEMBERSHIP_RELS = {
 
 #: How far membership spreads over those relations. One hop: the suspect's
 #: phone joins the case, the phone's other callers do not.
+#:
+#: ``SEEN_AT`` is deliberately absent. It is *observational*, not belonging: a
+#: camera point or a market street is shared by every case whose file mentions
+#: it, so one hop over it makes each case absorb every vehicle ever seen at
+#: the shared place -- a hub that drags the dataset into every case. The case's
+#: own sightings still count, because the log that records them is that case's
+#: file and mentions its subjects directly (pass 1).
 CASE_PROPAGATION_HOPS = 1
 
 #: Ceiling on how many entities one case may absorb by propagation. A shared

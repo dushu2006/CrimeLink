@@ -785,6 +785,18 @@ export function getDatasetJob(jobId: string): Promise<DatasetJob> {
 }
 
 /**
+ * The job that is running right now, if any.
+ *
+ * The console asks for this on mount. The job lives in the database, not in
+ * this tab, so a refresh or a trip to another page must not make a running
+ * import invisible — and a job that is invisible is a job the user starts
+ * again. `job` is null when nothing is running.
+ */
+export function getCurrentDatasetJob(): Promise<{ job: DatasetJob | null }> {
+  return api("/datasets/jobs/current");
+}
+
+/**
  * How one tabular file was mapped onto the canonical schema.
  *
  * Column mapping is inference. When the values under a header contradict it —

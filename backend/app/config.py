@@ -743,6 +743,41 @@ class Settings(BaseSettings):
         return self.profile == "production" or self.environment == "production"
 
     @property
+    def object_store_endpoint_problem(self) -> str | None:
+        """Why this deployment's object-store endpoint cannot be used, if it cannot.
+
+        Returns ``None`` when the endpoint is usable.  In the production
+        runtime context a Compose service hostname (``minio``, ``postgres``...)
+        cannot be resolved from the deployment, so evidence bytes would never
+        be readable and every document would render as "record unavailable"
+        with no explanation.  The object store then reports the
+        misconfiguration instead of pretending the bytes are missing.
+
+        Host-native execution is not flagged: the endpoint validator rewrites a
+        Compose name to ``localhost`` first, which is where ``python run.py``
+        really does find its MinIO.
+        """
+        endpoint = (self.minio_endpoint or "").strip()
+        host, _port = runtime.split_endpoint(endpoint, runtime.SERVICE_CONTAINER_PORTS["minio"])
+        if not self.is_production_deployment:
+            return None
+        if not endpoint or not host:
+            return (
+                "CRIMELINK_MINIO_ENDPOINT is not set: production must point at a "
+                "durable S3-compatible endpoint reachable from this deployment."
+            )
+        if host.lower() in runtime.COMPOSE_SERVICE_HOSTNAMES:
+            return (
+                f"CRIMELINK_MINIO_ENDPOINT is set to the Docker Compose service "
+                f"hostname {host!r}; that name only resolves inside the Compose "
+                "network, so stored evidence cannot be read back from a "
+                "deployment. Point it at the durable S3-compatible endpoint "
+                "(for example an S3 bucket endpoint), or run the Compose stack "
+                "with CRIMELINK_RUNTIME_CONTEXT=docker where the name is valid."
+            )
+        return None
+
+    @property
     def endpoint_rewrites(self) -> list[str]:
         """Compose hostnames that were rewritten for host-native execution."""
         return list(self._endpoint_rewrites)

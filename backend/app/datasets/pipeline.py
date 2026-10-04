@@ -904,6 +904,11 @@ async def _ingest_documents(
 ) -> tuple[int, int]:
     """Register document files as case documents and link their mentions.
 
+    Documents are *provenance* records, never graph actors: this function
+    writes the ``documents``, ``source_references`` and ``case_documents``
+    rows (plus the entities-mention-the-case edges) that the evidence APIs
+    read, and adds nothing to the entity stream.
+
     STRUCTURE-AGNOSTIC DESIGN:
     - Folder names are OPTIONAL context, never authoritative.
     - Case association is CONTENT-FIRST: explicit identifiers, text mentions,
@@ -935,6 +940,36 @@ async def _ingest_documents(
     case_by_key: dict[str, Case] = {
         c.dataset_case_key: c for c in cases if c.dataset_case_key and c.dataset_case_key != "ALL"
     }
+
+    # Which canonical entities came from which source file.  A table inside a
+    # case's own file (a bank statement, a call log, a CCTV sheet) states facts
+    # about that case, so the records it produced belong to the case even when
+    # the row carries no case column and the file is not prose the mention
+    # scanner can read.
+    entities_by_file: dict[str, set[str]] = {}
+    for entity in result.entities.values():
+        entity_file = str((entity.provenance or {}).get("file") or "")
+        if entity_file:
+            entities_by_file.setdefault(entity_file, set()).add(entity.canonical_id)
+
+    # A table states facts about the things its rows name, and a row inside a
+    # case's file is that case's record even when the entity it references was
+    # described in a register elsewhere (a vehicle named by a plate in a CCTV
+    # log, an account named in a bank statement).  Entity provenance alone
+    # misses those -- the entity belongs to the register -- so the endpoints of
+    # the relationships the file produced are attributed here as well.
+    endpoints_by_file: dict[str, set[str]] = {}
+    for relationship in result.relationships.values():
+        relation_file = str((relationship.provenance or {}).get("file") or "")
+        if not relation_file:
+            continue
+        bucket = endpoints_by_file.setdefault(relation_file, set())
+        for canonical_id in (
+            relationship.source_canonical_id,
+            relationship.target_canonical_id,
+        ):
+            if canonical_id and not canonical_id.startswith(f"{sm.CASE}:"):
+                bucket.add(canonical_id)
 
     # Manifest and FIR lookups - CONTENT-AWARE, not filename-only
     manifest_by_relpath: dict[str, dict[str, str]] = {}
@@ -1152,6 +1187,10 @@ async def _ingest_documents(
     created = 0
     mention_count = 0
     seen_hashes: set[tuple[str | None, str]] = set()
+    #: (entity, case) -> one edge, so an entity named in ten of a case's files
+    #: is one connection carrying ten documents of support rather than ten
+    #: parallel edges the graph would draw on top of each other.
+    mention_index: dict[tuple[str, str], dict[str, Any]] = {}
     mention_rows: list[dict[str, Any]] = []
     assigned_per_case: dict[str, int] = {}
     assigned_count = 0
@@ -1471,63 +1510,52 @@ async def _ingest_documents(
         }
 
         case_ids_list = [target_case.id] if target_case else []
-        for canonical_id in mentions:
-            if canonical_id.startswith(f"{sm.CASE}:"):
-                continue
-            mention_rows.append(
-                {
-                    "id": new_uuid(),
-                    "dataset_id": dataset.id,
-                    "source_canonical_id": canonical_id,
-                    "target_canonical_id": f"{sm.DOCUMENT}:{document.id}",
-                    "rel_type": "MENTIONED_IN",
-                    "confidence": 0.9,
-                    "edge_key": hashlib.sha256(
-                        f"MENTIONED_IN|{canonical_id}|{document.id}".encode()
-                    ).hexdigest()[:40],
-                    "valid_from": None,
-                    "valid_to": None,
-                    "observed_at": None,
-                    "attributes": {"filename": entry.filename},
-                    "provenance": provenance,
-                    "case_ids": case_ids_list,
-                }
-            )
-            mention_count += 1
-
-        # The document itself is a canonical entity
-        result.add_entity(
-            nz.CanonicalEntity(
-                canonical_id=f"{sm.DOCUMENT}:{document.id}",
-                entity_type=sm.DOCUMENT,
-                name=entry.filename,
-                normalized_value=entry.relative_path,
-                attributes={
-                    "page_count": pages,
-                    "media_type": entry.media_type,
-                    "document_type": doc_type.value,
-                    "case_id": target_case_id,
-                    "case_key": target_case.dataset_case_key if target_case else None,
-                },
-                provenance=provenance,
-            )
-        )
-
-        # Link document to its case in the canonical graph
         if target_case is not None:
-            result.add_relationship(
-                nz.CanonicalRelationship(
-                    source_canonical_id=f"{sm.CASE}:{target_case.dataset_case_key}",
-                    target_canonical_id=f"{sm.DOCUMENT}:{document.id}",
-                    rel_type="HAS_DOCUMENT",
-                    confidence=1.0,
-                    edge_key=hashlib.sha256(
-                        f"HAS_DOCUMENT|{target_case.dataset_case_key}|{document.id}".encode()
-                    ).hexdigest()[:40],
-                    provenance=provenance,
-                    case_ids=[target_case.id],
-                )
+            # What the document *says* is an edge from the entity to the case,
+            # the same shape the single-document ingestion path writes
+            # (``injector.link_to_case``).  A document is provenance, not an
+            # actor: emitting "person -> DOCUMENT" edges produced 164 nodes and
+            # 111 edges that the graph deliberately refuses to project, so the
+            # mention is recorded where it is actually read.
+            case_canonical_id = f"{sm.CASE}:{target_case.dataset_case_key}"
+            linked_ids = (
+                set(mentions)
+                | entities_by_file.get(entry.relative_path, set())
+                | endpoints_by_file.get(entry.relative_path, set())
             )
+            for canonical_id in sorted(linked_ids):
+                if canonical_id.startswith(f"{sm.CASE}:"):
+                    continue
+                key = (canonical_id, case_canonical_id)
+                row = mention_index.get(key)
+                if row is None:
+                    row = {
+                        "id": new_uuid(),
+                        "dataset_id": dataset.id,
+                        "source_canonical_id": canonical_id,
+                        "target_canonical_id": case_canonical_id,
+                        "rel_type": "MENTIONED_IN",
+                        "confidence": 0.9,
+                        "edge_key": hashlib.sha256(
+                            f"MENTIONED_IN|{canonical_id}|{case_canonical_id}".encode()
+                        ).hexdigest()[:40],
+                        "valid_from": None,
+                        "valid_to": None,
+                        "observed_at": None,
+                        "attributes": {
+                            "filenames": [],
+                            "source_doc_ids": [],
+                        },
+                        "provenance": provenance,
+                        "case_ids": case_ids_list,
+                    }
+                    mention_index[key] = row
+                    mention_count += 1
+                attributes = row["attributes"]
+                if entry.filename not in attributes["filenames"]:
+                    attributes["filenames"].append(entry.filename)
+                if document.id not in attributes["source_doc_ids"]:
+                    attributes["source_doc_ids"].append(document.id)
 
         # Track integrity stats
         if target_case is not None:
@@ -1556,11 +1584,11 @@ async def _ingest_documents(
                 f"Indexed {index}/{len(candidates)} documents",
             )
 
-    # Persist the document entities and their mention edges
-    document_entities = [
-        e for e in result.entities.values() if e.entity_type == sm.DOCUMENT
-    ]
-    await _persist_entities(session, dataset.id, document_entities)
+    # Persist the mention edges.  There is deliberately no DOCUMENT entity to
+    # persist: the document rows, their ``SourceReference`` rows and the
+    # ``case_documents`` link above are the evidence record, and the graph
+    # ontology has no label for a file for the same reason.
+    mention_rows = list(mention_index.values())
     for chunk in _chunks(mention_rows, 2000):
         await session.execute(DatasetRelationship.__table__.insert(), chunk)
     await session.flush()
