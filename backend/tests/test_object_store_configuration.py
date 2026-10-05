@@ -177,7 +177,10 @@ def test_an_import_that_cannot_store_its_bytes_fails_instead_of_activating(
     final = _await_job(client, admin_headers, response.json()["job_id"])
     assert final["status"] == "FAILED"
     assert "storage unreachable" in (final["error"] or "")
-    assert final["result"] == {}
+    # The job says *where* it failed.  Storage is written during VALIDATING, so
+    # that is the stage recorded -- not a completed run that broke afterwards.
+    assert final["result"].get("failed_stage") == "VALIDATING"
+    assert final["progress_pct"] < 100, "a failed import must not report 100%"
 
     listing = client.get("/api/v1/datasets", headers=admin_headers).json()
     listed = {item["id"] for item in listing.get("items", [])}

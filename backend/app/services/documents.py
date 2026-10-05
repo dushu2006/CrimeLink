@@ -697,9 +697,17 @@ async def provenance_payload(
         for ref in references
     ]
 
+    # Scoped to this document's own dataset.  A manifest row from an unrelated
+    # dataset that happens to share a ``doc_id`` must never become this
+    # document's provenance: the chain has to resolve to one dataset end to end.
     dataset_file = (
         await session.execute(
-            select(DatasetFile).where(DatasetFile.doc_id == document.id).limit(1)
+            select(DatasetFile)
+            .where(
+                DatasetFile.doc_id == document.id,
+                DatasetFile.dataset_id == document.dataset_id,
+            )
+            .limit(1)
         )
     ).scalars().first()
 
@@ -725,18 +733,42 @@ async def provenance_payload(
                 container.settings.minio_bucket_documents, document.storage_key
             )
             computed = content_hash(raw)
+            expected_size = document.size_bytes or None
+            # ``size_matches`` is None when the import never recorded a size, so
+            # an unrecorded expectation is never reported as a verified one.
+            size_matches = None if not expected_size else len(raw) == int(expected_size)
+            expected_hash = (document.content_hash or "").strip()
+            # Three states, and the third matters: with no recorded hash there
+            # is nothing to compare against, so integrity is *unproven* rather
+            # than failed.  Reporting a match here would be a fabricated
+            # verification, and reporting a mismatch would accuse a record that
+            # was simply imported before hashes were stored.
+            hash_matches = None if not expected_hash else computed == expected_hash
+            if hash_matches is None:
+                detail = (
+                    "Bytes read from object storage; no SHA-256 was recorded for "
+                    "this document, so integrity is unproven."
+                )
+            elif hash_matches:
+                detail = "Bytes read from object storage."
+            else:
+                detail = "Bytes read, but the SHA-256 no longer matches the recorded hash."
+            if size_matches is False:
+                detail += (
+                    f" Stored size {len(raw)} bytes does not match the recorded "
+                    f"{expected_size} bytes."
+                )
             file_row.update(
                 {
                     "available": True,
                     "storage_status": "available",
                     "size_bytes": len(raw),
-                    "hash_matches": computed == document.content_hash,
+                    "expected_size_bytes": expected_size,
+                    "size_matches": size_matches,
+                    "hash_matches": hash_matches,
                     "computed_hash": computed,
-                    "detail": (
-                        "Bytes read from object storage."
-                        if computed == document.content_hash
-                        else "Bytes read, but the SHA-256 no longer matches the recorded hash."
-                    ),
+                    "expected_hash": expected_hash or None,
+                    "detail": detail,
                     "preview_url": (
                         f"/api/v1/sources/preview?path={quote(relative_path, safe='')}"
                         if relative_path
@@ -874,11 +906,26 @@ async def provenance_payload(
             ),
         },
         "hash_matches": {
+            # Tri-state, for the same reason ``record_available`` is: True when
+            # the digest re-computed from the real bytes equals the recorded
+            # one, False when it does not, and None when it could not be
+            # established (object unreadable, or no hash was ever recorded).
             "ok": file_row.get("hash_matches"),
+            "state": (
+                "unproven"
+                if file_row.get("hash_matches") is None
+                else ("match" if file_row.get("hash_matches") else "mismatch")
+            ),
             "detail": (
                 "recorded hash re-computed from the stored bytes and it matches"
                 if file_row.get("hash_matches")
-                else "hash could not be confirmed"
+                else (
+                    "the stored bytes were read but their SHA-256 does not match "
+                    "the recorded hash"
+                    if file_row.get("hash_matches") is False
+                    else "hash could not be confirmed: "
+                    + str(file_row.get("detail") or "the stored object was not read")
+                )
             ),
         },
     }

@@ -17,6 +17,7 @@ import json
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from app.container import get_container
 from app.datasets import registry
 from app.db.models import Dataset, DatasetEntity, DatasetRelationship
 from app.db.session import async_session
@@ -412,3 +413,87 @@ async def test_the_jobs_route_is_not_swallowed_by_the_dataset_route(
     response = client.get("/api/v1/datasets/jobs/some-id", headers=admin_headers)
     assert response.status_code == 404
     assert "Job not found" in response.text
+
+
+# ---------------------------------------------------------------------------
+# A missed terminal frame must not leave the socket waiting forever
+# ---------------------------------------------------------------------------
+
+
+async def test_a_lost_terminal_frame_still_ends_the_stream(
+    client, admin_headers, monkeypatch
+):
+    """The job row closes the socket even when the event never arrives.
+
+    A subscription registers *after* the handler has read and sent the
+    snapshot, so a job that finishes inside that window publishes its terminal
+    frame to nobody.  Nothing about that is rare -- a fast failure does it
+    routinely -- and the consequence used to be a socket (and the progress bar
+    behind it) waiting forever.  The stream now re-reads the job row when no
+    event arrives, so the honest end state is always delivered.
+
+    The build is held open until the socket has its snapshot, so the terminal
+    frame is genuinely missed rather than merely late: with the row re-check
+    disabled this test does not pass.
+    """
+    import threading
+
+    dataset_id = await _make_dataset("Lost Frame Fixture")
+    started = threading.Event()
+    release = threading.Event()
+
+    async def gated_then_explode(session, dataset, progress=None):
+        started.set()
+        # The app runs on its own loop (the test client's portal), so the gate
+        # is a threading.Event polled off the loop rather than an asyncio one.
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        raise RuntimeError("projection failed")
+
+    monkeypatch.setattr(
+        "app.datasets.pipeline.rebuild_graph", gated_then_explode, raising=True
+    )
+    job_id = client.post(
+        f"/api/v1/datasets/{dataset_id}/graph/rebuild", headers=admin_headers
+    ).json()["job_id"]
+    assert started.wait(timeout=10.0), "the build never started"
+
+    # Drop every published frame: this is the "the terminal event was lost"
+    # case, which is exactly what the row re-check exists to survive.
+    container = get_container()
+    monkeypatch.setattr(
+        container.event_bus, "publish", lambda channel, message: None, raising=True
+    )
+
+    received: list[dict] = []
+    snapshot_seen = threading.Event()
+
+    def _drain() -> None:
+        with client.websocket_connect(
+            f"/api/v1/jobs/ws/job/{job_id}?token={_token(admin_headers)}"
+        ) as ws:
+            while True:
+                try:
+                    frame = json.loads(ws.receive_text())
+                except WebSocketDisconnect:
+                    return
+                received.append(frame)
+                if frame.get("terminal") or frame.get("type") == "job_finished":
+                    return
+                snapshot_seen.set()
+
+    worker = threading.Thread(target=_drain, daemon=True)
+    worker.start()
+    # Only fail the build once the socket has its snapshot: before that the
+    # terminal state could still be delivered the ordinary way, and the test
+    # would pass without exercising the guard at all.
+    assert snapshot_seen.wait(timeout=15.0), "the snapshot never arrived"
+    release.set()
+
+    worker.join(timeout=30.0)
+    assert not worker.is_alive(), "the socket never delivered the end state"
+
+    assert received[0]["type"] == "job_snapshot"
+    assert received[-1].get("terminal") is True
+    assert received[-1]["status"] == "FAILED"
+    assert "projection failed" in (received[-1].get("error") or "")

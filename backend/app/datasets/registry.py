@@ -448,10 +448,11 @@ def job_row(job: DatasetJob) -> dict[str, Any]:
         "steps": list(job.steps or []),
         "result": dict(job.result or {}),
         "error": job.error,
+        "requested_by": job.requested_by,
         "created_at": _iso(job.created_at),
         "updated_at": _iso(job.updated_at),
         "finished_at": _iso(job.finished_at),
-        "terminal": job.status in {"SUCCEEDED", "FAILED"},
+        "terminal": job.status in {"SUCCEEDED", "FAILED", "CANCELLED"},
     }
 
 

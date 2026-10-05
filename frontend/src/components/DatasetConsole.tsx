@@ -42,6 +42,7 @@ const STAGES = [
   "BUILDING_RELATIONSHIPS",
   "BUILDING_GRAPH",
   "INDEXING",
+  "VERIFYING",
   "READY",
 ] as const;
 
@@ -350,24 +351,46 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
     [refresh],
   );
 
-  // Re-attach to a job the database says is still running.  The job belongs to
-  // the deployment, not to this tab: leaving the panel (or reloading the page)
-  // must not make a live import invisible, because an invisible import is one
-  // the user starts again -- and a second concurrent import would replace the
-  // first one's dataset.  A journal entry survives navigation; so does this.
+  // Re-attach to the job the database says this console should be showing.  The
+  // job belongs to the deployment, not to this tab: leaving the panel (or
+  // reloading the page) must not make a live import invisible, because an
+  // invisible import is one the user starts again -- and a second concurrent
+  // import would replace the first one's dataset.
+  //
+  // A *finished* job is hydrated too.  The panel used to go blank the moment a
+  // job ended, so an operator who came back after a completed import saw an
+  // idle screen and read it as "nothing happened"; one who came back after a
+  // failure saw neither the failure nor its cause.  The backend row is the
+  // authority for both, so both are rendered from it.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const current = await getCurrentDatasetJob();
-        if (cancelled || !current?.job || current.job.terminal) return;
-        setJob(current.job);
+        if (cancelled || !current?.job) return;
+        const hydrated = current.job;
+        setJob(hydrated);
+        if (!current.running || hydrated.terminal) {
+          // Nothing to watch: show the finished state and leave the form
+          // usable.  ``busy`` stays false so a new import is not blocked by
+          // history.
+          setBusy(false);
+          if (hydrated.status === "FAILED") {
+            setError(hydrated.error ?? "The last import failed.");
+            setNotice(
+              `The last ${hydrated.kind.replace(/_/g, " ")} failed` +
+                (hydrated.stage ? ` during ${hydrated.stage.replace(/_/g, " ").toLowerCase()}` : "") +
+                ` — job ${hydrated.id.slice(0, 8)}…`,
+            );
+          }
+          return;
+        }
         setBusy(true);
         setNotice(
-          `An ${current.job.kind.replace(/_/g, " ")} is still running — re-attached to ` +
-            `job ${current.job.id.slice(0, 8)}…`,
+          `An ${hydrated.kind.replace(/_/g, " ")} is still running — re-attached to ` +
+            `job ${hydrated.id.slice(0, 8)}…`,
         );
-        watch(current.job.id);
+        watch(hydrated.id);
       } catch {
         // Hydration is best-effort: the console still works without it, and a
         // failed lookup must not look like a failed job.
