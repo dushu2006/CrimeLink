@@ -15,6 +15,18 @@ CrimeLink is configured as a Vercel Services deployment. The checked-in
 The frontend uses relative `/api` URLs. There is no Vercel-only API base URL and
 no browser call to `localhost`.
 
+The backend function explicitly bundles `CrimeLink_Synthetic_Corpus_v1/**`.
+On serverless startup, the backend imports that checked-in corpus using the
+same content-driven `app.datasets.pipeline.run_import()` used for arbitrary
+uploads. It writes source bytes to the configured durable S3-compatible object
+store, reads them back, verifies SHA-256, builds canonical rows and the
+dataset-scoped graph, and activates only after the normal usability gate passes.
+No judge upload or cloud-only seed records are required. This does not change
+`python run.py`: local startup continues to use the existing V2 demo bootstrap.
+An existing operator-imported active dataset is left alone; the one-time
+bootstrap only fills an empty workspace or replaces the two known legacy built-in
+demo IDs. Set `CRIMELINK_BUILTIN_DATASET_AUTO_IMPORT=false` to disable it.
+
 ## What is required online
 
 Vercel supplies the HTTP compute and static frontend only. The production
@@ -72,6 +84,7 @@ CRIMELINK_CORS_ORIGINS=https://<actual-vercel-domain>
 CRIMELINK_TRUSTED_HOSTS=*.vercel.app,<optional-custom-domain>
 CRIMELINK_DATA_DIR=/tmp/crimelink-data
 CRIMELINK_OBJECT_STORE_DIR=/tmp/crimelink-objects
+CRIMELINK_BUILTIN_DATASET_AUTO_IMPORT=true
 
 CRIMELINK_POSTGRES_DSN=postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>
 CRIMELINK_POSTGRES_DSN_SYNC=postgresql+psycopg2://<user>:<password>@<host>:<port>/<database>
@@ -160,20 +173,19 @@ only adds the local development proxy.
 
 ## Deployment steps
 
-1. Provision PostgreSQL, Neo4j, and S3-compatible object storage. Provision
-   Redis and a persistent Celery worker/beat service as well if imports,
-   background jobs, scheduled jobs, or cross-instance live events are in scope.
-2. Initialize the external stores with the same canonical demo bootstrap used
-   by `run.py`, from a controlled operator/CI runner with the repository
-   checkout and the same production endpoints:
-
-   ```text
-   PYTHONPATH=backend python -c "from app.db.bootstrap import bootstrap_demo_dataset; bootstrap_demo_dataset()"
-   ```
-
-   Run it only against the intended empty/demo stores; do not force-reseed an
-   existing production database. The API startup runs the existing idempotent
-   Alembic upgrade but does not destructively seed data.
+1. Provision PostgreSQL, Neo4j, and durable S3-compatible object storage.
+   Ensure the configured documents, documents-derived, and audit-anchor buckets
+   exist (or allow the application to create them) and the service identity can
+   list, read, write, and delete dataset-owned objects. Provision Redis and a
+   persistent Celery worker/beat service as well if imports, background jobs,
+   scheduled jobs, or cross-instance live events are in scope.
+2. Add the production PostgreSQL, Neo4j, and S3-compatible object-store
+   settings. The bundled repository corpus is imported automatically on the
+   first serverless startup through the generic importer. Do not run the local
+   `bootstrap_demo_dataset()` command against production: `python run.py` keeps
+   its separate, non-destructive local V2 seeding behavior. The serverless
+   importer verifies the replacement before activation and preserves an
+   operator-imported active dataset.
 3. Import the repository into Vercel and select **Services**. Keep the project
    root unset; the checked-in root `vercel.json` supplies the frontend and
    backend service roots.
@@ -189,27 +201,23 @@ only adds the local development proxy.
    one client-side deep link such as `/cases/<case-id>/graph`. Then test the
    seeded login and the judge flows relevant to the selected broker/AI scope.
 
-The FastAPI lifespan performs the existing schema upgrade and initializes the
-configured adapters. It does not switch to local storage or silently fall back
-from production Neo4j/MinIO when those services are unavailable.
+The FastAPI lifespan performs the schema upgrade, initializes configured
+adapters, and (when enabled) imports the bundled corpus through the standard
+pipeline. S3-compatible storage is mandatory for imported source/evidence bytes;
+production reads do not fall back to the function bundle when an object is
+missing. Storage errors or hash mismatches prevent activation and leave the
+previous active dataset intact. Neo4j/MinIO are never silently replaced by local
+adapters in production.
 
-## Validation status for this repository
+## Validation status for this change
 
-Passed locally with `python run.py --no-browser` and the real embedded adapters:
-frontend loading, API liveness/readiness, OpenAPI, authentication and RBAC
-login, cases, case dashboard/timeline/persons, graph statistics/analytics/
-relationships, search, AI context/ask, investigation, and the production
-frontend build (`tsc -b && vite build`). Local seeded data included
-`demo-dataset-002` with 20 cases and the connected graph/evidence data.
+Regression coverage exercises the checked-in corpus through the real generic
+import pipeline, including its cases/entities/relationships, object-store
+round-trip SHA-256 verification, dataset-scoped graph identity, evidence/source
+resolution, and replacement failure safety. Local startup code in `run.py` and
+`backend/app/db/bootstrap.py` is not redirected to the serverless importer.
 
-The existing `frontend/smoke.mjs` helper was not counted as a product failure:
-its current implementation alphabetically selects a lazy Vite chunk and evaluates
-that ES module as a classic script, so `npm run smoke` fails with the harness
-error `Cannot use import statement outside a module` after the build succeeds.
-No application behavior was changed to work around that test-harness issue.
-
-Unavailable in this workspace: live Vercel deployment/routing, hosted
-PostgreSQL, Neo4j, Redis/Celery, external object storage, provider-backed AI/NLP,
-and production WebSocket behavior. Those require external credentials,
-reachable services, and a deployed Vercel environment; they must not be claimed
-as tested based on the local embedded run.
+A Vercel deployment and hosted PostgreSQL, Neo4j, Redis/Celery, S3-compatible
+storage, and provider-backed AI/NLP were not available for this change; those
+live cloud integrations are not claimed as tested. See the PR test report for
+the exact commands and outcomes from the local regression suite.

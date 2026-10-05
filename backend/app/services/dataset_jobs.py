@@ -260,7 +260,15 @@ async def start_job(
             )
             raise
         except Exception as exc:  # noqa: BLE001 - the failure must reach the UI
-            detail = f"{type(exc).__name__}: {exc}"
+            # Some failures are re-raised reports whose text already names its
+            # type ("RuntimeError: Could not store ..."); prefixing again would
+            # show the operator "RuntimeError: RuntimeError: ...".
+            message = str(exc)
+            detail = (
+                message
+                if message.startswith(type(exc).__name__)
+                else f"{type(exc).__name__}: {message}"
+            )
             log.exception("dataset_jobs.failed", job_id=row["id"], kind=kind)
             await reporter.update(
                 status="FAILED", stage="FAILED", message=detail, error=detail
@@ -318,6 +326,48 @@ async def active_job_for_dataset(dataset_id: str, kind: str | None = None) -> st
         )
         return None
     return job.id
+
+
+async def current_job(
+    *, kinds: Sequence[str] | None = None, dataset_id: str | None = None
+) -> dict[str, Any] | None:
+    """The newest job that has not reached a terminal state, if there is one.
+
+    This is what makes the console's state survive a navigation or a browser
+    refresh: the job row is the authority, so a client that mounts with no
+    local memory of the job asks for this and re-attaches to it.  A job whose
+    process is gone (the server restarted) is *reported as failed* rather than
+    resurrected, so an interrupted import is visible instead of blocking the
+    next one forever.
+    """
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        stmt = (
+            select(DatasetJob)
+            .where(DatasetJob.status.in_(["QUEUED", "RUNNING"]))
+            .order_by(DatasetJob.created_at.desc())
+        )
+        if kinds:
+            stmt = stmt.where(DatasetJob.kind.in_(list(kinds)))
+        if dataset_id:
+            stmt = stmt.where(DatasetJob.dataset_id == dataset_id)
+        job = (await session.execute(stmt)).scalars().first()
+
+    if job is None:
+        return None
+    if job.status == "RUNNING" and not is_running(job.id):
+        # Restarted mid-job.  The row would otherwise sit at RUNNING forever
+        # and block every later import; the honest answer is that it was
+        # interrupted, and that is what the operator is told.
+        reporter = JobReporter(job.id, job.dataset_id)
+        return await reporter.update(
+            status="FAILED",
+            stage="FAILED",
+            message="The server restarted while this job was running.",
+            error="interrupted_by_restart",
+        )
+    return registry.job_row(job)
 
 
 # ---------------------------------------------------------------------------

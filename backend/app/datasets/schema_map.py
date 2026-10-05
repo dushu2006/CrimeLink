@@ -111,7 +111,12 @@ def is_graph_eligible(entity_type: str | None) -> bool:
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     # --- identity ---------------------------------------------------------
-    "PERSON.id": ("person_id", "personid", "individual_id", "subject_id", "party_id", "suspect_id", "cust_id", "customer_id", "citizen_id"),
+    # ``owner_person_id`` / ``holder_person_id`` are person *references*: the
+    # qualifier names the role, the head noun names the entity the column
+    # points at. They used to be aliases of the vehicle/account role fields,
+    # which is how a phone register's owner column became a vehicle-owner
+    # column -- and how USES_PHONE edges went missing.
+    "PERSON.id": ("person_id", "personid", "individual_id", "subject_id", "party_id", "suspect_id", "cust_id", "customer_id", "citizen_id", "owner_person_id", "holder_person_id"),
     "PERSON.name": ("full_name", "name", "person_name", "subject", "subject_name", "suspect", "suspect_name", "accused", "accused_name", "cust_name", "customer_name", "holder_name", "party_name", "individual", "person", "canonical_name", "canonicalname"),
     "PERSON.first_name": ("first_name", "firstname", "given_name", "fname"),
     "PERSON.last_name": ("last_name", "lastname", "surname", "family_name", "lname"),
@@ -143,7 +148,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "VEHICLE.make_model": ("make_model", "makemodel", "model", "make", "vehicle_model", "vehicle_make", "vehicle_type"),
     "VEHICLE.fuel": ("fuel", "fuel_type"),
     "VEHICLE.state": ("registered_state", "registration_state", "rto_state"),
-    "VEHICLE.owner_id": ("owner_person_id", "owner_id", "registered_owner_id"),
+    "VEHICLE.owner_id": ("owner_id", "registered_owner_id", "vehicle_owner_id"),
     "VEHICLE.owner_name": ("owner", "owner_name", "registered_owner"),
     "VEHICLE.color": ("color", "colour", "vehicle_color"),
     # --- finance ----------------------------------------------------------
@@ -152,7 +157,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "ACCOUNT.bank_name": ("bank_name", "bank", "bankname", "institution", "bank_code"),
     "ACCOUNT.branch": ("branch", "branch_city", "branch_name", "ifsc", "ifsc_code"),
     "ACCOUNT.type": ("account_type", "acct_type"),
-    "ACCOUNT.holder_id": ("holder_person_id", "holder_id", "account_holder_id", "owner_person_id"),
+    "ACCOUNT.holder_id": ("holder_id", "account_holder_id", "account_owner_id"),
     "ACCOUNT.holder_name": ("account_holder", "holder", "holder_name", "beneficiary_name"),
     # --- transactions -----------------------------------------------------
     "TRANSACTION.id": ("txn_id", "transaction_id", "trans_id", "txnid", "reference_no", "utr"),
@@ -323,11 +328,25 @@ def match_by_tokens(column: str) -> tuple[str, float] | None:
     column_tokens = tokens_of(column)
     if not column_tokens:
         return None
+    # An identifier column is read by its head noun (see
+    # :func:`identifier_head_field`); a *shorter* alias may not claim it by
+    # ignoring the words in front of the suffix. ``case_member_id`` contains
+    # "case" and "id" but it is the membership row's own key, not a case --
+    # letting ``case_id`` match it by subset mints one case per membership row
+    # and steals the case id from the column that really holds it.
+    shape_tokens = identifier_shape_tokens(column)
     for alias_tokens, canonical, _alias in _ALIAS_TOKENS:
-        if alias_tokens <= column_tokens:
-            # Two matching tokens ("name of person") is far stronger evidence
-            # than one ("residential address"), and is scored accordingly.
-            return (canonical, 0.88 if len(alias_tokens) > 1 else 0.76)
+        if not alias_tokens <= column_tokens:
+            continue
+        if shape_tokens is not None:
+            alias_shape = frozenset(
+                t for t in alias_tokens if t not in _ID_SUFFIX_TOKENS
+            )
+            if not alias_shape >= frozenset(shape_tokens):
+                continue
+        # Two matching tokens ("name of person") is far stronger evidence
+        # than one ("residential address"), and is scored accordingly.
+        return (canonical, 0.88 if len(alias_tokens) > 1 else 0.76)
     return None
 
 
@@ -439,6 +458,72 @@ _PAIRED_FIELDS: dict[str, tuple[str, str]] = {
 
 #: Categorical columns never legitimately hold another table's primary keys.
 _CATEGORICAL_FIELDS = frozenset({"type", "category", "status", "mode", "subtype", "kind"})
+
+
+#: Suffixes that turn a column name into a *reference* to another record:
+#: ``case_id``, ``phone_no``, ``account_number``, ``district_code``.
+_ID_SUFFIX_TOKENS = frozenset({"id", "no", "num", "number", "code", "ref", "key"})
+
+
+def _build_entity_key_words() -> dict[str, str]:
+    """``person`` -> ``PERSON.id``, ``acct`` -> ``ACCOUNT.id``, ...
+
+    Built from the ``<ENTITY>.id`` aliases already declared above, so the
+    vocabulary that decides what a column's *head noun* means is the same one
+    that matches whole headers -- there is no second, shorter list to drift.
+    Only single-token aliases participate: a multi-word alias describes a
+    header, not the one word a compound identifier is built from.
+    """
+    words: dict[str, str] = {}
+    for canonical, aliases in FIELD_ALIASES.items():
+        if not canonical.endswith(".id"):
+            continue
+        for alias in aliases:
+            tokens = tokens_of(alias)
+            tokens = frozenset(t for t in tokens if t not in _ID_SUFFIX_TOKENS)
+            if len(tokens) == 1:
+                words.setdefault(next(iter(tokens)), canonical)
+    return words
+
+
+_ENTITY_KEY_WORDS = _build_entity_key_words()
+
+
+def identifier_head_field(column: str) -> str | None:
+    """The canonical key field a compound identifier column names.
+
+    A column built as ``<qualifier...><entity><suffix>`` is read by its **head
+    noun**, which is the word immediately before the identifier suffix:
+
+    * ``owner_person_id``   -> ``PERSON.id``   (the owner *is a person*)
+    * ``holder_person_id``  -> ``PERSON.id``
+    * ``case_member_id``    -> ``None``        ("member" names no entity, and
+      the column is the membership row's own key -- reading it as a case id
+      invents one case per membership row)
+    * ``from_account_id``   -> ``ACCOUNT.id``  (an exact alias wins first)
+
+    Returns ``None`` when the head noun names no canonical entity, which is a
+    deliberate "do not guess" result: a wrong key class manufactures entities
+    that no row in the dataset ever asserted.
+    """
+    tokens = [t for t in _TOKEN_SPLIT.split(str(column).lower()) if t]
+    if len(tokens) < 2 or tokens[-1] not in _ID_SUFFIX_TOKENS:
+        return None
+    head = tokens[-2]
+    return _ENTITY_KEY_WORDS.get(head)
+
+
+def identifier_shape_tokens(column: str) -> tuple[str, ...] | None:
+    """The meaningful tokens of an identifier column, or ``None``.
+
+    ``("case_member_id")`` -> ``("case", "member")``: everything except the
+    trailing identifier suffix.  Used to stop a *shorter* alias from claiming a
+    column whose remaining words name something else entirely.
+    """
+    tokens = [t for t in _TOKEN_SPLIT.split(str(column).lower()) if t]
+    if len(tokens) < 2 or tokens[-1] not in _ID_SUFFIX_TOKENS:
+        return None
+    return tuple(tokens[:-1])
 
 
 def uniform_prefix(values: Iterable[Any]) -> str | None:
@@ -596,6 +681,59 @@ def _any(mapped: dict[str, str], *fields: str) -> bool:
     return any(f in mapped for f in fields)
 
 
+#: Entity tables that are decided together, because the same row can carry all
+#: of them: a people register holds the person's address, a locations register
+#: holds a name that could equally be a person's.  ``(key, name)`` -- the field
+#: that makes the table *about* the entity, and the field that identifies an
+#: instance of it.
+_ENTITY_TABLE_SIGNALS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("LOCATION_TABLE", LOCATION, ("LOCATION.id",), ("LOCATION.name",)),
+    ("ADDRESS_TABLE", ADDRESS, ("ADDRESS.id",), ("ADDRESS.line1", "ADDRESS.city")),
+    (
+        "ORGANIZATION_TABLE",
+        ORGANIZATION,
+        ("ORGANIZATION.id",),
+        ("ORGANIZATION.name",),
+    ),
+    ("PERSON_TABLE", PERSON, ("PERSON.id",), ("PERSON.name",)),
+)
+
+
+def _classify_entity_table(mapped: dict[str, str]) -> tuple[str, str | None] | None:
+    """Which entity a register table is *about*.
+
+    Decided by the table's own key, not by column order in this function: a
+    ``people`` table carrying ``address``/``city`` is about people, and reading
+    it as an address table made the person the secondary subject of their own
+    record.  When no key resolves, the table is named by the instance fields it
+    carries; when several could apply, the keyed reading wins, then the first
+    signal in declaration order.
+    """
+    keyed = [
+        (semantic, entity)
+        for semantic, entity, keys, _names in _ENTITY_TABLE_SIGNALS
+        if _any(mapped, *keys)
+    ]
+    if len(keyed) == 1:
+        return keyed[0]
+    named = [
+        (semantic, entity)
+        for semantic, entity, _keys, names in _ENTITY_TABLE_SIGNALS
+        if _has(mapped, *names)
+    ]
+    if len(keyed) > 1:
+        # Several entity keys in one row: it is a relation, not a register.
+        # Fall back to the instance fields, so ``address_id, line1, city,
+        # person_id`` stays an address table.
+        return next((candidate for candidate in named if candidate in keyed), None)
+    if named:
+        # Ambiguous instance fields (a name that could be a person's or a
+        # place's). The actor is the more useful reading, and it is what this
+        # function returned before the register rules were unified.
+        return next((c for c in named if c[1] == PERSON), named[0])
+    return None
+
+
 def classify_table(mapped: dict[str, str], columns: list[str]) -> tuple[str, str | None, list[str]]:
     """Decide what a table *is* from the fields that resolved.
 
@@ -622,7 +760,11 @@ def classify_table(mapped: dict[str, str], columns: list[str]) -> tuple[str, str
     if _has(mapped, "PHONE.number") and "smsid" in lowered or "messagecategory" in lowered:
         return ("SMS", CALL, notes)
     if _any(mapped, "SIGHTING.id", "SIGHTING.driver") or (
-        _has(mapped, "VEHICLE.id") and _any(mapped, "LOCATION.id", "LOCATION.name") and _any(mapped, "COMMON.observed_at")
+        # A sighting names a vehicle -- by key or by plate -- at a place, at a
+        # time.  Requiring the *key* missed every register that logs plates.
+        _any(mapped, "VEHICLE.id", "VEHICLE.registration")
+        and _any(mapped, "LOCATION.id", "LOCATION.name")
+        and _any(mapped, "COMMON.observed_at")
     ):
         return ("VEHICLE_SIGHTINGS", VEHICLE, notes)
     if _any(mapped, "TRAVEL.id") or (_has(mapped, "TRAVEL.origin", "TRAVEL.destination")):
@@ -641,6 +783,13 @@ def classify_table(mapped: dict[str, str], columns: list[str]) -> tuple[str, str
         return ("CASE_ENTITIES", CASE, notes)
     if _has(mapped, "EVIDENCE.id"):
         return ("EVIDENCE_REGISTER", EVIDENCE, notes)
+    if _has(mapped, "CASE.id") and _any(mapped, "DOCUMENT.id", "DOCUMENT.path"):
+        # An index of files that belong to cases is a document manifest, not a
+        # case register: reading it as one turns every *document* row into a
+        # case (or into a second reading of a case that another table owns).
+        # The manifest is still used -- to attach documents to their case --
+        # but it is not itself an investigative record.
+        return ("DOCUMENT_INDEX", DOCUMENT, notes)
     if _has(mapped, "CASE.id") or _has(mapped, "CASE.number"):
         return ("CASE_TABLE", CASE, notes)
     if _has(mapped, "PERSON.alias") and _has(mapped, "PERSON.id"):
@@ -659,14 +808,9 @@ def classify_table(mapped: dict[str, str], columns: list[str]) -> tuple[str, str
         return ("DEVICE_TABLE", DEVICE, notes)
     if _has(mapped, "OFFICER.id") or _has(mapped, "OFFICER.name"):
         return ("OFFICER_TABLE", OFFICER, notes)
-    if _has(mapped, "ORGANIZATION.name") or _has(mapped, "ORGANIZATION.id"):
-        return ("ORGANIZATION_TABLE", ORGANIZATION, notes)
-    if _has(mapped, "ADDRESS.id") or (_has(mapped, "ADDRESS.line1") and _has(mapped, "ADDRESS.city")):
-        return ("ADDRESS_TABLE", ADDRESS, notes)
-    if _has(mapped, "LOCATION.id") or _has(mapped, "LOCATION.name"):
-        return ("LOCATION_TABLE", LOCATION, notes)
-    if _has(mapped, "PERSON.name") or _has(mapped, "PERSON.id"):
-        return ("PERSON_TABLE", PERSON, notes)
+    entity_table = _classify_entity_table(mapped)
+    if entity_table is not None:
+        return (entity_table[0], entity_table[1], notes)
 
     notes.append(
         "No canonical entity could be identified from these columns; the file is "
@@ -687,7 +831,6 @@ def map_table(
     values' own shape. A header-derived mapping is kept only while the values
     do not contradict it -- see :func:`column_agreement`.
     """
-    mappings: list[ColumnMapping] = []
     claimed: set[str] = set()
     notes: list[str] = []
     contradictions: list[str] = []
@@ -695,91 +838,150 @@ def map_table(
     def values_of(column: str) -> list[Any]:
         return [row.get(column) for row in rows[:200]]
 
-    def from_values(column: str) -> ColumnMapping | None:
+    def value_candidates(column: str) -> list[ColumnMapping]:
         """Lexicon first (dataset-specific), then generic value patterns."""
+        out: list[ColumnMapping] = []
         if lexicon is not None:
             guess, score, support = lexicon.guess(values_of(column))
-            if guess and guess not in claimed and support >= 3:
-                claimed.add(guess)
-                return ColumnMapping(column, guess, score, "dataset_lexicon")
+            if guess and support >= 3:
+                out.append(ColumnMapping(column, guess, score, "dataset_lexicon"))
         guess, score = detect_by_values(values_of(column))
-        if guess and guess not in claimed and score >= 0.6:
-            claimed.add(guess)
-            return ColumnMapping(column, guess, score, "value_pattern")
-        return None
+        if guess and score >= 0.6:
+            out.append(ColumnMapping(column, guess, score, "value_pattern"))
+        return out
 
-    for column in columns:
+    # --- What each header *can* mean, strongest reading first. -------------
+    # A column is not decided in isolation: ``case_member_id`` and ``case_id``
+    # in one table both contain "case id", and reading the membership row's own
+    # key as the case manufactures a case per member. Every column therefore
+    # carries a ladder of readings, and the field is awarded to the strongest
+    # claim -- ties broken by column order, so an export whose columns have
+    # slipped keeps the leftmost reading.
+    def ladder_for(column: str) -> list[ColumnMapping]:
         header = _ALIAS_INDEX.get(norm(column))
-        basis = "alias"
-        confidence = 0.97
-        if header is None:
+        candidates: list[ColumnMapping] = []
+        if header is not None:
+            candidates.append(ColumnMapping(column, header, 0.97, "alias"))
+        else:
+            head = identifier_head_field(column)
+            if head is not None:
+                candidates.append(ColumnMapping(column, head, 0.92, "identifier_head"))
             near = match_by_tokens(column)
             if near:
-                header, confidence, basis = near[0], near[1], "header_tokens"
+                candidates.append(ColumnMapping(column, near[0], near[1], "header_tokens"))
+        candidates.extend(value_candidates(column))
+        candidates.append(ColumnMapping(column, None, 0.0, "unmapped"))
+        return candidates
 
-        if header is not None:
-            agreement = column_agreement(header, values_of(column))
+    ladders: dict[str, list[ColumnMapping]] = {column: ladder_for(column) for column in columns}
+    depth: dict[str, int] = {column: 0 for column in columns}
+
+    queue: list[tuple[float, int, str, ColumnMapping]] = []
+    for index, column in enumerate(columns):
+        top = ladders[column][0]
+        queue.append((top.confidence, index, column, top))
+
+    assigned: dict[str, ColumnMapping] = {}
+    while queue:
+        queue.sort(key=lambda item: (-item[0], item[1]))
+        strength, index, column, candidate = queue.pop(0)
+        if column in assigned:
+            continue
+        if candidate.canonical is not None and candidate.canonical in claimed:
+            # The field is taken by a stronger claim; this column falls through
+            # to its next-best reading rather than overwriting or vanishing.
+            depth[column] += 1
+            ladder = ladders[column]
+            if depth[column] < len(ladder):
+                nxt = ladder[depth[column]]
+                queue.append((nxt.confidence, index, column, nxt))
+            else:  # pragma: no cover - the ladder always ends in "unmapped"
+                assigned[column] = ColumnMapping(column, None, 0.0, "unmapped")
+            continue
+        if candidate.canonical is not None and candidate.basis != "unmapped":
+            agreement = column_agreement(candidate.canonical, values_of(column))
             if agreement is not None and agreement < AGREEMENT_FLOOR:
                 # The values say otherwise. Believe the values.
                 notes.append(
-                    f"Column '{column}' is headed as {header} but its values do "
+                    f"Column '{column}' is headed as {candidate.canonical} but its values do "
                     f"not match ({agreement:.0%} agreement); mapped from the data instead"
                 )
                 contradictions.append(column)
-                replacement = from_values(column)
-                mappings.append(replacement or ColumnMapping(column, None, 0.0, "unmapped"))
+                depth[column] += 1
+                ladder = ladders[column]
+                if depth[column] < len(ladder):
+                    nxt = ladder[depth[column]]
+                    queue.append((nxt.confidence, index, column, nxt))
                 continue
-            header_field = header.split(".", 1)[-1].lower()
-            if lexicon is not None and (
-                header_field == "id" or header_field in _CATEGORICAL_FIELDS
-            ):
-                # A strongly supported identifier vocabulary outranks a header
-                # that claims a different *entity's* key, or a categorical
-                # column that turns out to hold keys: a column of ACCT_* values
-                # is an account reference however it is labelled. Role columns
-                # (``from_person``, ``owner_id``, ``observed_driver``) are left
-                # alone -- they already say which entity they point at, more
-                # precisely than the prefix does.
-                guess, score, support = lexicon.guess(values_of(column))
-                if (
-                    guess
-                    and guess != header
-                    and support >= SchemaLexicon.STRONG_SUPPORT
-                    and guess not in claimed
-                ):
-                    notes.append(
-                        f"Column '{column}' holds {guess} identifiers, not {header}; "
-                        "mapped from the dataset's own key vocabulary"
-                    )
-                    contradictions.append(column)
-                    claimed.add(guess)
-                    mappings.append(ColumnMapping(column, guess, score, "dataset_lexicon"))
-                    continue
-                # Even when the foreign prefix is unrecognised, a dataset that
-                # writes its accounts as ACCT_* is telling us that a column of
-                # TXN_* values is not an account id.
-                expected = lexicon.prefix_for(header)
-                seen = uniform_prefix(values_of(column))
-                if expected and seen and seen != expected:
-                    notes.append(
-                        f"Column '{column}' holds {seen}* values, but this dataset writes "
-                        f"{header} as {expected}*; left unmapped rather than guessed"
-                    )
-                    contradictions.append(column)
-                    mappings.append(
-                        from_values(column) or ColumnMapping(column, None, 0.0, "unmapped")
-                    )
-                    continue
-            if header not in claimed:
-                claimed.add(header)
-                mappings.append(ColumnMapping(column, header, confidence, basis))
-                continue
-            # A second column claiming the same canonical field (``date`` twice)
-            # falls through to the values rather than overwriting the first.
-            mappings.append(from_values(column) or ColumnMapping(column, None, 0.0, "unmapped"))
-            continue
+        assigned[column] = candidate
+        if candidate.canonical:
+            claimed.add(candidate.canonical)
 
-        mappings.append(from_values(column) or ColumnMapping(column, None, 0.0, "unmapped"))
+    mappings: list[ColumnMapping] = [assigned[column] for column in columns]
+
+    # --- The dataset's own key vocabulary, and the prefix it does *not* use.
+    for entry in mappings:
+        if not entry.canonical or lexicon is None:
+            continue
+        if entry.basis not in {"alias", "identifier_head", "header_tokens"}:
+            continue
+        header_field = entry.canonical.split(".", 1)[-1].lower()
+        if header_field != "id" and header_field not in _CATEGORICAL_FIELDS:
+            # Role columns (``from_person``, ``owner_id``, ``observed_driver``)
+            # already say which entity they point at, more precisely than the
+            # prefix does; the lexicon may not flatten them.
+            continue
+        # A strongly supported identifier vocabulary outranks a header that
+        # claims a different *entity's* key, or a categorical column that turns
+        # out to hold keys: a column of ACCT_* values is an account reference
+        # however it is labelled.
+        guess, score, support = lexicon.guess(values_of(entry.column))
+        if (
+            guess
+            and guess != entry.canonical
+            and support >= SchemaLexicon.STRONG_SUPPORT
+            and guess not in claimed
+        ):
+            notes.append(
+                f"Column '{entry.column}' holds {guess} identifiers, not {entry.canonical}; "
+                "mapped from the dataset's own key vocabulary"
+            )
+            contradictions.append(entry.column)
+            claimed.discard(entry.canonical)
+            claimed.add(guess)
+            entry.canonical = guess
+            entry.confidence = score
+            entry.basis = "dataset_lexicon"
+            continue
+        # Even when the foreign prefix is unrecognised, a dataset that writes
+        # its accounts as ACCT_* is telling us that a column of TXN_* values is
+        # not an account id.
+        expected = lexicon.prefix_for(entry.canonical)
+        seen = uniform_prefix(values_of(entry.column))
+        if expected and seen and seen != expected:
+            notes.append(
+                f"Column '{entry.column}' holds {seen}* values, but this dataset writes "
+                f"{entry.canonical} as {expected}*; left unmapped rather than guessed"
+            )
+            contradictions.append(entry.column)
+            claimed.discard(entry.canonical)
+            replacement = next(
+                (
+                    candidate
+                    for candidate in value_candidates(entry.column)
+                    if candidate.canonical not in claimed
+                ),
+                None,
+            )
+            if replacement is not None:
+                entry.canonical = replacement.canonical
+                entry.confidence = replacement.confidence
+                entry.basis = replacement.basis
+                claimed.add(replacement.canonical)
+            else:
+                entry.canonical = None
+                entry.confidence = 0.0
+                entry.basis = "unmapped"
 
     # A second column holding the same kind of key is the other end of a pair.
     for entry in mappings:

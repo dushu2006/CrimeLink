@@ -77,6 +77,20 @@ class Container:
     def object_store(self):
         if self._object_store is None:
             if self.settings.effective_object_store_backend == "minio":
+                problem = self.settings.object_store_endpoint_problem
+                if problem is not None:
+                    # Refuse to build a client that can only fail: a Docker-only
+                    # hostname in production means every evidence read would
+                    # come back "not available", when the truth is that the
+                    # storage was never configured.  Saying which variable is
+                    # wrong is the actionable answer.
+                    from app.errors import DependencyUnavailableError
+
+                    log.error(
+                        "container.object_store_misconfigured", detail=problem
+                    )
+                    raise DependencyUnavailableError(problem)
+
                 from app.adapters.objectstore.minio_store import MinioObjectStore
 
                 store = MinioObjectStore(self.settings)

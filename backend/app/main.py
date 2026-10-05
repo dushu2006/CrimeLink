@@ -158,6 +158,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         _guard("metadata_repair", exc)
 
+    # In serverless deployments only, make the checked-in source corpus the
+    # default judge/demo dataset. It goes through the standard content-driven
+    # importer and durable object store; native ``python run.py`` continues to
+    # use its existing local V2 seed path unchanged.
+    if tolerant and settings.builtin_dataset_auto_import:
+        try:
+            from app.datasets.builtin import bootstrap_builtin_corpus
+
+            await bootstrap_builtin_corpus(settings)
+        except Exception as exc:  # noqa: BLE001 - surface as degraded startup
+            _guard("builtin_dataset_import", exc)
+
     log.info(
         "crimelink.started",
         version=__version__,

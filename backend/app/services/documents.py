@@ -30,7 +30,12 @@ from app.domain.enums import (
     SourceConfidence,
 )
 from app.domain.provenance import content_hash
-from app.errors import ConflictError, NotFoundError, ValidationFailedError
+from app.errors import (
+    ConflictError,
+    DependencyUnavailableError,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.logging import get_logger, new_trace_id
 from app.pipeline.adapters.registry import supported_types
 from app.security.deps import Principal
@@ -708,6 +713,10 @@ async def provenance_payload(
         "size_bytes": None,
         "media_type": document.mime_type,
         "hash_matches": None,
+        # "missing" and "storage unreachable" are different facts, and the
+        # first is an allegation about the record. Each state below says which
+        # one is true.
+        "storage_status": "no_key",
         "detail": "No storage key recorded for this document.",
     }
     if document.storage_key:
@@ -719,6 +728,7 @@ async def provenance_payload(
             file_row.update(
                 {
                     "available": True,
+                    "storage_status": "available",
                     "size_bytes": len(raw),
                     "hash_matches": computed == document.content_hash,
                     "computed_hash": computed,
@@ -739,8 +749,37 @@ async def provenance_payload(
                     ),
                 }
             )
+        except NotFoundError:
+            file_row.update(
+                {
+                    "available": False,
+                    "storage_status": "missing",
+                    "detail": (
+                        "Object storage answered: no object exists at this "
+                        "document's storage key."
+                    ),
+                }
+            )
+        except DependencyUnavailableError as exc:
+            # Availability is *unknown*, not false: the bytes were never
+            # examined because the store could not be reached. Integrity is
+            # likewise unproven, so hash_matches stays null rather than
+            # claiming the file is corrupt.
+            file_row.update(
+                {
+                    "available": None,
+                    "storage_status": "unavailable",
+                    "detail": f"Object storage is unreachable: {exc}",
+                }
+            )
         except Exception as exc:  # noqa: BLE001 - report, never guess
-            file_row["detail"] = f"The stored object could not be read: {exc}"
+            file_row.update(
+                {
+                    "available": None,
+                    "storage_status": "error",
+                    "detail": f"The stored object could not be read: {exc}",
+                }
+            )
 
     # --- FINDINGS THAT CITE THIS EVIDENCE -----------------------------------
     findings = list(
@@ -816,7 +855,13 @@ async def provenance_payload(
             ),
         },
         "record_available": {
-            "ok": bool(file_row["available"]),
+            # Three states, not two.  ``ok`` is True when the bytes were read,
+            # False when storage said the record is gone, and None when the
+            # store could not be reached -- an outage proves nothing about the
+            # record, so the panel shows "?" rather than accusing it.  ``state``
+            # names which of those facts this is, for the UI and for reports.
+            "ok": file_row["available"],
+            "state": file_row.get("storage_status", "unknown"),
             "detail": file_row["detail"],
         },
         "traceable_to_original": {

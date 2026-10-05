@@ -380,18 +380,22 @@ export function EvidenceDrawer({ data, evidence, open, onClose, onViewGraph, onO
                         </span>
                       );
                     }
-                    const cls = check.ok ? "verified" : "failed";
+                    // Three states, not two: verified, failed, and "could not
+                    // be checked" (the object store was unreachable, so
+                    // availability and integrity are unproven rather than
+                    // disproven).
+                    const cls = check.ok === null ? "unknown" : check.ok ? "verified" : "failed";
                     return (
                       <span key={key} className={`provenance-check ${cls}`} title={check.detail}>
-                        {check.ok ? "✓" : "✗"} {label}
+                        {check.ok === null ? "?" : check.ok ? "✓" : "✗"} {label}
                       </span>
                     );
                   })}
                 </div>
-                {Object.values(checks).some((c) => c.ok === false) && (
+                {Object.values(checks).some((c) => c.ok === false || c.ok === null) && (
                   <p className="evidence-drawer-note muted">
                     {Object.entries(checks)
-                      .filter(([, c]) => c.ok === false)
+                      .filter(([, c]) => c.ok === false || c.ok === null)
                       .map(([k, c]) => `${CHECK_LABELS[k] ?? k}: ${c.detail}`)
                       .join(" · ")}
                   </p>

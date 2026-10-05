@@ -21,6 +21,7 @@ import {
   acceptDatasetMappings,
   activateDataset,
   datasetChanged,
+  getCurrentDatasetJob,
   importDatasetFiles,
   listDatasetMappings,
   listDatasets,
@@ -322,10 +323,6 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
     void refresh();
   }, [refresh]);
 
-  // A watch must not outlive the panel: leaving Administration mid-build
-  // should close the socket, not leak one per visit.
-  useEffect(() => () => unwatchRef.current?.(), []);
-
   const watch = useCallback(
     (jobId: string) => {
       unwatchRef.current?.();
@@ -353,9 +350,48 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
     [refresh],
   );
 
+  // Re-attach to a job the database says is still running.  The job belongs to
+  // the deployment, not to this tab: leaving the panel (or reloading the page)
+  // must not make a live import invisible, because an invisible import is one
+  // the user starts again -- and a second concurrent import would replace the
+  // first one's dataset.  A journal entry survives navigation; so does this.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const current = await getCurrentDatasetJob();
+        if (cancelled || !current?.job || current.job.terminal) return;
+        setJob(current.job);
+        setBusy(true);
+        setNotice(
+          `An ${current.job.kind.replace(/_/g, " ")} is still running — re-attached to ` +
+            `job ${current.job.id.slice(0, 8)}…`,
+        );
+        watch(current.job.id);
+      } catch {
+        // Hydration is best-effort: the console still works without it, and a
+        // failed lookup must not look like a failed job.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [watch]);
+
+  // A watch must not outlive the panel: leaving Administration mid-build
+  // should close the socket, not leak one per visit.  The job itself keeps
+  // running -- re-entering the page re-attaches from the database.
+  useEffect(() => () => unwatchRef.current?.(), []);
+
   async function upload() {
     if (selected.length === 0) {
       setError("Choose at least one file, a folder, or a ZIP archive first.");
+      return;
+    }
+    if (job && !job.terminal) {
+      // The server refuses this too; saying it here saves the upload.
+      setNotice(`A job is already running (job ${job.id.slice(0, 8)}…) — attached to its progress.`);
+      watch(job.id);
       return;
     }
     setBusy(true);
@@ -377,6 +413,11 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
   }
 
   async function activate(dataset: DatasetSummary) {
+    if (job && !job.terminal) {
+      setNotice(`A job is already running (job ${job.id.slice(0, 8)}…) — attached to its progress.`);
+      watch(job.id);
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -402,7 +443,6 @@ export default function DatasetConsole({ jurisdictionId }: { jurisdictionId?: st
     setBusy(true);
     setError(null);
     setNotice(null);
-    setJob(null);
     try {
       const started = await rebuildDatasetGraph(dataset.id);
       setJob(started.job);

@@ -143,7 +143,23 @@ async def get_active_dataset_stats(
 # NOTE: registered before "/{dataset_id}" on purpose. FastAPI matches routes in
 # declaration order, so a literal segment must be declared ahead of the
 # parameterised one it would otherwise be swallowed by — "/datasets/jobs/abc"
-# would bind dataset_id="jobs" and 404.
+# would bind dataset_id="jobs" and 404.  For the same reason "/jobs/current"
+# must stay ahead of "/jobs/{job_id}".
+@router.get("/jobs/current")
+async def get_current_dataset_job(
+    principal: Principal = Depends(require_roles("ADMIN")),
+) -> dict:
+    """The running dataset job, if one exists.
+
+    The console calls this on mount.  A browser refresh, or simply navigating
+    away and back, finds the import or rebuild that is still running and
+    re-attaches to it instead of showing an idle panel and offering to start
+    a second one.  ``job`` is null when nothing is running.
+    """
+    job = await dataset_jobs.current_job()
+    return {"job": job}
+
+
 @router.get("/jobs/{job_id}")
 async def get_dataset_job(
     job_id: str,
@@ -194,6 +210,16 @@ async def import_dataset(
     jurisdiction_id = str(form.get("jurisdiction_id") or DEFAULT_JURISDICTION)
     if not files:
         raise ValidationFailedError("Select at least one file to import.")
+
+    running = await dataset_jobs.current_job(kinds=["import"])
+    if running is not None:
+        # Two concurrent imports would race each other into activation, and the
+        # second one would silently retire the first one's dataset.  The client
+        # is told which job is live so it can attach to it rather than start
+        # another.
+        raise ConflictError(
+            f"An import is already running (job {running['id']})."
+        )
 
     settings = get_settings()
     staging = Path(settings.data_dir) / "uploads" / new_uuid()
@@ -268,6 +294,12 @@ async def import_dataset_from_path(
         source = (Path(get_settings().data_dir).parent / source).resolve()
     if not source.exists():
         raise ValidationFailedError(f"Nothing exists at {source}.")
+
+    running = await dataset_jobs.current_job(kinds=["import"])
+    if running is not None:
+        raise ConflictError(
+            f"An import is already running (job {running['id']})."
+        )
 
     options = ImportOptions(
         name=str(payload.get("name") or source.name),

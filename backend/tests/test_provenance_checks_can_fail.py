@@ -27,6 +27,7 @@ from app.db.models import Case, CaseDocument, DatasetFile
 from app.db.session import async_session
 from app.domain.enums import CaseStatus, DocumentType, IngestionStatus, SourceConfidence
 from app.domain.provenance import content_hash
+from app.errors import DependencyUnavailableError
 from app.services.documents import provenance_payload
 
 JURISDICTION = "RJ-JAIPUR"
@@ -166,6 +167,44 @@ async def test_missing_bytes_fail_record_available(container, workspace, world) 
 # ---------------------------------------------------------------------------
 
 
+async def test_unreachable_storage_is_unproven_not_a_missing_record(
+    container, world, monkeypatch
+) -> None:
+    """An outage is not an allegation: nothing about the record is known."""
+
+    class Unreachable:
+        backend_name = "unreachable"
+
+        def get(self, *_args, **_kwargs):
+            raise DependencyUnavailableError(
+                "Object storage is unreachable: the configured endpoint did "
+                "not answer."
+            )
+
+    before = await _payload(container, world["doc_id"])
+    monkeypatch.setattr(
+        type(container), "object_store", property(lambda _self: Unreachable())
+    )
+    payload = await _payload(container, world["doc_id"])
+    checks = payload["checks"]
+
+    assert checks["record_available"]["ok"] is None, (
+        "storage that could not be reached must be rendered as unproven"
+    )
+    assert checks["record_available"]["state"] == "unavailable", checks[
+        "record_available"
+    ]["detail"]
+    assert "unreachable" in checks["record_available"]["detail"].lower()
+    assert payload["file"]["available"] is None
+    # The SHA-256 was never re-computed, so the check cannot claim it failed.
+    assert checks["hash_matches"]["ok"] is None
+    # An outage in one dependency must not blank the checks that do not use it.
+    assert checks["source_verified"] == before["checks"]["source_verified"]
+    assert (
+        checks["traceable_to_original"] == before["checks"]["traceable_to_original"]
+    )
+
+
 async def test_tampered_bytes_fail_hash_matches(container, workspace, world) -> None:
     async with async_session() as session:
         doc = await session.get(CaseDocument, world["doc_id"])
@@ -256,7 +295,12 @@ async def test_one_failed_check_does_not_blank_the_others(container, workspace, 
         "hash_matches",
     }
     for name, check in checks.items():
-        assert set(check) == {"ok", "detail"}, f"{name} must report a computed ok and a detail"
+        allowed = {"ok", "detail"}
+        if name == "record_available":
+            # The availability check also publishes *which fact* it looked at,
+            # so "absent" and "storage unreachable" cannot be confused.
+            allowed.add("state")
+        assert set(check) == allowed, f"{name} must report a computed ok and a detail"
     # The record itself is still verified and still traceable — only the bytes
     # went missing, and the panel must say exactly that much.
     assert checks["source_verified"]["ok"] is True

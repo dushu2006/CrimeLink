@@ -36,6 +36,7 @@ from app.config import get_settings
 from app.datasets import discovery, graph_build, readers
 from app.datasets import normalize as nz
 from app.datasets import registry, retirement
+from app.datasets.storage import dataset_object_key
 from app.datasets import schema_map as sm
 from app.db.base import new_uuid, utcnow
 from app.db.models import (
@@ -48,7 +49,6 @@ from app.db.models import (
     SourceReference,
 )
 from app.domain.enums import CaseStatus, DocumentType, IngestionStatus, SourceConfidence
-from app.errors import ConflictError
 from app.logging import get_logger
 
 log = get_logger("crimelink.datasets.pipeline")
@@ -65,6 +65,20 @@ _PLATE_TOKEN = re.compile(r"\b([A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{4})\b")
 #: Cap on how much document text is scanned for mentions per file.
 MENTION_SCAN_CHARS = 200_000
 DEFAULT_JURISDICTION = "SYN-DEV"
+
+
+def _is_document_index_table(columns: Sequence[str], mapping: sm.TableMapping) -> bool:
+    """Identify tabular source indexes so they aren't normalized as case rows."""
+    mapped = mapping.mapped
+    has_path = bool(mapped.get("DOCUMENT.path") or mapped.get("DOCUMENT.id"))
+    has_case = bool(mapped.get("CASE.id") or mapped.get("CASE.number"))
+    lowered = {column.lower() for column in columns}
+    has_file_col = bool(
+        lowered
+        & {"file_path", "filepath", "relative_path", "relativepath", "filename", "file_name"}
+    )
+    has_case_col = "case_id" in lowered or "case_number" in lowered
+    return (has_path and has_case) or (has_file_col and has_case_col)
 
 
 @dataclass(slots=True)
@@ -122,6 +136,23 @@ class ImportReport:
 
 async def _noop(stage: str, pct: int, message: str) -> None:  # pragma: no cover
     return None
+
+
+def _delete_staged_source_objects(dataset_id: str) -> None:
+    """Best-effort cleanup of a failed candidate's isolated object prefix."""
+    from app.container import get_container
+
+    try:
+        store = get_container().object_store
+        bucket = get_settings().minio_bucket_documents
+        for key in store.list_keys(bucket, prefix=f"{dataset_id}/"):
+            store.delete(bucket, key)
+    except Exception as exc:  # noqa: BLE001 - the original import error wins
+        log.warning(
+            "datasets.failed_source_cleanup_failed",
+            dataset_id=dataset_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +353,11 @@ async def run_import(
             dataset.search_indexed_at = dataset.graph_built_at
             dataset.ai_indexed_at = dataset.graph_built_at
 
+        # Verify actual retrieval, not merely a successful put or manifest row.
+        # This runs before READY/activation, so an object-store outage or hash
+        # mismatch cannot retire the dataset currently serving investigators.
+        await _verify_source_objects(dataset.id, found.usable)
+
         # --- 7. READY ------------------------------------------------------
         dataset.stats = await registry.dataset_stats(session, dataset.id)
         await registry.set_stage(session, dataset, "READY", detail="Dataset ready")
@@ -386,6 +422,8 @@ async def run_import(
                 session, failed, "FAILED", detail=report.error, error=report.error
             )
             await session.commit()
+            if not failed.is_active:
+                _delete_staged_source_objects(report.dataset_id)
         # The failed import was never activated, so the dataset that was active
         # before it started is still active and its rows are untouched -- that
         # is the guarantee this lifecycle exists to give.  The one thing a
@@ -436,12 +474,69 @@ def _scaled(emit: ProgressFn, low: int, high: int) -> ProgressFn:
 # ---------------------------------------------------------------------------
 
 
+async def _verify_source_objects(
+    dataset_id: str, files: Sequence[discovery.DiscoveredFile]
+) -> None:
+    """Read every usable source back from durable storage and verify its hash."""
+    from app.container import get_container
+
+    store = get_container().object_store
+    bucket = get_settings().minio_bucket_documents
+    for entry in files:
+        key = dataset_object_key(dataset_id, entry.relative_path)
+        try:
+            payload = store.get(bucket, key)
+        except Exception as exc:  # noqa: BLE001 - absence is an integrity failure
+            raise RuntimeError(
+                f"Stored source {entry.relative_path} could not be retrieved from the "
+                f"configured object store: {type(exc).__name__}: {exc}"
+            ) from exc
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest != entry.sha256 or len(payload) != entry.size_bytes:
+            raise RuntimeError(
+                f"Stored source integrity check failed for {entry.relative_path}: "
+                f"expected {entry.sha256}/{entry.size_bytes} bytes, "
+                f"read {digest}/{len(payload)} bytes."
+            )
+
+
 async def _persist_manifest(
     session: AsyncSession, dataset_id: str, files: Sequence[discovery.DiscoveredFile]
 ) -> dict[str, str]:
-    """Write the file manifest. Returns relative_path -> dataset_file id."""
+    """Store source bytes under dataset-owned keys and write the manifest.
+
+    No import becomes READY on a best-effort evidence write: a storage error or
+    source/hash race aborts this candidate while leaving the active dataset
+    untouched. Every supported source file (tables included) is durable and
+    addressable from the dataset manifest.
+    """
+    from app.container import get_container
+
     ids: dict[str, str] = {}
+    store = get_container().object_store
+    bucket = get_settings().minio_bucket_documents
     for entry in files:
+        if entry.status == "DISCOVERED":
+            try:
+                payload = entry.path.read_bytes()
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not read source bytes for {entry.relative_path}: {exc}"
+                ) from exc
+            digest = hashlib.sha256(payload).hexdigest()
+            if not entry.sha256 or digest != entry.sha256:
+                raise RuntimeError(
+                    f"Source hash changed while importing {entry.relative_path}; "
+                    "the manifest was not stored."
+                )
+            key = dataset_object_key(dataset_id, entry.relative_path)
+            try:
+                store.put(bucket, key, payload, content_type=entry.media_type)
+            except Exception as exc:  # noqa: BLE001 - durable evidence is required
+                raise RuntimeError(
+                    f"Could not store source bytes for {entry.relative_path}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
         row = DatasetFile(
             id=new_uuid(),
             dataset_id=dataset_id,
@@ -525,6 +620,37 @@ async def _normalize_file(
         if only_sheets is not None and table.name not in only_sheets:
             continue
         mapping = sm.map_table(table.columns, table.rows, lexicon)
+        if mapping.semantic_type == "CASE_TABLE":
+            # Generic "status" aliases can resolve to PERSON.status before the
+            # mapper knows this is a case register. In the table's content
+            # context, a case status column belongs to CASE.status.
+            for column in mapping.columns:
+                if (
+                    column.column.strip().lower() in {"status", "case_status", "case_state"}
+                    and column.canonical in {"PERSON.status", "COMMON.status"}
+                ):
+                    column.canonical = "CASE.status"
+        elif mapping.semantic_type == "CASE_ENTITIES":
+            # Relation tables often carry both a row id (e.g. case_member_id)
+            # and the actual case foreign key. Prefer the explicit case_id for
+            # the edge endpoint; the relation-row identifier is not a case.
+            case_fk = next(
+                (column for column in mapping.columns if column.column.strip().lower() == "case_id"),
+                None,
+            )
+            if case_fk is not None and case_fk.canonical != "CASE.id":
+                for column in mapping.columns:
+                    if column.canonical == "CASE.id":
+                        column.canonical = None
+                case_fk.canonical = "CASE.id"
+        document_index = _is_document_index_table(table.columns, mapping)
+        if document_index:
+            # Document indexes are provenance metadata. Classifying their
+            # case_id column as a case table used to overwrite canonical case
+            # numbers (and create IDs from metadata rows), so they are retained
+            # in the manifest but never ingested as investigative entities.
+            mapping.semantic_type = "DOCUMENT_INDEX"
+            mapping.primary_entity = None
         if lexicon is not None and not mapping.contradictions:
             # Only a table whose headers and values agree may teach the
             # vocabulary; a contradicted table is not evidence of anything.
@@ -551,7 +677,7 @@ async def _normalize_file(
             deferred_sheets.add(table.name)
             sheet_names.append(table.name)
             continue
-        used = normalizer.ingest_table(table, mapping, source)
+        used = 0 if document_index else normalizer.ingest_table(table, mapping, source)
         sheet_names.append(table.name)
         total_rows += len(table.rows)
         payload = {
@@ -778,6 +904,11 @@ async def _ingest_documents(
 ) -> tuple[int, int]:
     """Register document files as case documents and link their mentions.
 
+    Documents are *provenance* records, never graph actors: this function
+    writes the ``documents``, ``source_references`` and ``case_documents``
+    rows (plus the entities-mention-the-case edges) that the evidence APIs
+    read, and adds nothing to the entity stream.
+
     STRUCTURE-AGNOSTIC DESIGN:
     - Folder names are OPTIONAL context, never authoritative.
     - Case association is CONTENT-FIRST: explicit identifiers, text mentions,
@@ -810,6 +941,36 @@ async def _ingest_documents(
         c.dataset_case_key: c for c in cases if c.dataset_case_key and c.dataset_case_key != "ALL"
     }
 
+    # Which canonical entities came from which source file.  A table inside a
+    # case's own file (a bank statement, a call log, a CCTV sheet) states facts
+    # about that case, so the records it produced belong to the case even when
+    # the row carries no case column and the file is not prose the mention
+    # scanner can read.
+    entities_by_file: dict[str, set[str]] = {}
+    for entity in result.entities.values():
+        entity_file = str((entity.provenance or {}).get("file") or "")
+        if entity_file:
+            entities_by_file.setdefault(entity_file, set()).add(entity.canonical_id)
+
+    # A table states facts about the things its rows name, and a row inside a
+    # case's file is that case's record even when the entity it references was
+    # described in a register elsewhere (a vehicle named by a plate in a CCTV
+    # log, an account named in a bank statement).  Entity provenance alone
+    # misses those -- the entity belongs to the register -- so the endpoints of
+    # the relationships the file produced are attributed here as well.
+    endpoints_by_file: dict[str, set[str]] = {}
+    for relationship in result.relationships.values():
+        relation_file = str((relationship.provenance or {}).get("file") or "")
+        if not relation_file:
+            continue
+        bucket = endpoints_by_file.setdefault(relation_file, set())
+        for canonical_id in (
+            relationship.source_canonical_id,
+            relationship.target_canonical_id,
+        ):
+            if canonical_id and not canonical_id.startswith(f"{sm.CASE}:"):
+                bucket.add(canonical_id)
+
     # Manifest and FIR lookups - CONTENT-AWARE, not filename-only
     manifest_by_relpath: dict[str, dict[str, str]] = {}
     manifest_by_filename: dict[str, dict[str, str]] = {}
@@ -817,20 +978,6 @@ async def _ingest_documents(
 
     import csv
     import json
-
-    # Helper: content-based detection of document index tables
-    def _is_document_index_table(columns: list[str], mapping: sm.TableMapping) -> bool:
-        m = mapping.mapped
-        has_path = bool(m.get("DOCUMENT.path") or m.get("DOCUMENT.id"))
-        has_case = bool(m.get("CASE.id") or m.get("CASE.number"))
-        # Also check raw column names for file_path / relative_path + case_id
-        lowered = {c.lower() for c in columns}
-        has_file_col = any(
-            kw in lowered
-            for kw in ("file_path", "filepath", "relative_path", "relativepath", "filename", "file_name")
-        )
-        has_case_col = "case_id" in lowered or "case_number" in lowered
-        return (has_path and has_case) or (has_file_col and has_case_col)
 
     def _is_fir_table(columns: list[str], mapping: sm.TableMapping) -> bool:
         m = mapping.mapped
@@ -1040,10 +1187,11 @@ async def _ingest_documents(
     created = 0
     mention_count = 0
     seen_hashes: set[tuple[str | None, str]] = set()
+    #: (entity, case) -> one edge, so an entity named in ten of a case's files
+    #: is one connection carrying ten documents of support rather than ten
+    #: parallel edges the graph would draw on top of each other.
+    mention_index: dict[tuple[str, str], dict[str, Any]] = {}
     mention_rows: list[dict[str, Any]] = []
-    #: Bucket the original bytes are stored in, read once for the whole import.
-    evidence_bucket = get_settings().minio_bucket_documents
-
     assigned_per_case: dict[str, int] = {}
     assigned_count = 0
     unassigned_count = 0
@@ -1282,12 +1430,11 @@ async def _ingest_documents(
             continue
         seen_hashes.add((target_case_id, content_hash))
 
-        # Store the original bytes so the evidence chain can be re-verified
-        # later (``/evidence/{id}/verify`` recomputes this hash, and the
-        # provenance panel reports whether the original file is readable).
-        warning = _store_evidence_object(session, entry, evidence_bucket)
-        if warning and warnings is not None:
-            warnings.append(warning)
+        # The source bytes were already written and hash-checked by
+        # ``_persist_manifest`` under a dataset-scoped object key. Keep that
+        # exact key on the canonical evidence row so verification and retrieval
+        # never guess from a display path.
+        storage_key = dataset_object_key(dataset.id, entry.relative_path)
 
         document = CaseDocument(
             id=new_uuid(),
@@ -1295,7 +1442,7 @@ async def _ingest_documents(
             dataset_id=dataset.id,
             document_type=doc_type,
             filename=entry.filename,
-            storage_key=entry.relative_path,
+            storage_key=storage_key,
             content_hash=content_hash,
             size_bytes=entry.size_bytes,
             mime_type=entry.media_type,
@@ -1363,63 +1510,52 @@ async def _ingest_documents(
         }
 
         case_ids_list = [target_case.id] if target_case else []
-        for canonical_id in mentions:
-            if canonical_id.startswith(f"{sm.CASE}:"):
-                continue
-            mention_rows.append(
-                {
-                    "id": new_uuid(),
-                    "dataset_id": dataset.id,
-                    "source_canonical_id": canonical_id,
-                    "target_canonical_id": f"{sm.DOCUMENT}:{document.id}",
-                    "rel_type": "MENTIONED_IN",
-                    "confidence": 0.9,
-                    "edge_key": hashlib.sha256(
-                        f"MENTIONED_IN|{canonical_id}|{document.id}".encode()
-                    ).hexdigest()[:40],
-                    "valid_from": None,
-                    "valid_to": None,
-                    "observed_at": None,
-                    "attributes": {"filename": entry.filename},
-                    "provenance": provenance,
-                    "case_ids": case_ids_list,
-                }
-            )
-            mention_count += 1
-
-        # The document itself is a canonical entity
-        result.add_entity(
-            nz.CanonicalEntity(
-                canonical_id=f"{sm.DOCUMENT}:{document.id}",
-                entity_type=sm.DOCUMENT,
-                name=entry.filename,
-                normalized_value=entry.relative_path,
-                attributes={
-                    "page_count": pages,
-                    "media_type": entry.media_type,
-                    "document_type": doc_type.value,
-                    "case_id": target_case_id,
-                    "case_key": target_case.dataset_case_key if target_case else None,
-                },
-                provenance=provenance,
-            )
-        )
-
-        # Link document to its case in the canonical graph
         if target_case is not None:
-            result.add_relationship(
-                nz.CanonicalRelationship(
-                    source_canonical_id=f"{sm.CASE}:{target_case.dataset_case_key}",
-                    target_canonical_id=f"{sm.DOCUMENT}:{document.id}",
-                    rel_type="HAS_DOCUMENT",
-                    confidence=1.0,
-                    edge_key=hashlib.sha256(
-                        f"HAS_DOCUMENT|{target_case.dataset_case_key}|{document.id}".encode()
-                    ).hexdigest()[:40],
-                    provenance=provenance,
-                    case_ids=[target_case.id],
-                )
+            # What the document *says* is an edge from the entity to the case,
+            # the same shape the single-document ingestion path writes
+            # (``injector.link_to_case``).  A document is provenance, not an
+            # actor: emitting "person -> DOCUMENT" edges produced 164 nodes and
+            # 111 edges that the graph deliberately refuses to project, so the
+            # mention is recorded where it is actually read.
+            case_canonical_id = f"{sm.CASE}:{target_case.dataset_case_key}"
+            linked_ids = (
+                set(mentions)
+                | entities_by_file.get(entry.relative_path, set())
+                | endpoints_by_file.get(entry.relative_path, set())
             )
+            for canonical_id in sorted(linked_ids):
+                if canonical_id.startswith(f"{sm.CASE}:"):
+                    continue
+                key = (canonical_id, case_canonical_id)
+                row = mention_index.get(key)
+                if row is None:
+                    row = {
+                        "id": new_uuid(),
+                        "dataset_id": dataset.id,
+                        "source_canonical_id": canonical_id,
+                        "target_canonical_id": case_canonical_id,
+                        "rel_type": "MENTIONED_IN",
+                        "confidence": 0.9,
+                        "edge_key": hashlib.sha256(
+                            f"MENTIONED_IN|{canonical_id}|{case_canonical_id}".encode()
+                        ).hexdigest()[:40],
+                        "valid_from": None,
+                        "valid_to": None,
+                        "observed_at": None,
+                        "attributes": {
+                            "filenames": [],
+                            "source_doc_ids": [],
+                        },
+                        "provenance": provenance,
+                        "case_ids": case_ids_list,
+                    }
+                    mention_index[key] = row
+                    mention_count += 1
+                attributes = row["attributes"]
+                if entry.filename not in attributes["filenames"]:
+                    attributes["filenames"].append(entry.filename)
+                if document.id not in attributes["source_doc_ids"]:
+                    attributes["source_doc_ids"].append(document.id)
 
         # Track integrity stats
         if target_case is not None:
@@ -1448,11 +1584,11 @@ async def _ingest_documents(
                 f"Indexed {index}/{len(candidates)} documents",
             )
 
-    # Persist the document entities and their mention edges
-    document_entities = [
-        e for e in result.entities.values() if e.entity_type == sm.DOCUMENT
-    ]
-    await _persist_entities(session, dataset.id, document_entities)
+    # Persist the mention edges.  There is deliberately no DOCUMENT entity to
+    # persist: the document rows, their ``SourceReference`` rows and the
+    # ``case_documents`` link above are the evidence record, and the graph
+    # ontology has no label for a file for the same reason.
+    mention_rows = list(mention_index.values())
     for chunk in _chunks(mention_rows, 2000):
         await session.execute(DatasetRelationship.__table__.insert(), chunk)
     await session.flush()
@@ -1527,53 +1663,6 @@ UNASSIGNED FILE DIAGNOSTICS
     )
     return (created, mention_count)
 
-
-
-def _store_evidence_object(
-    session: AsyncSession, entry: discovery.DiscoveredFile, bucket: str
-) -> str | None:
-    """Put one source file's bytes in the object store; return a warning or None.
-
-    The stored copy is what makes the evidence chain verifiable after the
-    import: ``/evidence/{id}/verify`` recomputes the SHA-256 of these bytes and
-    the provenance panel reports whether the original file is still readable.
-
-    Storage is write-once and the key is the dataset-relative path, so two
-    corpora that both contain ``people.csv`` collide.  A collision is reported
-    as a warning and the import continues — the previous dataset's bytes are
-    not destroyed mid-import, because that dataset is still the active one and
-    may still have to serve them.  When it is retired its objects are removed
-    and this dataset's copy is stored in their place
-    (``datasets/retirement.py::_restore_missing_objects``).
-    """
-    from app.container import get_container
-
-    try:
-        payload = entry.path.read_bytes()
-    except Exception as exc:  # noqa: BLE001 - the row is still ingested
-        return f"{entry.relative_path}: the original bytes could not be read ({exc})"
-    try:
-        get_container().object_store.put(
-            bucket, entry.relative_path, payload, content_type=entry.media_type
-        )
-        return None
-    except ConflictError:
-        # Recorded so retirement knows this key has to be rewritten once the
-        # dataset that currently holds it is gone (hash-verified, and only if no
-        # other surviving record claims the key).
-        retirement.note_object_conflict(session, bucket, entry.relative_path)
-        return (
-            f"{entry.relative_path}: the object store already holds different bytes "
-            "under this key (a file from the dataset being replaced); the evidence "
-            "copy is stored once that dataset is retired"
-        )
-    except Exception as exc:  # noqa: BLE001 - ingestion must not fail on storage
-        log.warning(
-            "pipeline.evidence_object_store_failed",
-            path=entry.relative_path,
-            error=f"{type(exc).__name__}: {exc}",
-        )
-        return f"{entry.relative_path}: the evidence copy could not be stored ({exc})"
 
 
 def _extract_case_ids_from_content(

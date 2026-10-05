@@ -1990,6 +1990,8 @@ ul.compact-list { margin: 8px 0 0; padding-left: 18px; }
 }
 .provenance-check.verified { background: var(--cl-success-bg); color: var(--cl-success); }
 .provenance-check.failed { background: var(--cl-danger-bg); color: var(--cl-danger); }
+/* A check that could not be evaluated is not a check that failed. */
+.provenance-check.unknown { background: var(--cl-warning-bg); color: var(--cl-warning); }
 .evidence-drawer-chain { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .chain-step {
   display: inline-flex; align-items: center; gap: 4px;

@@ -463,6 +463,16 @@ class Settings(BaseSettings):
     synthetic_data_root: Path = Field(
         default=BACKEND_ROOT / "CrimeLink_Synthetic_Corpus_v1"
     )
+    #: Serverless deployments import the checked-in corpus through the normal
+    #: content-driven dataset pipeline when no dataset (or only an older
+    #: built-in demo seed) is active. Native ``python run.py`` remains unchanged.
+    builtin_dataset_auto_import: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "CRIMELINK_BUILTIN_DATASET_AUTO_IMPORT",
+            "BUILTIN_DATASET_AUTO_IMPORT",
+        ),
+    )
 
     # ------------------------------------------------------ entity resolution
     er_fuzzy_threshold: float = 0.85
@@ -731,6 +741,41 @@ class Settings(BaseSettings):
     def is_production_deployment(self) -> bool:
         """True for the production profile/environment (fail-closed paths)."""
         return self.profile == "production" or self.environment == "production"
+
+    @property
+    def object_store_endpoint_problem(self) -> str | None:
+        """Why this deployment's object-store endpoint cannot be used, if it cannot.
+
+        Returns ``None`` when the endpoint is usable.  In the production
+        runtime context a Compose service hostname (``minio``, ``postgres``...)
+        cannot be resolved from the deployment, so evidence bytes would never
+        be readable and every document would render as "record unavailable"
+        with no explanation.  The object store then reports the
+        misconfiguration instead of pretending the bytes are missing.
+
+        Host-native execution is not flagged: the endpoint validator rewrites a
+        Compose name to ``localhost`` first, which is where ``python run.py``
+        really does find its MinIO.
+        """
+        endpoint = (self.minio_endpoint or "").strip()
+        host, _port = runtime.split_endpoint(endpoint, runtime.SERVICE_CONTAINER_PORTS["minio"])
+        if not self.is_production_deployment:
+            return None
+        if not endpoint or not host:
+            return (
+                "CRIMELINK_MINIO_ENDPOINT is not set: production must point at a "
+                "durable S3-compatible endpoint reachable from this deployment."
+            )
+        if host.lower() in runtime.COMPOSE_SERVICE_HOSTNAMES:
+            return (
+                f"CRIMELINK_MINIO_ENDPOINT is set to the Docker Compose service "
+                f"hostname {host!r}; that name only resolves inside the Compose "
+                "network, so stored evidence cannot be read back from a "
+                "deployment. Point it at the durable S3-compatible endpoint "
+                "(for example an S3 bucket endpoint), or run the Compose stack "
+                "with CRIMELINK_RUNTIME_CONTEXT=docker where the name is valid."
+            )
+        return None
 
     @property
     def endpoint_rewrites(self) -> list[str]:
