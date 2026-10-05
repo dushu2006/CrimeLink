@@ -149,15 +149,22 @@ async def get_active_dataset_stats(
 async def get_current_dataset_job(
     principal: Principal = Depends(require_roles("ADMIN")),
 ) -> dict:
-    """The running dataset job, if one exists.
+    """The dataset job the console should be showing, if there is one.
 
     The console calls this on mount.  A browser refresh, or simply navigating
     away and back, finds the import or rebuild that is still running and
-    re-attaches to it instead of showing an idle panel and offering to start
-    a second one.  ``job`` is null when nothing is running.
+    re-attaches to it instead of showing an idle panel and offering to start a
+    second one.  When nothing is running it returns the most recent job, so a
+    completed or failed import is still on screen after a refresh rather than
+    an empty panel that reads as "nothing ever happened".  ``job`` is null only
+    when this deployment has never run one.
+
+    ``running`` is the flag the client acts on: it, and not the mere presence of
+    a job, decides whether to resume watching and whether a new upload may
+    start.
     """
-    job = await dataset_jobs.current_job()
-    return {"job": job}
+    job = await dataset_jobs.latest_job()
+    return {"job": job, "running": bool(job and not job.get("terminal"))}
 
 
 @router.get("/jobs/{job_id}")

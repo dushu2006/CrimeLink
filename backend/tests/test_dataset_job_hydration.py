@@ -69,11 +69,28 @@ async def test_current_job_is_the_one_that_is_running(client, admin_headers, db)
     assert body["job"]["terminal"] is False
 
 
-async def test_current_job_is_null_once_it_finishes(client, admin_headers, db):
+async def test_a_finished_job_is_still_returned_but_not_as_running(
+    client, admin_headers, db
+):
+    """A finished import must survive navigation and refresh.
+
+    The console used to go idle the moment a job ended, because this endpoint
+    only ever reported *running* jobs -- so an operator who came back after a
+    completed (or failed) import saw an empty panel, read it as "nothing
+    happened", and started the same import again.  The finished job is now
+    returned with ``running: false``: the state persists, and the client still
+    knows there is nothing to watch.
+    """
     job_id = await _put_job()
     await _finish(job_id)
     body = client.get("/api/v1/datasets/jobs/current", headers=admin_headers).json()
-    assert body["job"] is None
+    assert body["running"] is False
+    assert body["job"] is not None
+    assert body["job"]["id"] == job_id
+    assert body["job"]["terminal"] is True
+    assert body["job"]["status"] == "SUCCEEDED"
+    # ...and it is still not offered as a reason to refuse the next import.
+    assert await dataset_jobs.current_job() is None
 
 
 async def test_a_second_import_is_refused_with_the_running_job_id(

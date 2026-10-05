@@ -47,8 +47,23 @@ test("provenance ticks are computed, never hardcoded literals", () => {
   assert.doesNotMatch(DRAWER, /className="provenance-check verified">✓ Traceable to original</);
   // They come from the server-computed checks instead, with a failure state.
   assert.match(DRAWER, /checks\[key\]/);
-  assert.match(DRAWER, /check\.ok \? "✓" : "✗"/);
-  assert.match(DRAWER, /const cls = check\.ok \? "verified" : "failed"/);
+  // Three states, not two. `ok: null` means the check could not be performed
+  // (the object store was unreachable), which is neither a pass nor a fail —
+  // rendering it as a red "✗" would claim a disproof that never happened.
+  assert.match(
+    DRAWER,
+    /const cls = check\.ok === null \? "unknown" : check\.ok \? "verified" : "failed"/,
+  );
+  assert.match(DRAWER, /check\.ok === null \? "\?" : check\.ok \? "✓" : "✗"/);
+  // "not evaluated" is surfaced as its own state, never folded into a pass.
+  assert.match(DRAWER, /not evaluated/);
+});
+
+test("an unproven check is reported, not silently dropped", () => {
+  // The detail note must list a null verdict as well as a false one, otherwise
+  // an unreachable object store would look like clean provenance.
+  assert.match(DRAWER, /c\.ok === false \|\| c\.ok === null/);
+  assert.match(DRAWER, /title=\{check\.detail\}/);
 });
 
 test("an unresolved provenance link says so instead of pretending", () => {

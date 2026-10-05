@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import threading
 
@@ -16,6 +17,14 @@ from app.security.deps import JurisdictionScope, Principal, get_principal, get_s
 from app.services import documents as document_service
 
 router = APIRouter(tags=["jobs"])
+
+#: How long a job socket waits for an event before confirming against the job
+#: row that the job is still live.  Normal operation never reaches it — events
+#: arrive as they happen — but it bounds how long a client can be left waiting
+#: when a terminal frame is missed (a subscription registered a moment too
+#: late, or a bus reconnect).  Without it a missed frame means a progress bar
+#: that never finishes, which is indistinguishable from a stuck import.
+_JOB_STREAM_IDLE_S = 2.0
 
 
 @router.get("/jobs/{job_id}")
@@ -122,10 +131,36 @@ async def dataset_job_stream(websocket: WebSocket, job_id: str) -> None:
         return
 
     container = get_container()
+    stream = container.event_bus.subscribe(dataset_jobs.job_channel(job_id))
+    pending: asyncio.Future | None = None
     try:
-        async for message in container.event_bus.subscribe(
-            dataset_jobs.job_channel(job_id)
-        ):
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(stream.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=_JOB_STREAM_IDLE_S)
+            if not done:
+                # No event for a while.  The row is the authority, so confirm
+                # from it that the job is genuinely still live: a job that
+                # finished in the window between the snapshot above and the
+                # subscription being registered publishes its terminal frame to
+                # nobody, and without this the socket -- and the console behind
+                # it -- would wait forever for a frame that will never come.
+                row = await dataset_jobs.get_job(job_id)
+                if row is None or row.get("terminal"):
+                    if row is not None:
+                        await websocket.send_text(
+                            json.dumps({"type": "job_snapshot", "job_id": job_id, **row}, default=str)
+                        )
+                    await websocket.close(code=1000)
+                    break
+                continue
+            try:
+                message = pending.result()
+            except StopAsyncIteration:
+                # The stream ended without a terminal frame; stop rather than
+                # leaving the client hanging on a closed channel.
+                break
+            pending = None
             try:
                 await websocket.send_text(json.dumps(message, default=str))
             except (WebSocketDisconnect, RuntimeError):
@@ -140,6 +175,18 @@ async def dataset_job_stream(websocket: WebSocket, job_id: str) -> None:
             await websocket.close(code=1011)
         except Exception:  # pragma: no cover
             pass
+    finally:
+        # Always release the subscription: a leaked queue would grow without
+        # bound across reconnects, and the generator's own cleanup only runs
+        # when it is closed.  The pending read has to finish unwinding first --
+        # cancelling it is not the same as it having stopped, and closing a
+        # generator that is still running is an error.
+        if pending is not None and not pending.done():
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration, Exception):
+                await pending
+        with contextlib.suppress(RuntimeError):
+            await stream.aclose()
 
 
 @router.websocket("/jobs/ws/investigation/{job_id}")

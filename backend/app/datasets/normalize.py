@@ -574,6 +574,22 @@ class Normalizer:
         #: ``(entity_type, marker)`` pairs already reported, so a document that
         #: carries the same absence marker on forty rows is explained once.
         self._missing_seen: set[tuple[str, str]] = set()
+        #: Canonical ids the row currently being ingested *described* (it named
+        #: them with their own identifier, rather than merely referencing them).
+        #: A row that describes exactly one record is the row that defines how
+        #: that record is named, so its other identifier columns are alternate
+        #: names for the same record -- see :meth:`_claim_row_identifiers`.
+        self._row_described: list[str] = []
+        #: References the source stated but that no record defined *yet*, with
+        #: the edge the source asserted.  A single pass cannot resolve a
+        #: reference whose definition sits in a file that has not been read; the
+        #: whole identifier space is known only after the last table, so the
+        #: edge is held here and resolved by :meth:`_resolve_pending_references`
+        #: instead of being dropped on the floor.
+        self._pending_references: list[dict[str, Any]] = []
+        #: References no record in the dataset defined, kept so they can be
+        #: reported once after the whole dataset has been read.
+        self._unresolved_references: list[dict[str, Any]] = []
 
     # ------------------------------------------------- identity bookkeeping
     def _find(self, canonical_id: str) -> str:
@@ -658,6 +674,22 @@ class Normalizer:
         known = self._alias.get(f"{entity_type}|{str(reference).strip()}")
         return self._find(known) if known else None
 
+    def _lookup_any(self, reference: str) -> str | None:
+        """The canonical entity ``reference`` names, whatever type it turned out to be.
+
+        A bare code such as ``CP_01`` does not say what it is; the dataset does,
+        by defining it somewhere.  This is the type-agnostic half of that
+        lookup, and it is deliberately read-only: it never mints a record.
+        """
+        ref = (reference or "").strip()
+        if not ref:
+            return None
+        for candidate_type in sm.ENTITY_TYPES:
+            known = self._lookup(candidate_type, ref)
+            if known:
+                return known
+        return None
+
     # -------------------------------------------------------------- helpers
     def _provenance(self, source: dict[str, Any], row_number: int | None) -> dict[str, Any]:
         payload = dict(source)
@@ -697,6 +729,10 @@ class Normalizer:
         # ``AC0001``): give back the group's representative so every caller
         # behaves as if the two had been one entity from the start.
         canonical = self._find(canonical)
+        if key:
+            # This row *described* the record (it wrote its own identifier), so
+            # it is the row entitled to say what else the record is called.
+            self._row_described.append(canonical)
         self.result.add_entity(
             CanonicalEntity(
                 canonical_id=canonical,
@@ -807,6 +843,11 @@ class Normalizer:
 
         Returns the number of entities folded away.
         """
+        # Deferred references are resolved first: they need the complete
+        # identifier index, and resolving them can create edges whose endpoints
+        # the remaps below then have to rewire.
+        self._resolve_pending_references()
+        self._report_unresolved_references()
         folded = self._apply_remap(self._identity_remap())
         folded += self._apply_remap(self._name_remap())
         folded += self._apply_remap(self._same_key_remap())
@@ -946,34 +987,97 @@ class Normalizer:
     #: ever said.
     _OPAQUE_CODE = re.compile(r"^(?:[A-Za-z]{1,8}[-_/]?\d{1,15}|\d{6,20})$")
 
-    def _reference_entity(self, value: str, prov: dict) -> str | None:
+    def _reference_entity(
+        self, value: str, prov: dict, *, defer: dict[str, Any] | None = None
+    ) -> str | None:
         """Resolve a bare reference to whatever the dataset says it is.
 
         An identifier defined elsewhere resolves to the record that defines it
         -- ``CP_01`` is the person whose ``person_id`` is ``CP_01``, an
         ``INV-2024-11`` is the property it names.  A value that reads as a name
         (it has spaces, or letters not followed by a code) is the business the
-        transaction names.  Anything else is an unresolved code: it is reported
-        rather than dressed up as an organisation, which is how a reference
-        like ``CP_01`` used to become a company with no employees and no links.
+        transaction names.
+
+        A code nothing has defined *yet* is not a code nothing defines: the
+        register that names it may simply be a file the importer has not read.
+        Such a reference is therefore held, together with the edge the source
+        asserted, for the deferred pass that runs once every table is known
+        (:meth:`_resolve_pending_references`).  Only a code that is still
+        undefined after the whole dataset has been read is reported -- and even
+        then it is reported, never dressed up as an organisation, which is how a
+        reference like ``CP_01`` used to become a company with no employees and
+        no links.
         """
         ref = (value or "").strip()
         if not ref:
             return None
-        for candidate_type in sm.ENTITY_TYPES:
-            known = self._lookup(candidate_type, ref)
-            if known:
-                return known
+        known = self._lookup_any(ref)
+        if known:
+            return known
         if " " not in ref and self._OPAQUE_CODE.match(ref):
-            self.result.warnings.append(
-                f"Unresolved reference {ref!r}: no record in this dataset defines it, "
-                "so it was left untyped rather than recorded as an organisation"
-            )
+            if defer is not None:
+                self._pending_references.append({"reference": ref, **defer})
+            else:
+                self._unresolved_references.append(
+                    {"reference": ref, "provenance": dict(prov)}
+                )
             return None
         return self._register(
             sm.ORGANIZATION, None, name=ref, normalized_value=ref.upper(),
             attributes={"role": "counterparty"}, provenance=prov,
         )
+
+    def _resolve_pending_references(self) -> int:
+        """Resolve references whose definition a later file supplied.
+
+        Pass three of normalization: every table has been read, so the whole
+        identifier space is known and a reference that could not be resolved
+        when it was met can be resolved now.  Each one carries the edge its
+        source row asserted, so resolving it *creates the relationship* rather
+        than merely naming an entity -- which is the difference between a
+        ledger that shows money moving and one that silently lost it because
+        ``transactions.csv`` happened to sort before ``counterparties.csv``.
+
+        A code still undefined after this pass is reported once and left
+        untyped: the dataset never said what it was, and inventing a type would
+        put a fabricated actor into the graph.
+        """
+        resolved = 0
+        still_unresolved: list[dict[str, Any]] = []
+        for pending in self._pending_references:
+            reference = pending["reference"]
+            target = self._lookup_any(reference)
+            source = pending.get("source")
+            if target and source and target != source:
+                self._relate(
+                    source,
+                    target,
+                    pending["rel_type"],
+                    observed_at=pending.get("observed_at"),
+                    attributes=pending.get("attributes"),
+                    provenance=pending.get("provenance"),
+                    case_ids=pending.get("case_ids"),
+                )
+                resolved += 1
+                continue
+            still_unresolved.append(pending)
+        self._pending_references = []
+        self._unresolved_references.extend(still_unresolved)
+        return resolved
+
+    def _report_unresolved_references(self) -> None:
+        """Tell the operator about codes the whole dataset never defined."""
+        seen: set[str] = set()
+        for entry in self._unresolved_references:
+            reference = entry["reference"]
+            if reference in seen:
+                continue
+            seen.add(reference)
+            self.result.warnings.append(
+                f"Unresolved reference {reference!r}: no record in this dataset defines it, "
+                "so it was left untyped rather than recorded as an organisation"
+            )
+        self._unresolved_references = []
 
     def _register_person(
         self,
@@ -1076,6 +1180,7 @@ class Normalizer:
         for row_number, row in table.iter_rows():
             provenance = self._provenance(source, row_number)
             self._current_prov = provenance
+            self._row_described = []
             try:
                 if handler(self, row, mapped, provenance):
                     used += 1
@@ -1086,15 +1191,142 @@ class Normalizer:
                 # is lost merely because the table was classified as something
                 # else. It is idempotent -- entities merge by canonical id.
                 self._enrich_row(row, mapped, provenance)
+                # Whatever the handler classified the row as, the row may also
+                # carry identifier columns the canonical schema has no slot for
+                # (``counterparty_id``).  Those are the dataset's own names for
+                # the record it just described, and losing them is what makes a
+                # later reference to the same code unresolvable.
+                self._claim_row_identifiers(row, mapped)
             except Exception as exc:  # noqa: BLE001 - one bad row must not stop a dataset
                 self.result.warnings.append(
                     f"{source.get('file', '?')} row {row_number}: {type(exc).__name__}: {exc}"
                 )
+            finally:
+                self._row_described = []
         self.result.table_stats[mapping.semantic_type] = (
             self.result.table_stats.get(mapping.semantic_type, 0) + used
         )
         self._current_prov = {}
         return used
+
+    #: A column header that names an *identifier* rather than a value:
+    #: ``counterparty_id``, ``party_no``, ``cp_code``, ``external_ref``.  Only
+    #: the trailing noun decides; the qualifier in front of it says whose.
+    _IDENTIFIER_HEADER = re.compile(
+        r"(?:^|[_\s-])(?:id|ids|no|nos|num|number|code|ref|reference|key)$", re.IGNORECASE
+    )
+    #: Column qualifiers that name an entity type CrimeLink already models.  An
+    #: identifier column qualified by one of those is a *foreign key*, not
+    #: another name for the row's own record, so it is never claimed as an
+    #: alias (``case_no`` on a person row is the case's number, not the
+    #: person's).
+    _ENTITY_QUALIFIER = frozenset(
+        {
+            "person", "people", "per", "suspect", "subject", "accused", "party",
+            "phone", "mobile", "msisdn", "veh", "vehicle", "registration",
+            "acct", "acc", "account", "bank", "addr", "address", "loc",
+            "location", "place", "org", "organization", "organisation",
+            "company", "case", "crime", "fir", "evid", "evidence", "exhibit",
+            "item", "dev", "device", "email", "prop", "property", "asset",
+            "off", "officer", "evt", "event", "incident", "doc", "document",
+            "file", "txn", "transaction", "call", "cdr", "sms", "report",
+            "sighting", "statement", "complaint", "user", "officer",
+        }
+    )
+
+    def _row_identifier_qualifier(self, column: str) -> str:
+        """The qualifier in front of an identifier column's trailing noun."""
+        stem = re.sub(
+            r"(?:^|[_\s-])(?:id|ids|no|nos|num|number|code|ref|reference|key)$",
+            "",
+            str(column or "").strip(),
+            flags=re.IGNORECASE,
+        )
+        return sm.norm(stem)
+
+    #: Canonical fields that *identify or name* the entity they belong to.  A
+    #: column mapped to one of these is a foreign key to another record, never
+    #: another name for the row's own subject, so it is never claimed as an
+    #: alias (``owner_person_id`` on a phone register points at the owner; it
+    #: does not rename the phone).
+    _FOREIGN_IDENTITY_FIELDS = frozenset(
+        {"id", "number", "name", "registration", "address", "email"}
+    )
+
+    def _alternate_identifier_columns(self, row: dict, m: dict, subject_type: str) -> list[tuple[str, Any]]:
+        """Columns whose code is another name for the row's own record.
+
+        Two shapes reach here, and both are the same fact -- the row is the
+        record's register, so the code it carries is one of that record's names:
+
+        * the column is unmapped (the canonical schema has no slot for it);
+        * the column was mapped to a *reference* field of some other entity
+          scope, because a header like ``counterparty_id`` looks like a
+          transaction's counterparty to a mapper that cannot see the row also
+          defines a person.  Reference fields only: a column mapped to another
+          entity's ``.id``/``.number``/``.name`` is a foreign key and stays one.
+        """
+        # ``m`` is canonical field -> source column; invert it to ask, for each
+        # column of the row, what the mapper decided it was.
+        by_column = {column: canonical for canonical, column in m.items() if canonical}
+        candidates: list[tuple[str, Any]] = []
+        for column, value in row.items():
+            canonical = by_column.get(column)
+            if canonical is not None:
+                scope, _, field = canonical.partition(".")
+                if scope == subject_type or field in self._FOREIGN_IDENTITY_FIELDS:
+                    continue
+            candidates.append((column, value))
+        return candidates
+
+    def _claim_row_identifiers(self, row: dict, m: dict) -> None:
+        """Register a row's identifier columns as names for the record it describes.
+
+        The canonical schema has a fixed set of fields, and a real export always
+        carries a column or two it has no slot for.  When that column holds a
+        *code* and the row described exactly one record with its own identifier,
+        the code is another way the dataset names that record::
+
+            counterparty_id, person_id, name
+            CP_01,           P042,     John Doe
+
+        Claiming ``CP_01`` for ``PERSON:P042`` is what lets a later ledger row
+        whose counterparty is ``CP_01`` resolve to John Doe instead of dropping
+        the transfer.  Nothing is claimed when the row is ambiguous (it
+        described no record, or more than one), when the column is qualified by
+        another entity type, or when some record already owns the code.
+        """
+        described = list(dict.fromkeys(self._row_described))
+        if len(described) != 1:
+            return
+        canonical_id = described[0]
+        entity = self.result.entities.get(canonical_id)
+        if entity is None:
+            return
+        for column, value in self._alternate_identifier_columns(row, m, entity.entity_type):
+            header = str(column or "").strip()
+            if not self._IDENTIFIER_HEADER.search(header):
+                continue
+            qualifier = self._row_identifier_qualifier(header)
+            if qualifier in self._ENTITY_QUALIFIER:
+                continue
+            reference = str(value or "").strip()
+            if not reference or is_missing_value(reference):
+                continue
+            # Codes only.  A bare 12-digit number is a *value* (an account
+            # number, an amount), not a name for the person this row described,
+            # and claiming it would let an unrelated account reference resolve
+            # to a human being.
+            if not self._OPAQUE_CODE.match(reference) or reference.isdigit():
+                continue
+            already = self._lookup_any(reference)
+            if already is not None:
+                continue
+            self._claim(entity.entity_type, canonical_id, [reference])
+            identifiers = entity.attributes.setdefault("source_identifiers", [])
+            if reference not in identifiers:
+                identifiers.append(reference)
+
 
     # ------------------------------------------------------------- handlers
     def _enrich_row(self, row: dict, m: dict, prov: dict) -> None:
@@ -1415,11 +1647,28 @@ class Normalizer:
                          case_ids=self._row_case_ids(row, m))
             emitted = True
         elif counterparty and source_account:
-            other = self._reference_entity(counterparty, prov)
+            case_ids = self._row_case_ids(row, m)
+            other = self._reference_entity(
+                counterparty,
+                prov,
+                # The source row really did assert this transfer.  If the
+                # counterparty's definition lives in a file the importer has not
+                # read yet, the edge waits for the deferred pass instead of
+                # being dropped -- losing a stated money movement because of
+                # file ordering is how a ledger ends up half empty.
+                defer={
+                    "source": source_account,
+                    "rel_type": REL_TRANSFER_TO,
+                    "observed_at": when,
+                    "attributes": attributes,
+                    "provenance": prov,
+                    "case_ids": case_ids,
+                },
+            )
             if other:
                 self._relate(source_account, other, REL_TRANSFER_TO, observed_at=when,
                              attributes=attributes, provenance=prov,
-                             case_ids=self._row_case_ids(row, m))
+                             case_ids=case_ids)
                 emitted = True
         if person_ref and source_account:
             holder = self._resolve(sm.PERSON, person_ref)

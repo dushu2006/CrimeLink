@@ -788,11 +788,15 @@ export function getDatasetJob(jobId: string): Promise<DatasetJob> {
  * The job that is running right now, if any.
  *
  * The console asks for this on mount. The job lives in the database, not in
- * this tab, so a refresh or a trip to another page must not make a running
- * import invisible — and a job that is invisible is a job the user starts
- * again. `job` is null when nothing is running.
+ * this tab, so a refresh or a trip to another page must not make an import
+ * invisible — and a job that is invisible is a job the user starts again.
+ *
+ * The most recent job is returned whether or not it is still running, so a
+ * completed or failed import is still on screen after a refresh. `running` is
+ * the flag to act on: it decides whether to resume watching, and `job` being
+ * non-null is not by itself a reason to refuse a new upload.
  */
-export function getCurrentDatasetJob(): Promise<{ job: DatasetJob | null }> {
+export function getCurrentDatasetJob(): Promise<{ job: DatasetJob | null; running: boolean }> {
   return api("/datasets/jobs/current");
 }
 

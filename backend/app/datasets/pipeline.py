@@ -109,6 +109,10 @@ class ImportReport:
     needs_review: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
+    #: The pipeline stage the import had reached when it failed.  Empty on
+    #: success.  This is what lets a failed job say *where* it failed instead
+    #: of only that it did.
+    failed_stage: str = ""
     duration_s: float = 0.0
     #: What the replacement reclaimed, when this import became the active
     #: dataset (``datasets/retirement.py``).  Empty when nothing was replaced.
@@ -129,6 +133,7 @@ class ImportReport:
             "warnings": self.warnings[:100],
             "warning_count": len(self.warnings),
             "error": self.error,
+            "failed_stage": self.failed_stage,
             "duration_s": round(self.duration_s, 2),
             "replacement": self.replacement,
         }
@@ -136,6 +141,21 @@ class ImportReport:
 
 async def _noop(stage: str, pct: int, message: str) -> None:  # pragma: no cover
     return None
+
+
+class ImportFailed(RuntimeError):
+    """An import that did not become usable, carrying the stage it reached.
+
+    Raised by the job wrapper rather than by :func:`run_import` (which reports
+    failures through its return value so the caller can still restore the
+    previous projection).  The stage travels with the exception so the job row
+    can record *where* the import failed instead of only that it did.
+    """
+
+    def __init__(self, message: str, *, stage: str = "", progress_pct: int = 0) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.progress_pct = int(progress_pct)
 
 
 def _delete_staged_source_objects(dataset_id: str) -> None:
@@ -179,7 +199,19 @@ async def run_import(
     """
     report = ImportReport()
     started = time.monotonic()
-    emit = progress or _noop
+    report_progress = progress or _noop
+    #: The furthest the import genuinely got.  A failure has to be reported *at*
+    #: this stage and this percentage: publishing 100% for a run that died
+    #: during verification is what made the console read "FAILED 100%", which
+    #: tells the operator the import finished and then broke rather than the
+    #: truth, that it never finished at all.
+    reached = {"stage": "QUEUED", "pct": 0}
+
+    async def emit(stage: str, pct: int, message: str) -> None:
+        if stage != "FAILED":
+            reached["stage"] = stage
+            reached["pct"] = max(int(reached["pct"]), int(pct))
+        await report_progress(stage, pct, message)
     #: The dataset that was active when this import started, and whether this
     #: import evicted its graph projection while building its own.  Together
     #: they are what makes the failure path able to put the deployment back the
@@ -278,6 +310,18 @@ async def run_import(
                 lexicon=lexicon.as_dict(),
             )
 
+        # Cases the dataset states in prose but never tabulated -- a corpus
+        # organised one folder per investigation, or an export that simply has
+        # no case register -- are registered from content. Without this the
+        # whole dataset collapses into the single container case, and the
+        # investigations the source described cease to exist.
+        content_cases = _extract_content_cases(dataset.id, found, normalizer)
+        if content_cases:
+            report.warnings.append(
+                f"{content_cases} case(s) were identified from file content; no "
+                "case register in this dataset defined them"
+            )
+
         report.warnings.extend(normalizer.result.warnings)
         # Now that the whole id space is known, fold placeholder entities into
         # the records the dataset actually describes (a `counterparty` cell
@@ -356,6 +400,13 @@ async def run_import(
         # Verify actual retrieval, not merely a successful put or manifest row.
         # This runs before READY/activation, so an object-store outage or hash
         # mismatch cannot retire the dataset currently serving investigators.
+        # It is its own *stage* for the same reason: an import that dies here
+        # has to be seen to have died here, and not to have reached READY.
+        await registry.set_stage(
+            session, dataset, "VERIFYING", detail="Reading stored sources back"
+        )
+        await session.commit()
+        await emit("VERIFYING", 97, "Reading every stored source back and checking its hash")
         await _verify_source_objects(dataset.id, found.usable)
 
         # --- 7. READY ------------------------------------------------------
@@ -431,7 +482,12 @@ async def run_import(
         # evicts other datasets), so put that back.
         if graph_evicted_others and previous_active_id and previous_active_id != report.dataset_id:
             await _restore_previous_projection(session, previous_active_id, emit)
-        await emit("FAILED", 100, report.error)
+        # Report the failure where it happened and at the progress actually
+        # reached.  The stage history keeps every stage the import did reach,
+        # so the console shows "… VERIFYING → FAILED" rather than a job that
+        # looks like it completed and then broke.
+        report.failed_stage = reached["stage"]
+        await emit("FAILED", int(reached["pct"]), report.error)
         return report
 
 
@@ -1663,6 +1719,218 @@ UNASSIGNED FILE DIAGNOSTICS
     )
     return (created, mention_count)
 
+
+
+#: Case identifiers written as an explicit label.  These are the only text
+#: shapes allowed to *create* a case: a document that says "Case Number: X" is
+#: stating that a case exists, while a bare ``C101`` in running prose is only
+#: evidence about a case the dataset defines somewhere.  Creating cases from the
+#: loose shapes too is how a paragraph mentioning three other investigations
+#: turns into three phantom cases.
+_CASE_LABEL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"Case\s*(?:Number|No\.?|ID|Ref\.?|#)\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9/_\-]{2,29})", re.IGNORECASE),
+    re.compile(r"FIR\s*(?:Number|No\.?|ID)?\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9/_\-]{2,29})", re.IGNORECASE),
+    re.compile(r"(?:Incident|Crime|Occurrence)\s*(?:ID|Number|No\.?)\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9/_\-]{2,29})", re.IGNORECASE),
+)
+#: Standalone case identifiers whose *shape* is unambiguous: ``CASE-001``,
+#: ``CASE_0007``, ``CASE0012``, ``FIR/2024/00101``, ``FIR-2024-00101``.
+_CASE_SHAPE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bCASE[-_]?\d{2,8}\b", re.IGNORECASE),
+    re.compile(r"\bFIR[-_/]\d{2,4}[-_/]\d{2,10}\b", re.IGNORECASE),
+)
+#: Content that describes a dataset rather than an investigation.  A schema file
+#: or a README may quote every case number in the corpus as an example; reading
+#: those as cases would mint a case per example.
+_DATASET_LEVEL_NAME = re.compile(
+    r"(^|[/\\])(readme|data[_\- ]?dictionary|schema|corpus[_\- ]?layout|"
+    r"generation[_\- ]?config|quality[_\- ]?report|document[_\- ]?index|"
+    r"master[_\- ]?index|manifest|change[_\- ]?log|license)(\.|$)",
+    re.IGNORECASE,
+)
+#: Case identifiers found in content are capped per file so one generated
+#: document quoting a hundred examples cannot mint a hundred cases.
+MAX_CONTENT_CASES_PER_FILE = 25
+MAX_CONTENT_CASES_PER_DATASET = 5000
+
+
+def _normalize_case_token(value: Any) -> str:
+    """Comparison form of a case identifier: ``case-001`` == ``CASE_001``."""
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _known_case_tokens(normalizer: nz.Normalizer) -> set[str]:
+    """Every way the dataset already names a case it has defined.
+
+    A case table row carries both its key (``C101``) and its number
+    (``FIR/2024/00101``); a document that writes either is talking about the
+    case that already exists, not announcing a new one.
+    """
+    tokens: set[str] = set()
+    for entity in normalizer.result.entities.values():
+        if entity.entity_type != sm.CASE:
+            continue
+        natural_key = entity.canonical_id.split(":", 1)[-1]
+        attributes = entity.attributes or {}
+        for value in (
+            natural_key,
+            entity.normalized_value,
+            attributes.get("case_number"),
+            attributes.get("fir_number"),
+        ):
+            token = _normalize_case_token(value)
+            if token:
+                tokens.add(token)
+    # An FIR the dataset defined is an alias of the case it was filed under, so
+    # its number is not a second case either.
+    for alias_key in normalizer._alias:  # noqa: SLF001 - same module family
+        if alias_key.startswith("FIR|"):
+            token = _normalize_case_token(alias_key.split("|", 1)[1])
+            if token:
+                tokens.add(token)
+    return tokens
+
+
+def _case_identifiers_in_text(text: str) -> tuple[list[str], list[str]]:
+    """The case and FIR identifiers this text states explicitly.
+
+    Returned separately because they are not the same claim: ``Case Number:
+    CASE-001`` names the investigation, while ``FIR No: FIR/2024/00001`` names
+    the report filed under it.  A document that states both is describing one
+    case, and treating the FIR as a second case would double every investigation
+    in a corpus that numbers its cases one way and its FIRs another.
+    """
+    cases: list[str] = []
+    firs: list[str] = []
+
+    def add(bucket: list[str], value: str) -> None:
+        candidate = str(value or "").strip().strip(".,;:'\"")
+        if len(candidate) < 3 or len(candidate) > 30:
+            return
+        if candidate.casefold() in {"n/a", "unknown", "none", "null", "nil"}:
+            return
+        if candidate not in bucket:
+            bucket.append(candidate)
+
+    for index, pattern in enumerate(_CASE_LABEL_PATTERNS):
+        bucket = firs if index == 1 else cases
+        for match in pattern.finditer(text):
+            add(bucket, match.group(1))
+    for index, pattern in enumerate(_CASE_SHAPE_PATTERNS):
+        bucket = firs if index == 1 else cases
+        for match in pattern.finditer(text):
+            add(bucket, match.group(0))
+    # A value the text states as an FIR is never also a case of its own.
+    fir_tokens = {_normalize_case_token(value) for value in firs}
+    cases = [value for value in cases if _normalize_case_token(value) not in fir_tokens]
+    return cases, firs
+
+
+def _extract_content_cases(
+    dataset_id: str,
+    found: discovery.DiscoveryResult,
+    normalizer: nz.Normalizer,
+) -> int:
+    """Register the cases a dataset states in prose but never tabulated.
+
+    A corpus organised as ``CASE-001/…``, or one whose case register was simply
+    not supplied, still *says* how many cases it holds: the summaries, FIRs and
+    charge sheets inside it name them.  Reading only tabular case registers is
+    what collapses such a dataset into the single container case -- every record
+    ends up in one bucket and the investigations the source described disappear.
+
+    This is content-driven and deliberately conservative:
+
+    * only explicitly labelled or unambiguously shaped identifiers create a
+      case (a bare ``C101`` in prose does not);
+    * an identifier that already names a case the dataset defined -- by its key,
+      its case number, or an FIR it was filed under -- creates nothing;
+    * dataset-level documents (README, schema, data dictionary, document index)
+      are never read as case definitions;
+    * folder and file names are not consulted at all.
+
+    Case identifiers and FIR numbers are gathered from the whole dataset before
+    any case is created, so the answer does not depend on the order the files
+    were read in.  A dataset that names its investigations uses those names; an
+    FIR number stated beside a case name is that case's filing reference, not a
+    second investigation.  Only a corpus that identifies its investigations
+    *exclusively* by FIR number gets one case per FIR, because in that
+    convention the FIR number is the case number.
+
+    Returns the number of cases registered.
+    """
+    known = _known_case_tokens(normalizer)
+    #: file -> (case identifiers, FIR numbers) stated in that file's content.
+    stated: list[tuple[discovery.DiscoveredFile, list[str], list[str]]] = []
+    for entry in found.usable:
+        if entry.kind not in {"text", "document"}:
+            continue
+        if _DATASET_LEVEL_NAME.search(entry.relative_path):
+            continue
+        try:
+            text = readers.read_text(entry.path, entry.extension).text
+        except Exception:  # noqa: BLE001 - an unreadable file adds no cases
+            continue
+        if not text:
+            continue
+        identifiers, fir_numbers = _case_identifiers_in_text(text[:MENTION_SCAN_CHARS])
+        if identifiers or fir_numbers:
+            stated.append((entry, identifiers, fir_numbers))
+
+    any_case_identifier = any(identifiers for _entry, identifiers, _firs in stated)
+    registered = 0
+    for entry, identifiers, fir_numbers in stated:
+        if registered >= MAX_CONTENT_CASES_PER_DATASET:
+            break
+        provenance = {
+            "dataset_id": dataset_id,
+            "file": entry.relative_path,
+            "source_file": entry.filename,
+            "source_type": entry.extension.lstrip("."),
+            "dataset_file_id": None,
+            "extraction": "case identifier stated in file content",
+        }
+        if not identifiers and fir_numbers and not any_case_identifier:
+            identifiers, fir_numbers = fir_numbers, []
+        created_here: list[tuple[str, str]] = []
+        for identifier in identifiers[:MAX_CONTENT_CASES_PER_FILE]:
+            token = _normalize_case_token(identifier)
+            if not token or token in known:
+                continue
+            known.add(token)
+            canonical = normalizer._register(  # noqa: SLF001 - canonical case records
+                sm.CASE,
+                identifier,
+                name=identifier,
+                normalized_value=identifier,
+                attributes={
+                    "case_number": identifier,
+                    "discovered_from": "content",
+                },
+                provenance=provenance,
+            )
+            if canonical:
+                created_here.append((identifier, canonical))
+                registered += 1
+        # An FIR stated in a document that names exactly one case was filed
+        # under that case: recorded as one of its numbers, never as a case.
+        if len(created_here) == 1:
+            _identifier, case_cid = created_here[0]
+            case_entity = normalizer.result.entities.get(case_cid)
+            for fir_number in fir_numbers:
+                normalizer._alias[f"FIR|{fir_number}"] = case_cid  # noqa: SLF001
+                normalizer._alias[f"CASE|{fir_number}"] = case_cid  # noqa: SLF001
+                known.add(_normalize_case_token(fir_number))
+                if case_entity is not None:
+                    numbers = case_entity.attributes.setdefault("fir_numbers", [])
+                    if fir_number not in numbers:
+                        numbers.append(fir_number)
+    if registered:
+        log.info(
+            "datasets.content_cases_extracted",
+            dataset_id=dataset_id,
+            cases=registered,
+        )
+    return registered
 
 
 def _extract_case_ids_from_content(

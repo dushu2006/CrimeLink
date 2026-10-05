@@ -260,6 +260,8 @@ async def start_job(
             )
             raise
         except Exception as exc:  # noqa: BLE001 - the failure must reach the UI
+            from app.datasets.pipeline import ImportFailed
+
             # Some failures are re-raised reports whose text already names its
             # type ("RuntimeError: Could not store ..."); prefixing again would
             # show the operator "RuntimeError: RuntimeError: ...".
@@ -270,8 +272,21 @@ async def start_job(
                 else f"{type(exc).__name__}: {message}"
             )
             log.exception("dataset_jobs.failed", job_id=row["id"], kind=kind)
+            # The stage the work actually reached is kept, so the console shows
+            # "VERIFYING → FAILED" rather than a job that appears to have run to
+            # completion and then broken.  ``status`` is what says it failed;
+            # ``stage`` is what says where.
+            stage = "FAILED"
+            result: dict[str, Any] = {}
+            if isinstance(exc, ImportFailed) and exc.stage:
+                stage = exc.stage
+                result = {"failed_stage": exc.stage}
             await reporter.update(
-                status="FAILED", stage="FAILED", message=detail, error=detail
+                status="FAILED",
+                stage=stage,
+                message=detail,
+                error=detail,
+                result=result or None,
             )
         finally:
             _running.pop(row["id"], None)
@@ -281,11 +296,65 @@ async def start_job(
     return row
 
 
+async def latest_job(
+    *, kinds: Sequence[str] | None = None, dataset_id: str | None = None
+) -> dict[str, Any] | None:
+    """The most recent job — running if one is, otherwise the last one to finish.
+
+    This is what the console hydrates from.  :func:`current_job` answers "is
+    anything running?", which is the right question for refusing a duplicate
+    import and the wrong one for rendering a panel: an operator who comes back
+    after a finished import must see that it finished, and one who comes back
+    after a failed one must see the failure and its cause.  An idle panel in
+    either case reads as "nothing happened", which is how the same dataset gets
+    imported twice.
+
+    The job row is the only source consulted, so this survives navigation, a
+    browser refresh, a cleared cache and a different device.
+    """
+    from sqlalchemy import select
+
+    running = await current_job(kinds=kinds, dataset_id=dataset_id)
+    if running is not None:
+        return running
+    async with async_session() as session:
+        stmt = select(DatasetJob).order_by(DatasetJob.created_at.desc())
+        if kinds:
+            stmt = stmt.where(DatasetJob.kind.in_(list(kinds)))
+        if dataset_id:
+            stmt = stmt.where(DatasetJob.dataset_id == dataset_id)
+        job = (await session.execute(stmt.limit(1))).scalars().first()
+        return await _row(session, job)
+
+
+async def _row(session: Any, job: DatasetJob | None) -> dict[str, Any] | None:
+    """Render one job row, naming the dataset it is building.
+
+    The console shows "Importing <name>"; reading that from the job keeps the
+    panel reconstructible from backend state alone, which is the whole point of
+    hydrating from it.
+
+    The name is read through the **caller's** session on purpose.  Taking a
+    second session here would hold two connections for one read, and on a
+    serverless deployment ``app.db.session`` caps concurrent sessions at three
+    (the provider's ``max_client_conn`` is tiny) — so a job holding one while
+    its own progress socket asked for a second could wait forever for a slot
+    that only frees when the job finishes.  Same session, same read.
+    """
+    if job is None:
+        return None
+    row = registry.job_row(job)
+    if job.dataset_id:
+        dataset = await session.get(Dataset, job.dataset_id)
+        if dataset is not None:
+            row["dataset_name"] = dataset.name
+    return row
+
+
 async def get_job(job_id: str) -> dict[str, Any] | None:
     """The authoritative job state — what polling reads."""
     async with async_session() as session:
-        job = await session.get(DatasetJob, job_id)
-        return registry.job_row(job) if job is not None else None
+        return await _row(session, await session.get(DatasetJob, job_id))
 
 
 def is_running(job_id: str) -> bool:
@@ -353,21 +422,30 @@ async def current_job(
         if dataset_id:
             stmt = stmt.where(DatasetJob.dataset_id == dataset_id)
         job = (await session.execute(stmt)).scalars().first()
+        if job is None:
+            return None
+        # Plain values, captured while the session is open: the row below is
+        # read after it closes, and a detached instance must not be re-queried.
+        job_id, job_dataset_id, job_status = job.id, job.dataset_id, job.status
+        row = await _row(session, job)
 
-    if job is None:
-        return None
-    if job.status == "RUNNING" and not is_running(job.id):
+    # Everything below the session: ``JobReporter.update`` writes through its
+    # own session, and it must never be reached while this read still holds a
+    # connection (see ``_row``).
+    if job_status == "RUNNING" and not is_running(job_id):
         # Restarted mid-job.  The row would otherwise sit at RUNNING forever
         # and block every later import; the honest answer is that it was
         # interrupted, and that is what the operator is told.
-        reporter = JobReporter(job.id, job.dataset_id)
-        return await reporter.update(
+        interrupted = await JobReporter(job_id, job_dataset_id).update(
             status="FAILED",
             stage="FAILED",
             message="The server restarted while this job was running.",
             error="interrupted_by_restart",
         )
-    return registry.job_row(job)
+        if row and row.get("dataset_name"):
+            interrupted["dataset_name"] = row["dataset_name"]
+        return interrupted
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +507,11 @@ async def run_dataset_import(
     if report.error:
         # The pipeline records the failure on the dataset and returns; the job
         # must fail too, or the console would show a green tick over a broken
-        # import.
-        raise RuntimeError(report.error)
+        # import.  The stage it reached travels with the exception so the job
+        # row says *where* it failed.
+        from app.datasets.pipeline import ImportFailed
+
+        raise ImportFailed(report.error, stage=report.failed_stage or "")
     return report.as_dict()
 
 

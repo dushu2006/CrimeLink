@@ -296,9 +296,10 @@ async def test_one_failed_check_does_not_blank_the_others(container, workspace, 
     }
     for name, check in checks.items():
         allowed = {"ok", "detail"}
-        if name == "record_available":
-            # The availability check also publishes *which fact* it looked at,
-            # so "absent" and "storage unreachable" cannot be confused.
+        if name in {"record_available", "hash_matches"}:
+            # Both are tri-state and publish *which fact* they looked at, so
+            # "absent"/"unreachable" and "no hash was ever recorded" cannot be
+            # confused with a genuine failure.
             allowed.add("state")
         assert set(check) == allowed, f"{name} must report a computed ok and a detail"
     # The record itself is still verified and still traceable — only the bytes
