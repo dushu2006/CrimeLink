@@ -88,6 +88,34 @@ This is a **configuration** defect, not a code defect, and it is fixed by
 configuration (items 16–18). The existing object-storage abstraction is used
 unchanged: no new client, no new environment variable, no filesystem fallback.
 
+**The detection already existed at the base commit and was not the gap.**
+`Settings.object_store_endpoint_problem` (`backend/app/config.py:746`) already
+returns an actionable message naming `CRIMELINK_MINIO_ENDPOINT` when the
+production deployment points at a Compose service hostname, and it is surfaced
+in two places:
+
+* `GET /api/v1/health/ready` returns **200** with
+  `checks.object_store.status = "error"` and
+  `checks.object_store.error = "DependencyUnavailableError"` — the request
+  succeeds, because a degraded dependency is not a reason to refuse everything;
+* the evidence endpoints return **503** carrying the message that names the
+  variable.
+
+Both behaviours are covered by existing tests in
+`tests/test_object_store_configuration.py` (9 tests, all passing). What was
+missing was the *link from symptom to cause* in the evidence panel itself,
+which is item 5: an unreadable store was reported as an unresolved provenance
+tick with no distinction from a genuine integrity failure.
+
+I evaluated adding a fail-closed boot guard that raises when the production
+runtime context is given a Compose or loopback endpoint, implemented it, and
+**reverted it**. `runtime.running_on_serverless()` documents why: on Vercel a
+crash during ASGI startup poisons the whole function instance, turning every
+later invocation into `500 FUNCTION_INVOCATION_FAILED` instead of one failed
+boot. The existing design — degrade the one feature, report it in readiness,
+name the variable in the 503 — is the correct one, and it is already tested.
+`backend/app/config.py` is byte-identical to the base commit in this branch.
+
 ## 5. Root cause — integrity verification reported as unresolved
 
 `backend/app/services/documents.py::provenance_payload` had two problems:
@@ -139,23 +167,17 @@ No new job system was built; the existing `dataset_jobs` row is the source.
 
 ## 7. Files changed
 
+Totals for this branch (excluding this document):
+
 ```
- backend/app/api/v1/datasets.py                     |  17 +-
- backend/app/api/v1/jobs.py                         |  53 ++-
- backend/app/datasets/normalize.py                  | 277 +++++++++++++--
- backend/app/datasets/pipeline.py                   | 272 +++++++++++++-
- backend/app/datasets/registry.py                   |   3 +-
- backend/app/services/dataset_jobs.py               | 105 +++++-
- backend/app/services/documents.py                  |  63 +++-
- backend/tests/test_dataset_job_hydration.py        |  21 +-
- backend/tests/test_dataset_jobs_ws.py              |  85 ++++-
- backend/tests/test_object_store_configuration.py   |   5 +-
- backend/tests/test_provenance_checks_can_fail.py   |   7 +-
- frontend/src/api/client.ts                         |  12 +-
- frontend/src/components/DatasetConsole.tsx         |  43 ++-
- frontend/tests/evidence-source-integration.test.mjs|  19 +-
- 14 files changed, 915 insertions(+), 67 deletions(-)
+product code  (backend/app, frontend/src)   9 files   +786  -59
+tests         (backend/tests, frontend/tests) 9 files  +1599  -8
+                                            --------  -----  ---
+total                                          18 files +2385 -67
 ```
+
+`backend/app/config.py` is **not** modified — see item 4 for why a
+configuration guard I added there was reverted.
 
 New files:
 
@@ -481,28 +503,33 @@ Requirements:
 
 ## 20. Post-deployment validation
 
-1. **Object store reachability** — open any evidence record's provenance panel.
+1. **Readiness first, before any UI** — `GET /api/v1/health/ready` must return
+   `checks.object_store.status = "ok"`. If it is `"error"` with
+   `error = "DependencyUnavailableError"`, the endpoint is wrong and nothing
+   downstream will work; the 503 from an evidence endpoint names the variable.
+   This is the cheapest check and it detects the original fault directly.
+2. **Object store reachability** — open any evidence record's provenance panel.
    `record_available` must be `✓` with detail "Bytes read from object storage."
-   If it reads `?` with detail naming the endpoint, the endpoint is still wrong;
-   this is the exact signal that identified the original fault.
-2. **Integrity** — `hash_matches` must be `✓` for records imported with a
+   If it reads `?`, read the detail: it now says *why* (endpoint unreachable,
+   object absent, or no hash recorded) instead of leaving the tick unexplained.
+3. **Integrity** — `hash_matches` must be `✓` for records imported with a
    recorded hash. `?` with "no SHA-256 was recorded" is truthful for older
    records and is not a failure.
-3. **Original file** — "Open Original Record" must render real bytes.
-4. **Case count** — a corpus import must produce one case per real case, not
+4. **Original file** — "Open Original Record" must render real bytes.
+5. **Case count** — a corpus import must produce one case per real case, not
    one container case. Compare against the source folder.
-5. **Graph quality** — phones linked by `USES_PHONE`, accounts by
+6. **Graph quality** — phones linked by `USES_PHONE`, accounts by
    `OWNS_ACCOUNT`, vehicles by `OWNS_VEHICLE`; no `CP_*` node disconnected; no
    `CP_*` node typed ORGANIZATION.
-6. **Provenance** — pick an entity and a relationship at random and confirm both
+7. **Provenance** — pick an entity and a relationship at random and confirm both
    carry source provenance back to a real file and row.
-7. **Import state** — start an import, navigate to Cases, come back: the panel
+8. **Import state** — start an import, navigate to Cases, come back: the panel
    must show the same job, stage and percentage. Refresh mid-import: same. A
    completed import must still be shown after a refresh, and a failed one must
    name the stage it failed at.
-8. **No duplicate import** — while an import runs, a second attempt must return
+9. **No duplicate import** — while an import runs, a second attempt must return
    HTTP 409 naming the existing job, not start a second one.
-9. **Failure path** — deliberately point the endpoint at an unreachable host and
+10. **Failure path** — deliberately point the endpoint at an unreachable host and
    import: the job must end `FAILED` at the stage reached with
    `progress_pct < 100`, and the previously active dataset must still be active.
    Restore the endpoint afterwards.
